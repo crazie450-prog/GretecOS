@@ -135,6 +135,7 @@ describe("helpers", () => {
     expect(routeLabel({ column: "addon", position: 1, of: 1 })).toBe("Addon column");
     expect(routeLabel({ column: "simplest", position: 1, of: 1 })).toBe("Simplest route");
     expect(routeLabel({ column: "base", position: 1, of: 2, simplest: true })).toBe("Route 1 of 2 (also the simplest)");
+    expect(routeLabel({ column: "reviewed", position: 1, of: 1 })).toBe("Reviewed route");
   });
 
   it("heads the comparison's simplest route as its own column (D389 (4))", () => {
@@ -165,6 +166,40 @@ describe("the Designer view", () => {
     });
     const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
     expect(designs).toEqual([{ spec: { target: STEEL, batch: "64", routes: 3, addons: false, simplest: false } }]);
+  });
+
+  it("asks for the route reviewer only when its box is ticked (D389 (7))", async () => {
+    jobAnswers({ ids: [FIRST.id], problems: [], view: FIRST });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
+    fireEvent.click(screen.getByTestId("designer-review"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
+    expect(designs).toEqual([{ spec: { target: STEEL, batch: "64", routes: 3, addons: false, simplest: true, review: true } }]);
+  });
+
+  it("says on the reviewed route that the reviewer edited it", async () => {
+    const reviewed = route("pl-eeeeeeeeee", 1, {
+      column: "reviewed",
+      review: {
+        id: "rv-0123456789", of: ["pl-bbbbbbbbbb"], verdict: "fixed", status: "done", edited: true,
+        applied: { exclude: [DUST], pins: [{ node: STEEL, recipe: "r:gt.recipe.blastfurnace/9c40869458cb" }] },
+        summary: "Swapped the furnace.",
+      },
+    });
+    const v = view("pl-bbbbbbbbbb", [route("pl-bbbbbbbbbb", 1), reviewed]);
+    jobAnswers({ ids: [v.id, reviewed.id], problems: [], view: v });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const banner = await screen.findByTestId("review-pl-eeeeeeeeee");
+    expect(banner.textContent).toContain("Edited by the route reviewer");
+    expect(banner.textContent).toContain(`pinned ${STEEL}`);
+    expect(screen.queryByTestId("review-pl-bbbbbbbbbb")).toBeNull();
   });
 
   it("says so when there is no design yet", async () => {

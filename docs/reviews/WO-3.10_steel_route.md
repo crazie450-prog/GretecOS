@@ -195,7 +195,7 @@ secret: recipe ids and item keys only.
 
 Neither change touches `gtmath/`, ranking, the solver or the machine model.
 
-## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393, reviewed D394; F4 built, D395, reviewed D396)
+## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393, reviewed D394; F4 built, D395, reviewed D396; F7 built, D401)
 
 Each item is deterministic, uses only data GOS has (or a curated table, like `raw_inputs.tsv`
 and `scarcity.tsv`), and comes with tests. The steel-at-MV acceptance test above is the shared
@@ -279,6 +279,16 @@ phone's job check parses a `within` given with no amount.* A missing rate become
 ETA reported, instead of 1/s. Or the default rate becomes a smaller one, Clayton's choice
 (Question 5). Either way the plan's name already shows the rate ("· 1/s ·"); the Designer should
 put it in front of him before solving. Tests: request defaults, CLI default.
+
+**F7. The route reviewer (§6, D389 (7)).** *Built (D401): a per-request toggle, off by default
+(`review: true` in the Designer spec and form, `gos plan --review`; never in the request, never
+offered to `design_production`). A model reviews the ranked routes with five tools
+(`alternatives`, `propose_constraints`, `propose_pin`, `escalate`, `finish`), at most 8 calls, 4
+re-solves and 1 advisor call, capped by `task_max_usd`; every number it writes is checked
+against the planner's. A re-run excludes keys, an edit pins a node to a candidate the graph
+lists (only after a re-run, always reported); the planner re-solves and re-scores, and the result
+is an extra `reviewed` column beside the planner's untouched ranked routes. Tested with a scripted
+fake only; the first real run is a paid smoke run for Clayton (5.3.12).*
 
 Order of work: F1 → F2 → F3 → F4 (each is its own PR with its tests), then F5 and F6, which are
 small.

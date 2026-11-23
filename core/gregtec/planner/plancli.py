@@ -15,6 +15,11 @@
   ``--within`` if given.
 - ``--simplest``: also the simplest route (each node's first recipe, D389 (4)), as an extra
   column after the ranked routes, or ``[base, simplest]`` on the base route that is it.
+- ``--review``: the route reviewer reads the ranked routes (D389 (7), off by default; it uses the
+  AI and spends, capped by ``[budget] task_max_usd``). Its reviewed route, re-solved and scored by
+  the planner, prints after the ranked ones as ``[reviewed]``, with every edit named ("EDITED by
+  the reviewer"); ``--json`` prints it too, ``--save`` saves it and the review's record. With no
+  key or the AI off it prints ``review: skipped (why)``.
 - ``--request FILE``: a request as JSON (``Request.from_json``) instead of TARGET and the flags.
 - ``gos plan TARGET --alternatives ITEM [--all]``: the candidate recipes for one node of the
   graph (D61), with ``--all`` the unchecked and rejected ones too.
@@ -30,10 +35,11 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import sqlite3
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from gregtec import config
 from gregtec.agents import prefetch
@@ -51,7 +57,7 @@ from gregtec.planner.request import (
     parse_qty,
     tier_index,
 )
-from gregtec.vault.io import VaultIO
+from gregtec.vault.io import VaultIO, atomic_write
 
 if TYPE_CHECKING:
     from gregtec.planner import designer
@@ -89,6 +95,11 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     p.add_argument(
         "--exact", action="store_true", help="whole machine counts (integer MILP)"
+    )
+    p.add_argument(
+        "--review",
+        action="store_true",
+        help="the route reviewer reads the routes (uses the AI; D389 (7))",
     )
     p.add_argument(
         "--pin",
@@ -171,7 +182,7 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
     try:
         vault = cfg.gos_home / "vault"
         prefs = rank.read_prefs(vault)
-        return _run(conn, db, Glossary.find(vault), args, out, prefs, cfg.gos_home)
+        return _run(conn, db, Glossary.find(vault), args, out, prefs, cfg.gos_home, cfg)
     finally:
         conn.close()
 
@@ -284,6 +295,47 @@ def _save(
         rw.close()
 
 
+def _review(
+    cfg: config.Config,
+    db: Path,
+    conn: sqlite3.Connection,
+    design: plan.Design,
+    request: Request,
+    base: MyBase,
+    prefs: rank.Prefs,
+    exact: bool,
+) -> tuple[plan.Design, dict[str, Any]]:
+    """``--review``: the design with the reviewed route added (when the reviewer made one) and
+    the review's record. The meter and no-AI mode are the core DB's, as the paid evals'."""
+    from gregtec.agents import route_review
+    from gregtec.agents.no_ai import AiMode, CreditWatch
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    store_ = Store(db)
+    try:
+        meter = UsageMeter(
+            store_, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
+        )
+        mode = AiMode(store_)
+        CreditWatch(meter, mode).check()
+        reviewer = route_review.from_config(cfg, meter, mode)
+        done = reviewer.run(
+            design,
+            request,
+            lambda r: plan.design(conn, r, base, exact=exact, prefs=prefs),
+            prefs,
+            conn,
+        )
+    finally:
+        store_.close()
+    if done.reviewed is None:
+        return design, done.record
+    for p in design.plans:
+        p["alternatives"] = [*p["alternatives"], done.reviewed["id"]]
+    return plan.Design(design.graph, (*design.plans, done.reviewed)), done.record
+
+
 def _run(
     conn: sqlite3.Connection,
     db: Path,
@@ -292,7 +344,9 @@ def _run(
     out: TextIO,
     prefs: rank.Prefs = rank.BALANCED,
     home: Path | None = None,
+    cfg: config.Config | None = None,
 ) -> int:
+    record: dict[str, Any] | None = None  # --review's record
     try:
         request = _request(conn, db, glossary, args, out)
         if isinstance(request, int):
@@ -305,6 +359,17 @@ def _run(
                 print(f"{a['status']:<11} {a['recipe']}{reason}", file=out)
             return 0
         design = plan.design(conn, request, base, exact=args.exact, prefs=prefs)
+        if getattr(args, "review", False):
+            design, record = _review(
+                cfg or config.load(None),
+                db,
+                conn,
+                design,
+                request,
+                base,
+                prefs,
+                args.exact,
+            )
     except (
         OSError,
         KeyError,
@@ -324,6 +389,12 @@ def _run(
             print("refused: --save needs GOS_HOME", file=out)
             return 2
         _save(conn, db, home, design, out)
+        if record is not None:
+            from gregtec.planner import designer
+
+            path = home / designer.REVIEWS / f"{design.plans[0]['id']}.json"
+            atomic_write(path, json.dumps(record, sort_keys=True, indent=1).encode())
+            print(f"saved review {record['id']}: {path}", file=out)
     if args.json:
         for p in design.plans:
             print(plan.dumps(p), file=out)
@@ -336,7 +407,8 @@ def _run(
         m, k = p["metrics"], p["rank"]
         machines = sum(n["count"] or 0 for n in p["nodes"])
         also = ", simplest" if r.get("simplest") else ""  # a base route that is it
-        print(f"{p['id']}  {p['name']}  [{r['column']}{also}]", file=out)
+        column = "reviewed" if p.get("review") else r["column"]
+        print(f"{p['id']}  {p['name']}  [{column}{also}]", file=out)
         print(
             f"  score {k['score']:g}: {m['machines']} machines, {len(m['new_types'])} new "
             f"types, {m['eut_avg']:g} EU/t avg, scarcity "
@@ -362,6 +434,11 @@ def _run(
             print(f"  choice {c['node']}: {c['recipe']}", file=out)
         for w in p["warnings"]:
             print(f"  warning: {w}", file=out)
+    if record is not None:
+        from gregtec.agents import route_review
+
+        for line in route_review.describe(record):
+            print(f"  {line}", file=out)
     if args.explain and design.plans:
         g = design.graph
         doc = explain.facts(design.plans, g.item(g.target).name, prefs)

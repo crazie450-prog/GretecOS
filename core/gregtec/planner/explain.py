@@ -151,6 +151,8 @@ def template(doc: Mapping[str, Any]) -> str:
             head = f"Addon column: {r['name']}"
         elif r["column"] == "simplest":
             head = f"Simplest route (each node's first recipe): {r['name']}"
+        elif r["column"] == "reviewed":
+            head = f"Reviewed column: {r['name']}"
         else:
             head = f"{r['position']} of {r['of']}: {r['name']}"
         machines = ", ".join(

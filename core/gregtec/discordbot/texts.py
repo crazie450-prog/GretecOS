@@ -106,7 +106,9 @@ def plan_result(job: Mapping[str, Any], settings: BotSettings) -> str:
     for r in res.get("routes") or ():
         column = r.get("column")
         where = (
-            column if column in ("simplest", "addon") else f"route {r.get('position')}"
+            column
+            if column in ("simplest", "addon", "reviewed")
+            else f"route {r.get('position')}"
         )
         if r.get("simplest") and column == "base":
             where += " (also the simplest)"

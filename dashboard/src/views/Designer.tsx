@@ -59,6 +59,7 @@ function showPlan(id: string): void {
 export function routeLabel(r: Pick<DesignerRoute, "column" | "position" | "of"> & { simplest?: boolean }): string {
   if (r.column === "addon") return "Addon column";
   if (r.column === "simplest") return "Simplest route";
+  if (r.column === "reviewed") return "Reviewed route";
   return `Route ${r.position} of ${r.of}${r.simplest ? " (also the simplest)" : ""}`;
 }
 
@@ -76,6 +77,7 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
   const [routes, setRoutes] = useState(3);
   const [addons, setAddons] = useState(false);
   const [simplest, setSimplest] = useState(true);
+  const [review, setReview] = useState(false);
   const submit = (e: FormEvent): void => {
     e.preventDefault();
     if (!target.trim()) return;
@@ -88,6 +90,7 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
       routes,
       addons,
       simplest,
+      ...(review ? { review } : {}),
     });
   };
   return (
@@ -154,6 +157,10 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
         <label className="field check">
           <input type="checkbox" checked={simplest} onChange={(e) => setSimplest(e.target.checked)} data-testid="designer-simplest" />
           <span>Simplest route too</span>
+        </label>
+        <label className="field check">
+          <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} data-testid="designer-review" />
+          <span>Review routes (uses the AI)</span>
         </label>
         <Button type="submit" variant="primary" disabled={props.busy || !target.trim()} testId="designer-go">
           Design
@@ -387,6 +394,16 @@ function RouteColumn(props: {
             </li>
           ))}
         </ul>
+      )}
+      {r.review && (
+        <div className="notice" role="status" data-testid={`review-${r.id}`}>
+          <span>
+            {GLYPH.warn} {r.review.edited ? "Edited by the route reviewer" : "Re-run by the route reviewer"}:{" "}
+            {[...r.review.applied.exclude.map((x) => `excluded ${x}`), ...r.review.applied.pins.map((p) => `pinned ${p.node} to ${p.recipe}`)].join("; ") ||
+              "no change"}
+            . {r.review.summary}
+          </span>
+        </div>
       )}
       {r.warnings.slice(0, 3).map((w) => (
         <p key={w} className="gos-sub">

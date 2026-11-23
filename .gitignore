@@ -17,6 +17,10 @@
 level.dat
 level.dat_old
 
+# Saved plans and the route reviewer's records (data/plans/reviews/, D401) when GOS_HOME is the
+# repo: runtime data, never in git (data/curated/ stays tracked).
+/data/plans/
+
 # Python (uv, pytest, ruff)
 .venv/
 __pycache__/

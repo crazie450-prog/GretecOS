@@ -35,6 +35,7 @@ from gregtec.packupdate.plans import PLAN_ID
 from gregtec.planner.design_jobs import KINDS, Busy, DesignJobs, Job, Work
 
 if TYPE_CHECKING:
+    from gregtec.agents.route_review import Reviewer
     from gregtec.api.app import Core
 
 JsonBody = Callable[[Request], Awaitable[dict[str, Any]]]
@@ -68,9 +69,12 @@ def registry(core: "Core") -> DesignJobs:
 
 
 def designer_work(
-    home: Path, body: dict[str, Any]
+    home: Path,
+    body: dict[str, Any],
+    reviewer: Callable[[], "Reviewer"] | None = None,
 ) -> tuple[str, Work] | dict[str, Any]:
-    """(title, work) for a Designer job, checked now; or the clarifying question's answer."""
+    """(title, work) for a Designer job, checked now; or the clarifying question's answer.
+    A spec with ``review: true`` runs the route reviewer (``reviewer``) before saving."""
     from gregtec.planner import designer
 
     if set(body) - {"spec", "resolve", "pin"} or len(body) != 1:
@@ -83,8 +87,15 @@ def designer_work(
         if not isinstance(req, designer.Request):
             return {"clarify": req.card()}
         tier = f" · {spec['tier']}" if spec.get("tier") else ""
+        review = designer.wants_review(spec) and reviewer is not None
         title = f"Designer: {str(spec.get('target', '')).strip()}{tier}"
-        return title, lambda: plan_routes._changed(home, designer.design(home, req))
+        title += " · reviewed" if review else ""
+        if not (review and reviewer):
+            return title, lambda: plan_routes._changed(home, designer.design(home, req))
+        made = reviewer
+        return title, lambda: plan_routes._changed(
+            home, designer.design(home, req, reviewer=made())
+        )
     if "resolve" in body:
         pid = body["resolve"]
         if not isinstance(pid, str) or not PLAN_ID.fullmatch(pid):
@@ -163,7 +174,9 @@ def add_routes(
     @app.post("/api/designer/jobs")
     async def designer_job(request: Request, who: Trusted) -> dict[str, Any]:
         body = await json_body(request)
-        made = await asyncio.to_thread(checked, lambda: designer_work(home(), body))
+        made = await asyncio.to_thread(
+            checked, lambda: designer_work(home(), body, plan_routes.reviewer_for(core))
+        )
         return start("designer", made)
 
     @app.post("/api/power/jobs")

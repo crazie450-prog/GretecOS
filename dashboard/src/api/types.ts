@@ -943,7 +943,7 @@ export interface DesignerRoute {
   id: string;
   name: string;
   status: PlanStatus;
-  column: "base" | "simplest" | "addon";
+  column: "base" | "simplest" | "addon" | "reviewed";
   /** a base route that is also the simplest route (each node's first recipe, D389 (4)) */
   simplest: boolean;
   position: number;
@@ -955,6 +955,8 @@ export interface DesignerRoute {
   pins: PlanPin[];
   nodes: DesignerNode[];
   warnings: string[];
+  /** the reviewed route's record (D389 (7)); null on the planner's own routes */
+  review?: RouteReview | null;
   /** "affected by update" (QA:D9, WO-11.1): the export run that flagged it and what it hit */
   affected: { run: string; hits: { cite: string; why: string }[] } | null;
   /** the comparison metrics, by key (machines, eut_avg, ..., score) */
@@ -965,9 +967,23 @@ export interface DesignerRoute {
   bom: BomCard;
 }
 
+/** The route reviewer's record (D389 (7)): what it changed, and whether it edited a route. */
+export interface RouteReview {
+  id: string;
+  of: string[];
+  verdict: "ok" | "fixed" | "unresolved";
+  status: "done" | "capped" | "error" | "refused" | "skipped";
+  edited: boolean;
+  applied: { exclude: string[]; pins: { node: string; recipe: string }[] };
+  summary: string;
+  reviewed?: string | null;
+}
+
 export interface DesignerView {
   id: string;
   weights: string;
+  /** the route reviewer's last record for these routes, if it ran */
+  review?: RouteReview | null;
   routes: DesignerRoute[];
   comparison: RouteComparisonCard;
 }
@@ -1001,6 +1017,8 @@ export interface DesignSpec {
   addons?: boolean;
   /** also the simplest route (each node's first recipe), its own column; the server's default is on */
   simplest?: boolean;
+  /** the route reviewer reads the routes first (uses the AI); off unless true (D389 (7)) */
+  review?: boolean;
 }
 
 export interface Alternative {

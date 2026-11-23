@@ -242,6 +242,23 @@ def order(
     return out
 
 
+def against(
+    base: Sequence[Mapping[str, Any]],
+    plan: Mapping[str, Any],
+    prefs: Prefs = BALANCED,
+    column: str = "reviewed",
+) -> dict[str, Any]:
+    """``plan``'s rank as an extra ``column`` beside the ranked ``base`` routes (their
+    ``metrics``): scored against them as the addon column is, never moving one (the route
+    reviewer's column, D389 (7))."""
+    vals = [
+        values(p["metrics"]) for p in base if p["rank"]["column"] not in EXTRA_COLUMNS
+    ]
+    v = values(plan["metrics"])
+    score, terms = scores([*vals, v], prefs)[-1]
+    return _rank(score, terms, v, prefs, column, 1, 1)
+
+
 def _rank(
     score: float,
     terms: dict[str, float],
