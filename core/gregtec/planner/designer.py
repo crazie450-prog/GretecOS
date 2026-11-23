@@ -660,7 +660,7 @@ def view(home: Path, pid: str) -> dict[str, Any]:
                 "review": p.get("review"),  # the reviewed route's changes (D389 (7))
                 "affected": flags.get(p["id"]),
                 # every route's comparison metrics and differing choices, against all the
-                # design's routes (the card holds at most 3 of them)
+                # design's routes (the card holds at most 6 of them)
                 "metrics": {key: _metric(p, key) for key, *_ in METRICS},
                 "differs": differs,
                 "flow": cards.flow_card(p, b),

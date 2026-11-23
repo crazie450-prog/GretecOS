@@ -19,6 +19,7 @@ const DUST = "gregtech:gt.metaitem.01@2305";
 let page: Page;
 let pinnedPlan = "";
 let pinnedRecipe = "";
+let fourColumns = ""; // the first design: 3 ranked routes and the simplest route (D411 (4))
 
 test.describe.configure({ mode: "serial" });
 
@@ -50,6 +51,7 @@ test("a typed request designs every route, in the core's rank order, differences
   await page.getByTestId("designer-go").click();
   await expect(page.getByTestId("route-3-base")).toBeVisible({ timeout: 30_000 });
   const pid = planInHash();
+  fourColumns = pid;
   const ids = await routeIds();
   expect(ids[0]).toBe(pid);
   // The order on screen is the core's (rank.py's), never re-sorted: the three ranked routes,
@@ -66,6 +68,10 @@ test("a typed request designs every route, in the core's rank order, differences
   const compare = page.getByTestId("designer-compare");
   await expect(compare.locator(".route-head .gos-label")).toHaveText(["Route 1", "Route 2", "Route 3", "Simplest route"]);
   expect(core.comparison.routes.map((r) => r.id)).toEqual(ids);
+  // On monitor 2 the 4 columns sit in one row, none squeezed below the .many grid's 320px.
+  const boxes = await compare.locator("section.route").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((b) => [Math.round(b.top), b.width] as const));
+  expect(new Set(boxes.map(([top]) => top)).size).toBe(1);
+  for (const [, width] of boxes) expect(width).toBeGreaterThanOrEqual(320);
   await expect(compare.locator("li.differs").first()).toBeVisible();
   await expect(compare.locator("dd.best").first()).toBeVisible();
   // Each route's flow diagram, laid out by elkjs (the card's one layout, D159).
@@ -194,6 +200,19 @@ test("every theme reads at WCAG contrast, and nothing is cut off on the phone", 
   const cut = (await clipped(page)).filter((c) => !c.startsWith("react-flow"));
   expect(cut).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(PHONE.width);
+  // The first design's 4-column comparison card (the .many grid, D411 (4)) also reads at WCAG
+  // contrast, isn't cut off, and stacks one route under the last on the phone (D53).
+  await page.evaluate((id) => {
+    window.location.hash = `/designer/${id}`;
+  }, fourColumns);
+  const columns = page.getByTestId("designer-compare").locator("section.route");
+  await expect(columns).toHaveCount(4);
+  expect(await themeMisses(page)).toEqual({});
+  expect((await clipped(page)).filter((c) => !c.startsWith("react-flow"))).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(PHONE.width);
+  const tops = await columns.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
+  expect(new Set(tops).size).toBe(4);
+  expect(tops).toEqual([...tops].sort((a, b) => a - b));
   await page.screenshot({ path: shot("phone-designer"), fullPage: true });
   await page.setViewportSize(MONITOR_2);
   await page.screenshot({ path: shot("designer-final") });
