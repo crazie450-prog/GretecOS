@@ -35,9 +35,10 @@ only badged machines run carries the badge as a warning. Crafting-table and furn
 
 **Raw sources** (WO-3.10 F2, D389 (2), (6)): a raw input comes from an ore vein (an ore block
 GT's ore mixes place, ``ore_mix`` from ``gos ores load``: by its exact key, or any ore block of
-the mix's material in the same registry namespace, a Netherrack ore in the Nether only and an
-Endstone ore in the End only), a curated source (``data/curated/raw_inputs.tsv``: world, pump,
-mob, crop or ``dimension:<name>``), or nowhere GOS knows (allowed; the plan warns). The player
+the mix's material in the same registry namespace on a stone of ``STONE_DIMS``, a Netherrack ore
+in the Nether only and an Endstone ore in the End only; another planet's stone only by its exact
+key), a curated source (``data/curated/raw_inputs.tsv``: world, pump, mob, crop or
+``dimension:<name>``), or nowhere GOS knows (allowed; the plan warns). The player
 reaches the Overworld and the Nether, and each dimension whose unlock quest he has completed
 (``BaseInputs.dimensions``). An ore a reachable dimension places is a ``raw`` boundary from the
 start (GT's space miner makes ores too, never expanded); a recipe that consumes an input only
@@ -97,9 +98,16 @@ RESEARCH_MAPS = ("gt.recipe.researchStation", "gt.recipe.scanner")
 RAW_INPUTS = chains.REPO_ROOT / "data" / "curated" / "raw_inputs.tsv"
 RAW_SOURCES = ("world", "pump", "mob", "crop")
 DIMENSION_SOURCE = "dimension:"
-# GT ore stones found in one dimension only (WO-3.10 F2): their ores are placed there or not
-# at all, whatever else their material's mixes place.
-STONE_DIMS: dict[str, frozenset[str]] = {
+# The ore stones an ore mix's material reaches (WO-3.10 F2): None, wherever its mixes are; a
+# set, only there (Netherrack and Endstone are found in one dimension only). A stone not listed
+# (Horus, Seth, Packed Ice: other planets' rock) counts only where a mix names its exact block.
+STONE_DIMS: dict[str, frozenset[str] | None] = {
+    "ore": None,
+    "oreSmall": None,
+    "oreBlackgranite": None,
+    "oreRedgranite": None,
+    "oreMarble": None,
+    "oreBasalt": None,
     "oreNetherrack": frozenset({"Nether"}),
     "oreEndstone": frozenset({"The End", "EndAsteroid"}),
 }
@@ -1160,8 +1168,9 @@ def sources(conn: sqlite3.Connection) -> Sources:
     """The raw-input sources for one build. Read per build, not in the shared reader: ``gos
     ores load`` doesn't change the DB generation (D352). An ore block gets its mixes'
     dimensions by its exact key, and every ore block of a mix's material (in the same
-    registry namespace: Minecraft's coal ore is Coal too) gets them as well, a Netherrack
-    ore only the Nether's and an Endstone ore only the End's. With no mixes loaded, none."""
+    registry namespace: Minecraft's coal ore is Coal too) on a stone of :data:`STONE_DIMS`
+    gets them as well, a Netherrack ore only the Nether's and an Endstone ore only the End's
+    (another planet's stone only by its exact key). With no mixes loaded, none."""
     exact: dict[str, set[str]] = {}
     by_material: dict[tuple[str, str], set[str]] = {}
     for dims_json, ores_json in conn.execute(
@@ -1183,10 +1192,10 @@ def sources(conn: sqlite3.Connection) -> Sources:
             " WHERE gt_prefix LIKE 'ore%' AND nbt_hash = '' AND gt_material IS NOT NULL"
         ):
             dims = by_material.get((str(reg).split(":")[0], str(material)))
-            if dims is None:
-                continue  # no mix places its material: its source is unknown
-            if prefix in STONE_DIMS:
-                dims = dims & STONE_DIMS[prefix]
+            if dims is None or prefix not in STONE_DIMS:
+                continue  # no mix places its material or its stone: unknown here
+            if (only := STONE_DIMS[prefix]) is not None:
+                dims = dims & only
             vein.setdefault(f"{reg}@{meta}", set()).update(dims)
     return Sources(
         {k: tuple(sorted(v)) for k, v in sorted(vein.items())},

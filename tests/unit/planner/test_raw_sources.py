@@ -130,15 +130,19 @@ def test_no_ore_mixes_gate_nothing(conn: sqlite3.Connection) -> None:
 def test_a_netherrack_ore_is_placed_in_the_nether_only(
     conn: sqlite3.Connection,
 ) -> None:
-    conn.execute(
+    conn.executemany(
         "INSERT INTO item(registry_name, meta, name_en, gt_prefix, gt_material)"
-        " VALUES (?, 6, 'Nether Ore A', 'oreNetherrack', 'Testium')",
-        (T,),
+        " VALUES (?, ?, ?, ?, 'Testium')",
+        [
+            (T, 6, "Nether Ore A", "oreNetherrack"),
+            (T, 7, "Horus Ore A", "oreHorus"),  # another planet's rock
+        ],
     )
     add_mix(conn, ["Overworld"])
     vein = graph.sources(conn).vein
     # Ore A by its exact key and its material; the Netherrack one: Testium, but not here.
     assert vein[ORE_A] == ("Overworld",) and vein[NETHER_ORE_A] == ()
+    assert f"{T}@7" not in vein  # a stone not in STONE_DIMS: only by its exact key
     before = graph.sources(conn).digest()
     add_mix(conn, ["Nether", "Overworld"])
     vein = graph.sources(conn).vein
