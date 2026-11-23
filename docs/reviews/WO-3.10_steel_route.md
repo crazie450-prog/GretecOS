@@ -195,7 +195,7 @@ secret: recipe ids and item keys only.
 
 Neither change touches `gtmath/`, ranking, the solver or the machine model.
 
-## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391)
+## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393)
 
 Each item is deterministic, uses only data GOS has (or a curated table, like `raw_inputs.tsv`
 and `scarcity.tsv`), and comes with tests. The steel-at-MV acceptance test above is the shared
@@ -231,7 +231,13 @@ like a tier-capped one, so a pin can still bring it back and the alternatives li
 `unknown` raws are kept but warned, and rank after a sourced one (F3). Tests: a fixture with a
 two-dimension ore mix; the harness steel test.
 
-**F3. Inputs closer to the world first (R2).** In `_cheap`, before `rec.tier`, add a key: whether
+**F3. Inputs closer to the world first (R2).** *Built (D393): a sourcing rank (at hand or one
+step from it; some inputs not; an unknown raw) before tier, and the unsourced count before the
+recipe key; a fluid cell counts as its fluid, and a recipe using cells is never fully sourced;
+with no ore mixes loaded an unknown raw ranks as
+unsourced, with a warning. On the harness with the run's mixes, steel's first candidate is the
+Bricked Blast Furnace's iron dust + coal, the EBF still beside it; the top plan is unchanged
+until F4.* In `_cheap`, before `rec.tier`, add a key: whether
 the recipe's consumed inputs are all *sourced*, meaning a sourced raw, stock, a line output, or
 one recipe step from those. Then replace the hash as the last tie-break by the number of
 consumed inputs that aren't sourced, before `rec.id`. This keeps the order deterministic and

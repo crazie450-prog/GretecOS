@@ -12,7 +12,8 @@ input comes from.
 (D389): a strict xfail until then, so it fails CI the day the planner starts passing it
 (remove the mark in that PR). ``test_a_locked_import_is_warned`` holds today. The fixture loads
 the run's GT ore mixes as `gos ores load` does (no world, so no veins), so the raw-source gate
-(F2, D391) sees vein sources: ``test_twilight_raws_are_gated`` checks it.
+(F2, D391) sees vein sources: ``test_twilight_raws_are_gated`` checks it, and
+``test_steel_starts_with_iron_and_coal`` checks F3's ranking on them (D393).
 ``GOS_SERVER_RUN`` names another server run folder.
 """
 
@@ -21,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -41,7 +43,8 @@ STEELEAF_INGOT = "gregtech:gt.metaitem.01@11339"
 STEELEAF_ALLOY = "r:gt.recipe.alloysmelter/1d5e67877281"  # nuggets -> Steeleaf ingot
 IRON_ORE = "gregtech:gt.blockores2@32"
 NETHER_IRON_ORE = "gregtech:gt.blockores2@1032"
-MV = 2
+PLATINUM = "gregtech:gt.metaitem.01@2085"
+MV, IV = 2, 5
 IRON = {"Iron", "WroughtIron", "PigIron"}
 CARBON = {"Coal", "Charcoal", "Coke", "Carbon", "Lignite"}
 TWILIGHT = {"Steeleaf", "Knightmetal", "FierySteel", "IronWood"}
@@ -140,9 +143,26 @@ def test_a_locked_import_is_warned(conn: sqlite3.Connection) -> None:
             assert w.split()[1] in imports
 
 
+def test_steel_starts_with_iron_and_coal(conn: sqlite3.Connection) -> None:
+    """F3 (D389 (3), D393): with the run's ore mixes loaded, iron dust is one step from its
+    veins' ores, so steel's first candidate is the Bricked Blast Furnace's iron dust + coal,
+    and the EBF is still offered beside it (D389 (1)). The platline still builds in time."""
+    g = graph.build(conn, Request(STEEL, tier_cap=MV), DefaultBaseInputs(MV))
+    steel = g.item(STEEL)
+    first = g.recipe(steel.candidates[0].recipe)
+    assert first.map == "gt.recipe.primitiveblastfurnace", first.id
+    keys = {p.key for p in first.inputs if p.consumed}
+    assert materials(conn, keys) & IRON, keys
+    assert "minecraft:coal@0" in keys or materials(conn, keys) & CARBON, keys
+    assert any(g.recipe(r).map == "gt.recipe.blastfurnace" for r in steel.chosen)
+    started = time.perf_counter()
+    graph.build(conn, Request(PLATINUM, tier_cap=IV), DefaultBaseInputs(0))
+    assert time.perf_counter() - started < 2.0  # §8 row 3.3's LIMIT_S
+
+
 @pytest.mark.xfail(
     strict=True,
-    reason="WO-3.10: F1 and F2 are built; F3 and F4 are not yet",
+    reason="WO-3.10: F1, F2 and F3 are built; F4 is not yet",
 )
 def test_steel_at_mv_is_iron_and_carbon(
     conn: sqlite3.Connection, best: dict[str, Any]

@@ -205,7 +205,9 @@ def test_epoxid_stays_out_of_other_chains(conn: sqlite3.Connection) -> None:
         if c.chain in ("naquadah", "platline", "rare-earths")
     }
     assert not other & (ids - {CALCIUM}), sorted(other & ids)
-    assert g.item(CALCIUM).template is None
+    # F3 (D393): calcium acetate now comes from quicklime (one step from the world) rather
+    # than calcium dust (only EU-less or loop makers), so calcium is not in the graph at all.
+    assert CALCIUM not in ids or g.item(CALCIUM).template is None
     assert set(g.templates) <= {"basic-chemicals"}
     assert g.item("fluid:saltwater").chosen[0] == "r:gt.recipe.mixer/41bbc2fe4611"
     sodium = g.item("gregtech:gt.metaitem.01@2017")
