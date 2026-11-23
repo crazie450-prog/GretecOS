@@ -30,9 +30,10 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gregtec.packupdate.plans import PLAN_ID
+from gregtec.planner import effort, rank
 from gregtec.planner import plan as plan_mod
 from gregtec.planner.outputs import FILES, bom, gtnhflow, gtnhplanner, mermaid, png
 from gregtec.planner.outputs.book import Book, run_id
@@ -280,11 +281,17 @@ def set_status(conn: sqlite3.Connection, pid: str, status: str) -> str:
 
 
 def load(home: Path, pid: str) -> dict[str, Any]:
-    """A saved plan's canonical JSON."""
+    """A saved plan's canonical JSON. A production plan saved before ``hand_fed_s`` existed
+    has its hand-fed effort made again with the vault's current ``me/prefs.md`` setting
+    (:func:`gregtec.planner.effort.rescore`, D417 (2)); the file is left as it was, and its
+    stored ``rank`` with it."""
     if not PLAN_ID.fullmatch(pid):
         raise ValueError(f"{pid!r} isn't a plan id")
     data = (home / json_rel(pid)).read_bytes()
     out = json.loads(data)
     if not isinstance(out, dict) or out.get("id") != pid:
         raise ValueError(f"{json_rel(pid)} isn't plan {pid}")
+    if effort.stale(out):  # saved before hand_fed_s (D417 (2)): re-scored as it is read
+        hand_fed_s = rank.read_prefs(home / "vault").hand_fed_s
+        return cast(dict[str, Any], plan_mod._rounded(effort.rescore(out, hand_fed_s)))
     return out

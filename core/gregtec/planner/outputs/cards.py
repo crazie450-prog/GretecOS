@@ -133,7 +133,7 @@ def effort_card(plan: Mapping[str, Any]) -> dict[str, Any]:
     eff = m["effort"]
     rows = effort.table(eff)
     fed = sum(int(r["machines"]) for r in eff["rows"] if r["part"] == "hand")
-    each = effort.duration(effort.HAND_FED_S / 3600.0)  # D411 (1)
+    each = effort.duration(float(eff.get("hand_fed_s", effort.HAND_FED_S)) / 3600.0)
     head = [
         ("plan", f"plan:{plan['id']}"),
         ("effort", effort.duration(float(m["eff_h"]))),

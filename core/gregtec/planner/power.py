@@ -1185,6 +1185,7 @@ def build_plan(
     opt: Option,
     farm_map: Mapping[str, farms.Farm],
     n: int,
+    hand_fed_s: float = effort.HAND_FED_S,
 ) -> dict[str, Any]:
     """The option as plan JSON: the chain as a §7.1 plan (WO-3.4's ``plan._plan``), then the
     generator, farms and slot members as nodes of their own, and the ``power`` section."""
@@ -1202,7 +1203,16 @@ def build_plan(
     fuel_rate = gen.fuel_per_s * opt.units
     chain_req = replace(opt.chain.request, qty=max(fuel_rate, 1e-12))
     p = plan._plan(
-        g, chain_req, run_key, sub_net, sub_flow, opt.chain.sized, "base", n, False
+        g,
+        chain_req,
+        run_key,
+        sub_net,
+        sub_flow,
+        opt.chain.sized,
+        "base",
+        n,
+        False,
+        hand_fed_s,
     )
     nodes = p["nodes"]
     for node in nodes:
@@ -1480,6 +1490,7 @@ def _metrics(
             "build_h": 0.0,
             "unlock_h": 0.0,
             "craft_s": effort.CRAFT_S,
+            "hand_fed_s": effort.HAND_FED_S,
             "rows": [],
             "components": [],
             "unlocks": [],
@@ -1673,6 +1684,7 @@ def design(
             base,
             tier,
             craft_s=prefs.craft_s,
+            hand_fed_s=prefs.hand_fed_s,
             templates=templates,
             run_id=run,
         )
@@ -1683,7 +1695,7 @@ def design(
     sized: list[tuple[int, Option, dict[str, Any], float | None, str]] = []
     progress.stage("lines")
     for n, opt in enumerate(options, 1):
-        p = build_plan(conn, run_key, req, opt, farm_map, n)
+        p = build_plan(conn, run_key, req, opt, farm_map, n, prefs.hand_fed_s)
         net_unit = float(p["power"]["net_eut"])
         units, why = _units(req, net_unit, _upkeep(p["boundary"]["in"], free))
         sized.append((n, opt, p, units, why))
@@ -1733,7 +1745,7 @@ def design(
             except solve.SolveError as exc:
                 rejected.append((opt.gen.id, f"at {units:g} units: {exc}"))
                 continue
-            p = build_plan(conn, run_key, req, opt, farm_map, n)
+            p = build_plan(conn, run_key, req, opt, farm_map, n, prefs.hand_fed_s)
         if why:
             p.setdefault("warnings", []).append(why)
         proof = sustain.validate(conn, p, free, farm_map)

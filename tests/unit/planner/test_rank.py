@@ -177,7 +177,7 @@ def test_weights_change_the_order() -> None:
 def test_parse_prefs_reads_the_grammar() -> None:
     text = (
         "---\nid: me-prefs\nt: prefs\nupd: 2026-11-11\n---\n"
-        "weights: balanced\nw_scarcity: 2\nw_effort: 0.5\ncraft_s: 3\n"
+        "weights: balanced\nw_scarcity: 2\nw_effort: 0.5\ncraft_s: 3\nhand_fed_s: 90\n"
         "note: w_machines: 9 in a note is not a weight\n"
         "```tsv\nw_eut: 7\n```\n"
     )
@@ -185,6 +185,7 @@ def test_parse_prefs_reads_the_grammar() -> None:
     assert p.weight("scarcity") == 2 and p.weight("effort") == 0.5
     assert p.weight("machines") == 1 and p.weight("eut") == 1
     assert p.craft_s == 3 and p.name == "custom" and p.notes == ()
+    assert p.hand_fed_s == 90  # D417 (1)
     assert rank.describe(p) == (
         "ranked by weights (custom): machines 1, new machine types 1, EU/t 1, effort 0.5, "
         "scarcity 2, complexity 1"
@@ -197,6 +198,12 @@ def test_parse_prefs_keeps_defaults_on_bad_values() -> None:
     )
     assert p == rank.Prefs(notes=p.notes)
     assert len(p.notes) == 5 and p.name == "balanced"
+    # D417 (1): hand_fed_s is checked as craft_s is: a time > 0, else 300 s and a note.
+    for bad in ("0", "-5", "soon", "inf"):
+        q = rank.parse_prefs(f"hand_fed_s: {bad}\n")
+        assert q == rank.Prefs(notes=q.notes) and q.hand_fed_s == 300
+        assert q.notes == (f"hand_fed_s: {bad!r} is not a time > 0; 300 s used",)
+    assert rank.BALANCED.hand_fed_s == 300
     zero = rank.parse_prefs("".join(f"w_{m}: 0\n" for m in rank.METRICS))
     assert zero.as_dict() == rank.BALANCED.as_dict() and zero.notes
 

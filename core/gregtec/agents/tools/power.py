@@ -226,6 +226,7 @@ def effort_estimate(call: Call, args: dict[str, Any], offset: int) -> Result:
             ("unlock_h", m.get("unlock_h")),
             ("uncounted", int(eff.get("uncounted") or 0)),
             ("craft_s", eff.get("craft_s")),
+            ("hand_fed_s", eff.get("hand_fed_s", effort.HAND_FED_S)),
             ("unlocks", ", ".join(eff.get("unlocks") or ()) or "none"),
         ],
         notes=[

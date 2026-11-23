@@ -261,7 +261,15 @@ def route(
         "hand_h": effort.get("hand_h", 0.0),
         "effort": {
             k: effort[k]
-            for k in ("craft_s", "rows", "components", "unlocks", "uncounted", "notes")
+            for k in (
+                "craft_s",
+                "hand_fed_s",
+                "rows",
+                "components",
+                "unlocks",
+                "uncounted",
+                "notes",
+            )
         },
         "complexity": complexity(g, plan),
     }

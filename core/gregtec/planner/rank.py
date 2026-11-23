@@ -24,7 +24,8 @@ and keep their own columns after them (simplest, then addon), so the base order 
 **Weights** live in the vault's ``me/prefs.md`` (§6.2 grammar, read only here; never written):
 ``weights: balanced`` (D67: every weight 1) and optional ``w_<metric>: <number>`` lines that
 override one weight (then the set is ``custom``); ``craft_s: <seconds>`` sets the effort model's
-time per crafting-table step. Every result prints its weights (:func:`describe`).
+time per crafting-table step, ``hand_fed_s: <seconds>`` its effort per hand-fed machine (D417 (1)).
+Every result prints its weights (:func:`describe`).
 
 **Power lines** (WO-4.2, plan §7.2 objective modes, D13, D67, D235): :func:`order_power` ranks a
 power design's options, by mode. ``best`` (and ``self_sustaining``, among the lines that pass the
@@ -85,6 +86,7 @@ class Prefs:
     craft_s: float = effort.CRAFT_S
     notes: tuple[str, ...] = ()
     power: tuple[tuple[str, float], ...] = tuple((m, 1.0) for m in POWER_METRICS)
+    hand_fed_s: float = effort.HAND_FED_S  # D417 (1)
 
     def weight(self, metric: str) -> float:
         return dict(self.weights)[metric]
@@ -113,6 +115,7 @@ def parse_prefs(text: str) -> Prefs:
     weights = {m: 1.0 for m in METRICS}
     power = {m: 1.0 for m in POWER_METRICS}
     craft_s = effort.CRAFT_S
+    hand_fed_s = effort.HAND_FED_S
     custom = False
     notes: list[str] = []
     lines = text.replace("\r\n", "\n").split("\n")
@@ -148,6 +151,12 @@ def parse_prefs(text: str) -> Prefs:
                 notes.append(f"craft_s: {value!r} is not a time > 0; 2 s used")
             else:
                 craft_s = v
+        elif key == "hand_fed_s":
+            v = _number(value)
+            if v is None or v <= 0:
+                notes.append(f"hand_fed_s: {value!r} is not a time > 0; 300 s used")
+            else:
+                hand_fed_s = v
     if not any(weights.values()):
         notes.append("every weight is 0: balanced used (D67)")
         weights = {m: 1.0 for m in METRICS}
@@ -162,6 +171,7 @@ def parse_prefs(text: str) -> Prefs:
         craft_s,
         tuple(notes),
         tuple((m, power[m]) for m in POWER_METRICS),
+        hand_fed_s,
     )
 
 

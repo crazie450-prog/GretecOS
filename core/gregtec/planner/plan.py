@@ -166,13 +166,16 @@ def design(
     excluded = request.constraints.excluded_mtes()
     base_sized = sizing.size(conn, g, player, excluded_mtes=excluded)
     built: list[dict[str, Any]] = []
+    hand_fed_s = prefs.hand_fed_s
     net = network(g, request, base_sized, base_only=request.addons)
     for n, flow in enumerate(solve.routes(net, request.routes), 1):
         built.append(
-            _plan(g, request, run_key, net, flow, base_sized, "base", n, exact)
+            _plan(
+                g, request, run_key, net, flow, base_sized, "base", n, exact, hand_fed_s
+            )
         )
     if request.simplest:
-        _add_simplest(g, request, run_key, net, base_sized, exact, built)
+        _add_simplest(g, request, run_key, net, base_sized, exact, built, hand_fed_s)
     if request.addons:
         addon_sized = sizing.size(conn, g, player, addon=True, excluded_mtes=excluded)
         addon_net = network(g, request, addon_sized, base_only=False)
@@ -186,7 +189,16 @@ def design(
         ):
             built.append(
                 _plan(
-                    g, request, run_key, addon_net, best, addon_sized, "addon", 1, exact
+                    g,
+                    request,
+                    run_key,
+                    addon_net,
+                    best,
+                    addon_sized,
+                    "addon",
+                    1,
+                    exact,
+                    hand_fed_s,
                 )
             )
     ids = [p["id"] for p in built]
@@ -198,6 +210,7 @@ def design(
         base,
         g.tier_cap,
         craft_s=prefs.craft_s,
+        hand_fed_s=hand_fed_s,
         templates=templates,
         run_id=g.run_id,
     )
@@ -227,6 +240,7 @@ def _add_simplest(
     sized: Mapping[str, sizing.Sized],
     exact: bool,
     built: list[dict[str, Any]],
+    hand_fed_s: float = effort.HAND_FED_S,
 ) -> None:
     """The simplest route (D389 (4)): each primary node's first candidate, pins kept. Added
     as its own column, or flagged on the base route that already has exactly its recipes."""
@@ -241,7 +255,9 @@ def _add_simplest(
         if frozenset(n["recipe"] for n in p["nodes"]) == recipes:
             p["route"]["simplest"] = True
             return
-    built.append(_plan(g, request, run_key, net, flow, sized, "simplest", 1, exact))
+    built.append(
+        _plan(g, request, run_key, net, flow, sized, "simplest", 1, exact, hand_fed_s)
+    )
 
 
 def _rounded(value: object) -> object:
@@ -372,6 +388,7 @@ def _plan(
     column: str,
     n: int,
     exact: bool,
+    hand_fed_s: float = effort.HAND_FED_S,
 ) -> dict[str, Any]:
     rate, window = rate_and_window(request)
     depth = {i.id: i.depth for i in g.items}
@@ -454,11 +471,7 @@ def _plan(
             warnings.append(f"{pid} on mte:{option.mte_id} ({option.name}) is {b}")
         nodes.append(node)
     for (mte, name), pids in sorted(hand.items()):
-        warnings.append(
-            f"mte:{mte} ({name}) is fed and emptied by hand, no pipe or hopper"
-            f" ({', '.join(pids)}); the route's effort counts"
-            f" {effort.duration(effort.HAND_FED_S / 3600.0)} per machine (D411 (1))"
-        )
+        warnings.append(effort.hand_warning(mte, name, pids, hand_fed_s))
     edges = _edges(net, flow, node_of)
     target_out = dict(flow.exports).get(g.target, rate)
     target: dict[str, Any] = {"id": g.target, "rate_s": _num(target_out)}
