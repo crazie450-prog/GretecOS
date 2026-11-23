@@ -282,10 +282,29 @@ describe("the Designer view", () => {
     });
     const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
     expect(designs).toEqual([
-      { spec: { target: "ingot", rate: "1/s", tier: "HV", routes: 3, addons: false } },
-      { spec: { target: STEEL, rate: "1/s", tier: "HV", routes: 3, addons: false } },
+      { spec: { target: "ingot", batch: "64", tier: "HV", routes: 3, addons: false } },
+      { spec: { target: STEEL, batch: "64", tier: "HV", routes: 3, addons: false } },
     ]);
     await screen.findByTestId("route-1-base");
+  });
+
+  it("sends a typed rate as a rate, and shows a batch's ETA in the route header (D389 (5))", async () => {
+    const batch = view("pl-cccccccccc", [
+      route("pl-cccccccccc", 1, {
+        target: { id: STEEL, name: "Steel Ingot", rate_s: 0.0178, qty: 64, window_s: 3600, eta_s: 3291.43 },
+      }),
+    ]);
+    jobAnswers({ ids: ["pl-cccccccccc"], problems: [], view: batch });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
+    fireEvent.change(screen.getByTestId("designer-rate"), { target: { value: "2/s" } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
+    expect(designs).toEqual([{ spec: { target: STEEL, rate: "2/s", routes: 3, addons: false } }]);
+    const head = await screen.findByTestId("route-1-base");
+    expect(head.textContent).toContain("batch 64 · ETA 3291 s");
   });
 
   it("tries the floor plan again when its panel is reopened after a failed load", async () => {

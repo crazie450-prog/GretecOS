@@ -947,7 +947,8 @@ export interface DesignerRoute {
   position: number;
   of: number;
   score: number;
-  target: { id: string; name: string; rate_s: number };
+  /** a batch (D389 (5)) also has its qty, the window it is sized for and its ETA, in seconds */
+  target: { id: string; name: string; rate_s: number; qty?: number; window_s?: number; eta_s?: number };
   tier_cap: string;
   pins: PlanPin[];
   nodes: DesignerNode[];
@@ -990,6 +991,9 @@ export type DesignJobBody =
 export interface DesignSpec {
   target: string;
   rate?: string;
+  /** a batch quantity; with neither rate nor batch the server makes a batch of 64 */
+  batch?: string;
+  within?: string;
   tier?: string;
   routes?: number;
   addons?: boolean;

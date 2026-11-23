@@ -64,7 +64,7 @@ DESIGN_PRODUCTION_SCHEMA: dict[str, Any] = {
         },
         "rate": {
             "type": "string",
-            "description": 'a rate: "2/s", "30/min", "100/h" (default 1/s)',
+            "description": 'a rate: "2/s", "30/min", "100/h" (no rate or batch: a batch of 64)',
             "maxLength": 40,
         },
         "batch": {
@@ -368,6 +368,11 @@ def plan_get(call: Call, args: dict[str, Any], offset: int) -> Result:
         ("status", route["status"]),
         ("target", f"{route['target']['name']} [{p['target']['id']}]"),
         ("rate_s", p["target"]["rate_s"]),
+        *(
+            [("batch", p["target"]["qty"]), ("eta_s", p["target"]["eta_s"])]
+            if p["target"].get("eta_s") is not None
+            else []
+        ),
         ("tier_cap", p["tier_cap"]),
         ("rank", f"{route['position']} of {route['of']} ({route['column']})"),
         ("score", route["score"]),

@@ -69,16 +69,18 @@ function Cite({ cite }: { cite: string | null }) {
 
 function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void }) {
   const [target, setTarget] = useState("");
-  const [rate, setRate] = useState("1/s");
+  const [amount, setAmount] = useState("64");
   const [tier, setTier] = useState("");
   const [routes, setRoutes] = useState(3);
   const [addons, setAddons] = useState(false);
   const submit = (e: FormEvent): void => {
     e.preventDefault();
     if (!target.trim()) return;
+    // A rate has a "/" (2/s); a plain number is a batch; nothing is the server's batch of 64 (D389 (5)).
+    const a = amount.trim();
     props.onDesign({
       target: target.trim(),
-      rate: rate.trim() || "1/s",
+      ...(a ? (a.includes("/") ? { rate: a } : { batch: a }) : {}),
       ...(tier ? { tier } : {}),
       routes,
       addons,
@@ -99,13 +101,13 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
           />
         </label>
         <label className="field small">
-          <span className="gos-label">Rate</span>
+          <span className="gos-label">Amount</span>
           <input
             className="ask-input num"
-            value={rate}
-            onChange={(e) => setRate(e.target.value)}
-            placeholder="2/s"
-            aria-label="Rate: 2/s, 30/min, 100/h"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="64"
+            aria-label="Amount: a batch (64) or a rate (2/s, 30/min, 100/h)"
             data-testid="designer-rate"
           />
         </label>
@@ -332,7 +334,11 @@ function RouteColumn(props: {
       <div className="designer-cites">
         <Cite cite={`plan:${r.id}`} />
         <span className="gos-src">
-          {r.target.name} · {plain(r.target.rate_s)}/s · cap <TierChip tier={r.tier_cap} />
+          {r.target.name} ·{" "}
+          {r.target.eta_s != null && r.target.qty != null
+            ? `batch ${plain(r.target.qty)} · ETA ${plain(Math.round(r.target.eta_s))} s`
+            : `${plain(r.target.rate_s)}/s`}{" "}
+          · cap <TierChip tier={r.tier_cap} />
         </span>
       </div>
       {r.affected && (

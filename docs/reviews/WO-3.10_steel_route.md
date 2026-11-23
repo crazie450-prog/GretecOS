@@ -262,7 +262,12 @@ first recipe after F1-F3, and the result is one route with the fewest steps amon
 the D11 "simplest at the tier" promise made literal. It is offered next to the 2-3 ranked routes
 rather than replacing them, unless Clayton prefers it as the default (Question 4).
 
-**F6. Sane sizing defaults (R7).** A missing rate becomes a **batch**: `qty` items, with the
+**F6. Sane sizing defaults (R7).** *Built (D397): no amount is a batch of 64
+(`request.DEFAULT_BATCH`, applied by `gos plan`, `designer.request_from_spec` and so the agent
+tool, the Designer form and API; the `Request` dataclass default stays 1/s). The `gos plan`
+summary, `plan_get` summary and the Designer's route header show a batch's ETA. The acceptance
+test now asks for a batch of 64 and stays xfail: 12 machines (7 Bricked Blast Furnaces at
+7200 ticks an ingot fill the hour) and its iron is magnetite's.* A missing rate becomes a **batch**: `qty` items, with the
 ETA reported, instead of 1/s. Or the default rate becomes a smaller one, Clayton's choice
 (Question 5). Either way the plan's name already shows the rate ("· 1/s ·"); the Designer should
 put it in front of him before solving. Tests: request defaults, CLI default.

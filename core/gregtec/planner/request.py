@@ -50,6 +50,10 @@ MAX_TIER = 14  # MAX: GT's last real voltage tier (VN[15] is its error tier)
 MAX_COIL = 13  # tiers.COILS: Cupronickel 0 .. Eternal 13
 MAX_ROUTES = 3
 VERSION = 1  # of the canonical form
+# What a person or agent who names no amount gets: a batch of 64, with its ETA (D389 (5)).
+# Applied by the entry points (plancli, designer.request_from_spec); the dataclass default
+# stays a rate of 1/s, so library callers and stored requests keep their meaning.
+DEFAULT_BATCH = 64.0
 
 # Stable keys (the tool layer's, gregtec.agents.tools.items): items registry@meta[#nbt],
 # fluids fluid:<name>; requests and pins never name numeric ids.

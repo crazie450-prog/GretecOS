@@ -428,6 +428,14 @@ def run_cli(home: Path, monkeypatch: pytest.MonkeyPatch, *argv: str) -> tuple[in
     return plancli.run(parser.parse_args(["plan", *argv]), out), out.getvalue()
 
 
+def test_request_default_is_still_a_rate() -> None:
+    """D389 (5)'s batch of 64 is the entry points' default, not the dataclass's: library
+    callers and stored requests keep a rate of 1/s."""
+    r = Request(WIDGET)
+    assert (r.mode, r.qty, r.unit) == ("rate", 1.0, "/s")
+    assert Request.from_dict({"target": WIDGET}).rate_per_s == 1.0
+
+
 def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     home = db.parent.parent
     code, text = run_cli(home, monkeypatch, "widget", "--tier", "MV", "--qty", "2/s")
@@ -448,6 +456,16 @@ def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         prefs.unlink()
     assert code == 0 and text.startswith("ranked by weights (custom):")
     assert "EU/t 3" in text and "Ranked by code, weights (custom)" in text
+    # no amount: a batch of 64 with its ETA (D389 (5)); --within still sets its window
+    code, text = run_cli(home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1")
+    assert code == 0 and "Widget line · 64 batch · MV" in text, text
+    assert "  batch 64: ETA " in text and "sized at 64 per 3,600 s" in text
+    code, text = run_cli(
+        home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1", "--within", "10min"
+    )
+    assert code == 0 and "sized at 64 per 600 s" in text, text
+    code, text = run_cli(home, monkeypatch, WIDGET, "--qty", "2/s", "--within", "1h")
+    assert code == 2 and "--within is for --batch only" in text
     code, text = run_cli(
         home, monkeypatch, WIDGET, "--tier", "MV", "--json", "--routes", "1"
     )

@@ -74,6 +74,8 @@ def test_plan_get_views_and_pin(run: Runner) -> None:
     summary = run("plan_get", id=f"plan:{ids[0]}", view="summary")
     assert summary.head["plan"] == f"plan:{ids[0]}"
     assert summary.head["status"] == "proposed" and summary.head["pins"] == "none"
+    # no amount: a batch of 64, and the summary says its ETA (D389 (5))
+    assert summary.head["batch"] == "64" and float(summary.head["eta_s"]) > 0
     views = {i: run("plan_get", id=i, view="nodes") for i in ids}
     assert all(r["recipe"].startswith("r:") for v in views.values() for r in v.rows)
     # The route with a dust node (the EBF's; the Bricked Blast Furnace's has none, D390).

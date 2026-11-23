@@ -182,6 +182,21 @@ def test_design_refusals(home: Path) -> None:
         designer.design(home, huge)
 
 
+def test_request_from_spec_defaults_to_a_batch_of_64(home: Path) -> None:
+    """D389 (5): a spec with no amount is a batch of 64 (with ``within`` if given)."""
+    req = designer.request_from_spec(home, {"target": WIDGET, "tier": "MV"})
+    assert isinstance(req, Request)
+    assert (req.mode, req.qty, req.within_s) == ("batch", 64.0, None)
+    req = designer.request_from_spec(home, {"target": WIDGET, "within": "10min"})
+    assert isinstance(req, Request) and (req.mode, req.within_s) == ("batch", 600.0)
+    req = designer.request_from_spec(home, {"target": WIDGET, "rate": "2/s"})
+    assert isinstance(req, Request) and (req.mode, req.qty) == ("rate", 2.0)
+    with pytest.raises(designer.DesignerError, match="within is for a batch only"):
+        designer.request_from_spec(
+            home, {"target": WIDGET, "rate": "2/s", "within": "1h"}
+        )
+
+
 def test_resolve_target(home: Path) -> None:
     found = designer.resolve_target(home, WIDGET)
     assert found.key == WIDGET  # type: ignore[union-attr]

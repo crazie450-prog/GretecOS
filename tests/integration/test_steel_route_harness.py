@@ -9,7 +9,7 @@ Bricked Blast Furnace's iron + coal recipes have no machine model and nothing ga
 input comes from.
 
 ``test_steel_at_mv_is_iron_and_carbon`` is the acceptance test of the fixes Clayton approved
-(D389): a strict xfail until then, so it fails CI the day the planner starts passing it
+(D389), on a batch of 64 (what a request with no amount gets, F6): a strict xfail until then, so it fails CI the day the planner starts passing it
 (remove the mark in that PR). ``test_a_locked_import_is_gated_and_warned`` checks F4 (D395).
 The fixture loads
 the run's GT ore mixes as `gos ores load` does (no world, so no veins), so the raw-source gate
@@ -35,7 +35,7 @@ from gregtec.db import quests as quest_db
 from gregtec.ingest import collect
 from gregtec.ingest import quests as bq
 from gregtec.planner import graph, plan
-from gregtec.planner.request import DefaultBaseInputs, Request
+from gregtec.planner.request import DEFAULT_BATCH, DefaultBaseInputs, Request
 
 REPO = Path(__file__).resolve().parents[2]
 STEEL = "gregtech:gt.metaitem.01@11305"
@@ -80,7 +80,9 @@ def conn(
 
 @pytest.fixture(scope="module")
 def best(conn: sqlite3.Connection) -> dict[str, Any]:
-    d = plan.design(conn, Request(STEEL, tier_cap=MV), DefaultBaseInputs(MV))
+    # No amount named: a batch of 64, as the entry points make it (D389 (5), F6).
+    req = Request(STEEL, tier_cap=MV, mode="batch", qty=DEFAULT_BATCH)
+    d = plan.design(conn, req, DefaultBaseInputs(MV))
     assert d.plans
     return d.plans[0]
 
@@ -174,8 +176,10 @@ def test_steel_starts_with_iron_and_coal(conn: sqlite3.Connection) -> None:
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "WO-3.10: F1-F4 are built; the best plan is the Bricked Blast Furnace's from"
-        " magnetite and coal ores, 395 machines at the default 1/s (12 at a 64 batch)"
+        "WO-3.10: F1-F4 and F6 are built; at a batch of 64 the best plan is the Bricked"
+        " Blast Furnace's from magnetite and coal ores, 12 machines: 7 BBFs (7200 ticks an"
+        " ingot, 64 in the 3600 s window) + 5; its iron is Magnetite (not in IRON) because"
+        " iron dust's top 4 are all electrolysis; pinned to impure iron dust it is 11"
     ),
 )
 def test_steel_at_mv_is_iron_and_carbon(

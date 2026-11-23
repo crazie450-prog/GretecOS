@@ -55,6 +55,7 @@ from gregtec.planner.outputs import book as book_mod
 from gregtec.planner.outputs import cards, store
 from gregtec.planner.outputs.book import Book
 from gregtec.planner.request import (
+    DEFAULT_BATCH,
     RECIPE_KEY,
     Pin,
     Request,
@@ -162,7 +163,8 @@ def request_from_spec(
     home: Path, spec: Mapping[str, Any]
 ) -> Request | prefetch.Clarify:
     """A request from the Designer's form or ``design_production``'s spec: ``target`` (words
-    or a key), ``rate`` ("2/s", "30/min") or ``batch`` (a quantity, with ``within`` "2h"),
+    or a key), ``rate`` ("2/s", "30/min") or ``batch`` (a quantity, with ``within`` "2h"; with
+    neither, a batch of :data:`~gregtec.planner.request.DEFAULT_BATCH`, D389 (5)),
     ``tier`` (LV..MAX, else My base's), ``routes`` (1-3), ``addons`` (bool), ``pins``
     ([{node, recipe}]). An unclear target gives the clarifying question instead."""
     unknown = set(spec) - SPEC_KEYS
@@ -191,9 +193,14 @@ def request_from_spec(
                 raise DesignerError("a batch is a quantity, without /s, /min or /h")
             within = parse_duration(str(spec["within"])) if spec.get("within") else None
             return Request(found.key, mode="batch", qty=qty, within_s=within, **common)
+        if spec.get("rate") in (None, ""):  # no amount: a batch of 64 (D389 (5))
+            within = parse_duration(str(spec["within"])) if spec.get("within") else None
+            return Request(
+                found.key, mode="batch", qty=DEFAULT_BATCH, within_s=within, **common
+            )
         if spec.get("within"):
             raise DesignerError("within is for a batch only")
-        qty, unit = parse_qty(str(spec.get("rate") or "1/s"))
+        qty, unit = parse_qty(str(spec["rate"]))
         if unit is None:
             raise DesignerError("a rate needs /s, /min or /h")
         return Request(found.key, qty=qty, unit=unit, **common)

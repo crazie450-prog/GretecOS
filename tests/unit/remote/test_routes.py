@@ -156,6 +156,11 @@ def test_check_spec_parses_amounts_with_the_designer_s_rules(
     assert why in str(bad.value)
     good = {"target": "steel", "batch": "64", "within": "2h", "tier": "MV"}
     assert routes.check_spec("plan", good) == good
+    no_amount = {
+        "target": "steel",
+        "within": "2h",
+    }  # the designer's batch of 64 (D389 (5))
+    assert routes.check_spec("plan", no_amount) == no_amount
 
 
 def test_a_finished_job_is_delivered_once(core: Core, client: TestClient) -> None:

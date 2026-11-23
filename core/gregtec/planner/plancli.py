@@ -4,12 +4,15 @@
   [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
   does (an ambiguous name prints the one clarifying question and exits 3), solves up to N routes
   on the newest export run in ``GOS_HOME/data/gos.sqlite`` (read-only) with My base's defaults,
-  and prints a summary per route (with its effort breakdown table, WO-4.3), or the plans as canonical JSON lines (``--json``), or writes
+  and prints a summary per route (with its effort breakdown table, WO-4.3, and a batch's ETA),
+  or the plans as canonical JSON lines (``--json``), or writes
   each plan to ``DIR/<id>.json`` (``--out``), or saves every route into GOS_HOME (``--save``,
   WO-3.6: ``data/plans/<id>.json``, its exports, the plan row, the vault note). Routes come
   ranked (WO-3.5) with the weights from the vault's ``me/prefs.md`` (read only; balanced
   without one, D67), and the summary prints the weights first; ``--explain`` adds the templated
   explanation built from the metrics (the model-written one is the deep lane's, WO-3.7).
+- No ``--qty`` or ``--batch``: a batch of 64 (``request.DEFAULT_BATCH``, D389 (5)), with
+  ``--within`` if given.
 - ``--request FILE``: a request as JSON (``Request.from_json``) instead of TARGET and the flags.
 - ``gos plan TARGET --alternatives ITEM [--all]``: the candidate recipes for one node of the
   graph (D61), with ``--all`` the unchecked and rejected ones too.
@@ -38,6 +41,7 @@ from gregtec.db import access
 from gregtec.planner import alternatives, effort, explain, graph, plan, rank, solve
 from gregtec.planner.outputs import book, store
 from gregtec.planner.request import (
+    DEFAULT_BATCH,
     Pin,
     Request,
     RequestError,
@@ -66,7 +70,9 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.add_argument("--request", type=Path, default=None, help="a request as JSON")
     p.add_argument("--tier", default=None, help="tier cap (LV, IV, ... or 0-14)")
     p.add_argument(
-        "--qty", default="1/s", help="a rate: 2/s, 30/min, 100/h (default 1/s)"
+        "--qty",
+        default=None,
+        help="a rate: 2/s, 30/min, 100/h (default: a batch of 64, D389 (5))",
     )
     p.add_argument("--batch", default=None, help="a batch quantity instead of a rate")
     p.add_argument(
@@ -234,11 +240,19 @@ def _request(
         "pins": tuple(pins),
         "routes": args.routes,
     }
+    within = parse_duration(args.within) if args.within else None
+    if args.batch is None and args.qty is None:  # no amount: a batch of 64 (D389 (5))
+        return Request(
+            found.key,
+            mode="batch",
+            qty=DEFAULT_BATCH,
+            within_s=within,
+            **common,  # type: ignore[arg-type]
+        )
     if args.batch is not None:
         qty, unit = parse_qty(args.batch)
         if unit is not None:
             raise RequestError("--batch is a quantity, without /s, /min or /h")
-        within = parse_duration(args.within) if args.within else None
         return Request(found.key, mode="batch", qty=qty, within_s=within, **common)  # type: ignore[arg-type]
     if args.within is not None:
         raise RequestError("--within is for --batch only")
@@ -322,6 +336,14 @@ def _run(
         )
         for line in effort.text(m):
             print(line, file=out)
+        t = p["target"]
+        if t.get("eta_s") is not None:
+            print(
+                f"  batch {explain.fmt(t['qty'])}: ETA {explain.fmt(t['eta_s'])} s "
+                f"({explain.fmt(t['eta_s'] / 3600.0)} h) with these machines, sized at "
+                f"{explain.fmt(t['qty'])} per {explain.fmt(t['window_s'])} s",
+                file=out,
+            )
         print(
             f"  {len(p['nodes'])} nodes, {machines} machines, gates: "
             f"{', '.join(r['gates']) or 'none'}, every machine runs: {r['all_run']}",
