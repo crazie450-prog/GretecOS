@@ -47,7 +47,7 @@ On the phone, on **cellular** (Wi-Fi off), in your private server, with GOS runn
 
 1. `/ask text: how do I make steel?`: an answer with `r:` citations within 10 s.
 2. `/ask text: compare my steel routes` (a deep-lane question): "Handing this to the deep lane" within 10 s, the result later in the same thread.
-3. `/plan target: steel ingot amount: 2/s`: "Plan job j-... queued" within 10 s; within a few minutes a reply with the routes and `plan:` ids, **flow.png** and **bom.tsv** attached, and the phone-dashboard link. Open the PNG and the BOM on the phone; tap the link (after WO-9.3, it opens the plan in the phone dashboard).
+3. `/plan target: steel ingot amount: 2/s`: "Plan job j-... queued" within 10 s; within a few minutes a reply with the routes and `plan:` ids, **flow.png** and **bom.tsv** attached, and the phone-dashboard link. Open the PNG and the BOM on the phone; tap the link (after WO-9.3, it opens the plan in the phone dashboard). Then `/plan target: steel ingot` with no amount: a batch of 64, the reply's first line reads `(steel ingot, batch 64)` and each route ends with its ETA (D404 (9)).
 4. `/power mode: best`: "queued", then the options.
 5. `/status`: AI state, OC telemetry (with `tel:` citations once the OC agent reports) and the EU ledger.
 6. `/alerts mode: quiet hours: 2`, then `/alerts mode: on`.

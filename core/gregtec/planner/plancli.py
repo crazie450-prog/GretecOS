@@ -1,7 +1,7 @@
 """``gos plan``: the designer's routes from the command line (WO-3.4, WO-3.5).
 
 - ``gos plan TARGET [--tier T] [--qty 2/s | --batch N [--within 2h]] [--routes N] [--addons]
-  [--simplest] [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
+  [--no-simplest] [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
   does (an ambiguous name prints the one clarifying question and exits 3), solves up to N routes
   on the newest export run in ``GOS_HOME/data/gos.sqlite`` (read-only) with My base's defaults,
   and prints a summary per route (with its effort breakdown table, WO-4.3, and a batch's ETA),
@@ -13,8 +13,9 @@
   explanation built from the metrics (the model-written one is the deep lane's, WO-3.7).
 - No ``--qty`` or ``--batch``: a batch of 64 (``request.DEFAULT_BATCH``, D389 (5)), with
   ``--within`` if given.
-- ``--simplest``: also the simplest route (each node's first recipe, D389 (4)), as an extra
-  column after the ranked routes, or ``[base, simplest]`` on the base route that is it.
+- The simplest route (each node's first recipe, D389 (4)) comes too, on by default (D404 (8)):
+  an extra column after the ranked routes, or ``[base, simplest]`` on the base route that is it;
+  ``--no-simplest`` leaves it out (``--simplest`` is still accepted).
 - ``--review``: the route reviewer reads the ranked routes (D389 (7), off by default; it uses the
   AI and spends, capped by ``[budget] task_max_usd``). Its reviewed route, re-solved and scored by
   the planner, prints after the ranked ones as ``[reviewed]``, with every edit named ("EDITED by
@@ -90,8 +91,10 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.add_argument("--addons", action="store_true", help="allow addon machines (D12)")
     p.add_argument(
         "--simplest",
-        action="store_true",
-        help="also the simplest route: each node's first recipe (D389 (4))",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="also the simplest route: each node's first recipe (D389 (4)); on by "
+        "default (D404 (8)), --no-simplest leaves it out",
     )
     p.add_argument(
         "--exact", action="store_true", help="whole machine counts (integer MILP)"

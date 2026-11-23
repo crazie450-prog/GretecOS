@@ -119,8 +119,8 @@ def test_plan_and_power_from_discord_on_a_real_db(home: Path, no_key: None) -> N
 
         async def ask() -> None:
             await bot.interaction(
-                plan, "plan", {"target": "steel ingot", "amount": "2/s", "tier": "MV"}
-            )
+                plan, "plan", {"target": "steel ingot", "tier": "MV"}
+            )  # no amount: a batch of 64 with its ETA (D404 (9))
             await bot.interaction(
                 power, "power", {"mode": "self_sustaining", "tier": "LV"}
             )
@@ -133,6 +133,8 @@ def test_plan_and_power_from_discord_on_a_real_db(home: Path, no_key: None) -> N
         assert asyncio.run(bot.deliver()) == 2
         result = plan.sent[-1][1]
         assert "route 1 of" in result.text and "(plan:pl-" in result.text, result.text
+        assert "(steel ingot, batch 64):" in result.text, result.text
+        assert ", batch 64 ETA " in result.text, result.text
         assert "https://pc.tail1.ts.net/#/designer/pl-" in result.text
         names = [n for n, _ in result.files]
         assert (

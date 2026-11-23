@@ -94,12 +94,15 @@ def clarify(card: Mapping[str, Any], what: str) -> str:
 def plan_result(job: Mapping[str, Any], settings: BotSettings) -> str:
     """A finished ``/plan`` job: the routes in rank.py's order (never re-ordered, D250)."""
     spec = job.get("spec") or {}
+    res = job.get("result") or {}
     head = f"Plan job {job.get('id')} ({spec.get('target')}"
     amount = spec.get("rate") or spec.get("batch")
+    if not amount:  # no amount: the designer's batch (64, D404 (9)), as its routes say
+        qty = next((r.get("batch") for r in res.get("routes") or ()), None)
+        amount = f"batch {num(qty)}" if qty is not None else None
     head += f", {amount})" if amount else ")"
     if job.get("state") == "failed":
         return clip(f"{head} failed: {job.get('error') or 'no reason given'}")
-    res = job.get("result") or {}
     if res.get("clarify"):
         return clip(head + "\n" + clarify(res["clarify"], "/plan"))
     lines = [head + ":"]
@@ -116,18 +119,23 @@ def plan_result(job: Mapping[str, Any], settings: BotSettings) -> str:
             f"{where} of {r.get('of')}: {r.get('name')} (plan:{r.get('id')}): "
             f"{num(r.get('machines'))} machines, {num(r.get('eut_avg'))} EU/t average, "
             f"effort {num(r.get('eff_h'))} h"
+            + (
+                f", batch {num(r.get('batch'))} ETA {num(r.get('eta_s'))} s"
+                if r.get("eta_s") is not None
+                else ""
+            )
         )
         for w in r.get("warnings") or ():
             lines.append(f"  warning: {w}")
     ids = [i for i in res.get("ids") or () if isinstance(i, str)]
     for p in res.get("problems") or ():
         lines.append(f"note: {p}")
-    if ids:
-        lines.append(
-            "The diagram and BOM are of route 1. Accept a route on the dashboard."
-        )
-        lines.append(_link(settings, ids[0]))
-    return clip("\n".join(lines))
+    if not ids:
+        return clip("\n".join(lines))
+    # the link stays whole: a long reply (a batch's warnings) is clipped before it
+    end = "The diagram and BOM are of route 1. Accept a route on the dashboard.\n"
+    end += _link(settings, ids[0])
+    return clip("\n".join(lines), MSG_MAX - len(end) - 1) + "\n" + end
 
 
 def power_result(job: Mapping[str, Any], settings: BotSettings) -> str:

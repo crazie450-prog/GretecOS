@@ -20,8 +20,8 @@ slash commands carry text to the core, and that text is data to the core (plan 0
   is followed (``GET /api/deep/tasks/{id}``) and its result posted when it ends; a task paused
   at its cap says to approve it on the dashboard (approving spends money: Clayton's paired
   devices and ``gos`` only, D156).
-- ``/plan target amount [within] [tier]``: a queued design job (:mod:`gregtec.remote.jobs`),
-  acknowledged at once; the result (routes in rank.py's order, the PNG diagram, the BOM TSV, the
+- ``/plan target [amount] [within] [tier]``: a queued design job (:mod:`gregtec.remote.jobs`),
+  with no amount a batch of 64 (the designer's default, D404 (9)), acknowledged at once; the result (routes in rank.py's order, the PNG diagram, the BOM TSV, the
   phone-dashboard link) comes as a follow-up, or by DM when the interaction has run out
   (Discord's interaction tokens last 15 minutes) or the bot restarted.
 - ``/power mode [tier]``: a queued power design job; its options come the same way.
@@ -301,13 +301,12 @@ class Bot:
         await it.ack()
         target = " ".join(str(options.get("target") or "").split())
         amount = " ".join(str(options.get("amount") or "").split())
-        if not target or not amount:
-            await it.send(
-                Message("Give a target and a rate (2/s, 30/min) or a quantity.")
-            )
+        if not target:
+            await it.send(Message("Give a target item or fluid."))
             return
         spec: dict[str, Any] = {"target": target}
-        spec["rate" if "/" in amount else "batch"] = amount
+        if amount:  # none: the designer's batch of 64 (D404 (9))
+            spec["rate" if "/" in amount else "batch"] = amount
         for key in ("within", "tier"):
             if options.get(key):
                 spec[key] = str(options[key])

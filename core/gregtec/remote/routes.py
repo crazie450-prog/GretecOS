@@ -151,6 +151,8 @@ def _route(r: Mapping[str, Any]) -> dict[str, Any]:
         "position": r.get("position"),
         "of": r.get("of"),
         "target": target.get("name") or target.get("id"),
+        "batch": target.get("qty"),  # batch mode only, with its ETA (D389 (5))
+        "eta_s": target.get("eta_s"),
         "machines": metrics.get("machines"),
         "eut_avg": metrics.get("eut_avg"),
         "eff_h": metrics.get("eff_h"),
