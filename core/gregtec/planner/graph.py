@@ -923,13 +923,12 @@ class _Builder:
         self._slot_members: dict[str, list[str]] = {}
         self.uses: dict[str, frozenset[str]] = {}  # item -> made_from, minus boundaries
         # F3's sourcing (D389 (3), (6)), request-dependent so never on the shared reader:
-        # input key -> level (:meth:`_sourcing`), item -> recipe -> (rank, unsourced).
+        # input key -> level (:meth:`_sourcing`).
         # Unknown raws rank last only where GOS has source data (ore mixes loaded): without
         # it every ore block is unknown and a space-mined one would outrank them.
         self.unknown_last = bool(src.vein)
         self.collapsed = False  # an unknown raw ranked as unsourced (no source data)
         self.src: dict[str, int] = {}
-        self.sourcing: dict[str, dict[str, tuple[int, int]]] = {}
         self.checks: dict[int, _Check] = {}
         self.fit: dict[
             tuple[object, ...], tuple[list[machines.MachineOption], str]
@@ -1227,7 +1226,6 @@ class _Builder:
                 if p.consumed and p.key != EU_KEY
             )
             srcs = {n.id: self._pair(n) for _, n in passed}
-        self.sourcing[key] = srcs
         none = (0, 0)
         cheap = sorted(
             (

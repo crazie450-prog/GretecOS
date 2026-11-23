@@ -172,6 +172,17 @@ def test_a_step_from_the_world_uses_something_up_with_eu(
     assert b.src == {ORE_A: 3, DUST_A: 2}
 
 
+def test_an_oredict_slot_takes_its_best_member(conn: sqlite3.Connection) -> None:
+    """An oredict slot is at hand when one member is (the birch log here), and an unknown
+    raw when none is and no recipe makes any."""
+    b = builder(conn, Request(GEAR, boundary=(tg.LOG_B,)))
+    b._sourcing(["ore:logTest", tg.LOG_A])
+    assert b.src == {"ore:logTest": 0, tg.LOG_A: 3}
+    b = builder(conn, Request(GEAR))
+    b._sourcing(["ore:logTest"])
+    assert b.src == {"ore:logTest": 3}
+
+
 def test_a_fluid_cell_counts_as_its_fluid(conn: sqlite3.Connection) -> None:
     """The acid is one step from the gas and water at hand, so its cell is too (not a
     further step through the canner): a recipe with a cell of A and fluid B ties with one

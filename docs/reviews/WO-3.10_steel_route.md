@@ -195,7 +195,7 @@ secret: recipe ids and item keys only.
 
 Neither change touches `gtmath/`, ranking, the solver or the machine model.
 
-## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393)
+## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393, reviewed D394)
 
 Each item is deterministic, uses only data GOS has (or a curated table, like `raw_inputs.tsv`
 and `scarcity.tsv`), and comes with tests. The steel-at-MV acceptance test above is the shared
