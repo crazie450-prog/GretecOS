@@ -385,17 +385,19 @@ class MyBase:
     owned: Mapping[int, int] = field(default_factory=dict)
     stocked: Mapping[str, float] = field(default_factory=dict)
     lines: Mapping[str, float] = field(default_factory=dict)
+    dims: frozenset[str] = bq.ALWAYS_DIMENSIONS
 
     @classmethod
     def from_db(cls, conn: sqlite3.Connection) -> MyBase:
-        """Tier, machines and stock read in one transaction (a dashboard edit made meanwhile
-        is wholly in it or not at all)."""
+        """Tier, machines, stock and reachable dimensions read in one transaction (a
+        dashboard edit made meanwhile is wholly in it or not at all)."""
         with _read(conn):
             return cls(
                 tier(conn).tier,
                 owned_machines(conn),
                 {s.key: s.qty for s in stock(conn)},
                 ledger.line_outputs(conn),  # running lines (WO-4.4)
+                quest_db.reachable_dimensions(conn),  # D389 (2)
             )
 
     def tier_cap(self) -> int:
@@ -413,6 +415,10 @@ class MyBase:
     def line_outputs(self) -> Mapping[str, float]:
         """Stable key -> rate per second from accepted lines."""
         return dict(self.lines)
+
+    def dimensions(self) -> frozenset[str]:
+        """The dimensions he can reach (D389 (2))."""
+        return self.dims
 
 
 def snapshot(conn: sqlite3.Connection) -> dict[str, Any]:

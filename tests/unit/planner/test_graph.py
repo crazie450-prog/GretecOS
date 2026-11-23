@@ -36,6 +36,7 @@ from gregtec.db import access, build
 from gregtec.db import quests as quest_db
 from gregtec.ingest import collect
 from gregtec.ingest.normalize import CIRCUIT
+from gregtec.ingest.quests import ALWAYS_DIMENSIONS
 from gregtec.planner import chains, graph, graphcli
 from gregtec.planner.gtmath.parallel import Supply
 from gregtec.planner.machines import current_run
@@ -352,6 +353,7 @@ class Base:
     owned: Mapping[int, int] = field(default_factory=dict)
     stocked: Mapping[str, float] = field(default_factory=dict)
     lines: Mapping[str, float] = field(default_factory=dict)
+    dims: frozenset[str] = ALWAYS_DIMENSIONS
 
     def tier_cap(self) -> int:
         return self.tier
@@ -364,6 +366,9 @@ class Base:
 
     def line_outputs(self) -> Mapping[str, float]:
         return self.lines
+
+    def dimensions(self) -> frozenset[str]:
+        return self.dims
 
 
 def machine_run(conn: sqlite3.Connection) -> int:
@@ -487,6 +492,7 @@ def test_default_base_inputs(tmp_path: Path) -> None:
         assert base.tier_cap() == 3
         assert base.owned_machines() == {} and base.stock() == {}
         assert base.line_outputs() == {}  # D63: nothing stocked by default
+        assert base.dimensions() == ALWAYS_DIMENSIONS  # no quests (D389 (2))
         assert isinstance(base, BaseInputs) and isinstance(Base(), BaseInputs)
     finally:
         c.close()
@@ -923,11 +929,22 @@ def test_shipped_templates_load() -> None:
     assert (chains.CHAINS_DIR / "README.md").is_file()
 
 
-def test_raw_inputs_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ("key\tnote\nfluid:water\tpumped\n", "header must be key, source, note"),
+        ("key\tsource\tnote\nwater\tpump\tno prefix\n", "not an item or fluid key"),
+        ("key\tsource\tnote\nfluid:water\tsky\t\n", "source 'sky' is not one of"),
+        ("key\tsource\tnote\nfluid:water\tdimension:\t\n", "is not one of"),
+        ("# nothing\n", "no header"),
+    ],
+)
+def test_raw_inputs_file(tmp_path: Path, body: str, error: str) -> None:
     assert WATER in graph.raw_inputs()
+    assert graph.raw_sources()[WATER] == "pump"
     bad = tmp_path / "raw.tsv"
-    bad.write_text("key\tnote\nwater\tno prefix\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="not an item or fluid key"):
+    bad.write_text(body, encoding="utf-8")
+    with pytest.raises(ValueError, match=error):
         graph.raw_inputs(bad)
 
 

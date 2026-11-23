@@ -24,6 +24,7 @@ import pytest
 from gregtec.cards import validate
 from gregtec.db import access, build
 from gregtec.ingest import collect
+from gregtec.ingest.quests import ALWAYS_DIMENSIONS
 from gregtec.planner import effort, power
 from gregtec.planner.machines import current_run
 from gregtec.planner.outputs import cards
@@ -70,6 +71,9 @@ class Owns:
 
     def line_outputs(self) -> Mapping[str, float]:
         return {}
+
+    def dimensions(self) -> frozenset[str]:
+        return ALWAYS_DIMENSIONS
 
 
 REQ = power.PowerRequest(

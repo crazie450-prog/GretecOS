@@ -2,7 +2,11 @@
 # takes from the world (a pump, an intake), although GT also has recipes that make them as a
 # byproduct. Read by gregtec.planner.graph; keys are stable keys (registry@meta or fluid:<name>),
 # never numeric ids. Keep it short: anything listed here is never planned as a recipe output.
-key	note
-fluid:water	pumped (GT pumps, the Water Pump, an infinite water hatch); GT's water recipes are byproducts
-fluid:lava	pumped from the world
-fluid:air	GT's air intakes and gas collectors take it from the world, not a recipe
+# source (WO-3.10 F2, D389): world, pump, mob, crop, or dimension:<name> (a dimension name as
+# GT's ore mixes spell it; data/curated/dimension_unlocks.tsv says when it is reachable). A row
+# whose dimension isn't reachable rejects every recipe that consumes it.
+key	source	note
+fluid:water	pump	pumped (GT pumps, the Water Pump, an infinite water hatch); GT's water recipes are byproducts
+fluid:lava	pump	pumped from the world
+fluid:air	world	GT's air intakes and gas collectors take it from the world, not a recipe
+gregtech:gt.metaitem.01@9339	dimension:Twilight Forest	Steeleaf Nugget: GT's form of the Twilight Forest's steeleaf; no GT recipe makes it (WO-3.10)

@@ -279,6 +279,45 @@ def _veins_source(
     }
 
 
+def _replace_mixes(
+    conn: sqlite3.Connection, run_id: str | None, mixes: ore_mixes.OreMixes
+) -> None:
+    ids = mixes.ids_by_name()
+    conn.execute("DELETE FROM ore_mix")
+    conn.executemany(
+        "INSERT INTO ore_mix(id, name, dims, ymin, ymax, weight, density, size,"
+        " ores) VALUES (?,?,?,?,?,?,?,?,?)",
+        [_mix_row(m, ids) for m in mixes.mixes],
+    )
+    _kv(
+        conn,
+        KV_MIXES,
+        canonical(
+            {
+                "run": run_id,
+                "mixes": len(mixes.mixes),
+                "dimensions": [[d.dim, d.name] for d in mixes.dimensions],
+                "problems": mixes.problems[:50],
+                "loaded_utc": _now(),
+            }
+        ),
+    )
+
+
+def write_mixes(
+    conn: sqlite3.Connection, run_id: str | None, mixes: ore_mixes.OreMixes
+) -> None:
+    """Replace ``ore_mix`` only (no world, ``vein`` untouched), in one transaction: the
+    mixes path of :func:`write`, for a DB with no world to read veins from (the harness)."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _replace_mixes(conn, run_id, mixes)
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def write(
     conn: sqlite3.Connection,
     run_id: str | None,
@@ -291,27 +330,8 @@ def write(
     conn.execute("BEGIN IMMEDIATE")  # waits up to 30 s for another writer
     try:
         if mixes is not None:
-            ids = mixes.ids_by_name()
+            _replace_mixes(conn, run_id, mixes)
             known_mixes = {m.id for m in mixes.mixes}
-            conn.execute("DELETE FROM ore_mix")
-            conn.executemany(
-                "INSERT INTO ore_mix(id, name, dims, ymin, ymax, weight, density, size,"
-                " ores) VALUES (?,?,?,?,?,?,?,?,?)",
-                [_mix_row(m, ids) for m in mixes.mixes],
-            )
-            _kv(
-                conn,
-                KV_MIXES,
-                canonical(
-                    {
-                        "run": run_id,
-                        "mixes": len(mixes.mixes),
-                        "dimensions": [[d.dim, d.name] for d in mixes.dimensions],
-                        "problems": mixes.problems[:50],
-                        "loaded_utc": _now(),
-                    }
-                ),
-            )
         else:
             known_mixes = {r[0] for r in conn.execute("SELECT id FROM ore_mix")}
         unknown: dict[

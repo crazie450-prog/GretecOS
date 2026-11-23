@@ -978,6 +978,85 @@ def test_the_curated_tier_quests() -> None:
     assert all(k.name for k in keys)
 
 
+# --- reachable dimensions (D389 (2)) ---------------------------------------------------------
+
+UNLOCK_HEAD = "dimension\tquest\tname\tnote\n"
+Q1, Q2 = "AAAAAAAAAAAAAAAAAAAABA", "AAAAAAAAAAAAAAAAAAAACA"
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        ("dim\tquest\tname\tnote\n", "header must be"),
+        (UNLOCK_HEAD + f"moon\t{Q1}\tx\n", "3 cells, not 4"),
+        (UNLOCK_HEAD + "moon\tnope\tx\t\n", "not a quest id"),
+        (UNLOCK_HEAD + f"Nether\t{Q1}\tx\t\n", "always reachable"),
+        (UNLOCK_HEAD + f"\t{Q1}\tx\t\n", "not a name"),
+        (UNLOCK_HEAD + f"moon\t{Q1}\tx\t\nmoon\t{Q1}==\ty\t\n", "listed twice"),
+        ("# only a comment\n", "no header"),
+    ],
+)
+def test_bad_dimension_unlocks_are_refused(
+    tmp_path: Path, body: str, error: str
+) -> None:
+    path = tmp_path / "dims.tsv"
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(ValueError, match=error):
+        bq.read_dimension_unlocks(path)
+
+
+def test_the_curated_dimension_unlocks() -> None:
+    rows = bq.read_dimension_unlocks(quest_db.DIMENSION_UNLOCKS)
+    dims = {u.dimension for u in rows}
+    assert {"Twilight Forest", "The End", "EndAsteroid", "dimensionDarkWorld"} <= dims
+    assert {"moon", "mars"} <= dims and not dims & bq.ALWAYS_DIMENSIONS
+    assert len({(u.dimension, u.quest) for u in rows}) == len(rows)
+    assert all(u.name and u.note for u in rows)
+    twilight = next(u for u in rows if u.dimension == "Twilight Forest")
+    assert twilight.quest == "AAAAAAAAAAAAAAAAAAAA4Q"
+
+
+def test_reachable_dimensions(tmp_path: Path) -> None:
+    unlocks = tmp_path / "dims.tsv"
+    unlocks.write_text(
+        UNLOCK_HEAD + f"moon\t{Q1}\tRocket\t\nmars\t{Q2}\tRocket 2\t\n"
+        f"Twilight Forest\t{Q2}\tTwilight\t\nThe End\t{Q1}==\tEnd\t\n",
+        encoding="utf-8",
+    )
+    conn = access.connect(tmp_path / "gos.sqlite")
+    try:
+        # No quests loaded: the Overworld and the Nether.
+        assert quest_db.reachable_dimensions(conn, unlocks) == bq.ALWAYS_DIMENSIONS
+        conn.execute(
+            "INSERT INTO kv(key, value, upd) VALUES (?, ?, 0)",
+            (quest_db.KV_SOURCE, json.dumps({"player": "P"})),
+        )
+        assert quest_db.reachable_dimensions(conn, unlocks) == bq.ALWAYS_DIMENSIONS
+        conn.executemany(
+            "INSERT INTO quest_state(player_uuid, quest_id, state, shown)"
+            " VALUES (?, ?, ?, 1)",
+            [("P", Q2, "available"), ("Q", Q2, "done"), ("P", Q1, "repeatable")],
+        )
+        # The tracked player's completed quests only (done or repeatable).
+        assert quest_db.reachable_dimensions(conn, unlocks) == bq.ALWAYS_DIMENSIONS | {
+            "moon",
+            "The End",
+        }
+        conn.execute(
+            "UPDATE quest_state SET state = 'done' WHERE player_uuid = 'P'"
+            " AND quest_id = ?",
+            (Q2,),
+        )
+        assert quest_db.reachable_dimensions(conn, unlocks) == bq.ALWAYS_DIMENSIONS | {
+            "moon",
+            "The End",
+            "mars",
+            "Twilight Forest",
+        }
+    finally:
+        conn.close()
+
+
 # --- the DB and the command ----------------------------------------------------------------------
 
 

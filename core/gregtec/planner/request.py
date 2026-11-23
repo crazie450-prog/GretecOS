@@ -38,6 +38,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from gregtec.ingest.quests import ALWAYS_DIMENSIONS
 from gregtec.planner.gtmath.tiers import VN
 
 Mode = Literal["rate", "batch"]
@@ -376,13 +377,19 @@ class BaseInputs(Protocol):
         """Stable key -> rate per second from accepted lines."""
         ...
 
+    def dimensions(self) -> frozenset[str]:
+        """The dimensions he can reach, named as GT's ore mixes name them (D389 (2))."""
+        ...
+
 
 @dataclass(frozen=True)
 class DefaultBaseInputs:
-    """WO-3.3's My base: the quest-detected tier (WO-1.5, ``tier.override`` first), and
-    nothing owned, stocked or produced by lines (D63)."""
+    """WO-3.3's My base: the quest-detected tier (WO-1.5, ``tier.override`` first), the
+    quest-unlocked dimensions (D389 (2)), and nothing owned, stocked or produced by lines
+    (D63)."""
 
     tier: int
+    dims: frozenset[str] = ALWAYS_DIMENSIONS
 
     def __post_init__(self) -> None:
         tier_index(self.tier)
@@ -393,7 +400,7 @@ class DefaultBaseInputs:
         from gregtec.ingest import quests as bq
 
         stage, _, _ = quest_db.effective_tier(conn)
-        return cls(bq.STAGES[stage])
+        return cls(bq.STAGES[stage], quest_db.reachable_dimensions(conn))
 
     def tier_cap(self) -> int:
         return self.tier
@@ -406,3 +413,6 @@ class DefaultBaseInputs:
 
     def line_outputs(self) -> Mapping[str, float]:
         return {}
+
+    def dimensions(self) -> frozenset[str]:
+        return self.dims

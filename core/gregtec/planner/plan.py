@@ -304,9 +304,11 @@ _NOT_SOURCED = {
 
 def _import_warnings(g: Graph, flow: solve.Flow) -> list[str]:
     """One warning per import the plan takes without making or sourcing it: a locked or
-    depth boundary (free to the solver, but not to the player), or a gated intermediate (an
-    item the route makes, imported as well)."""
+    depth boundary (free to the solver, but not to the player), a raw input GOS knows no
+    source for (no ore mix, not curated: D389 (6)), or a gated intermediate (an item the
+    route makes, imported as well)."""
     kind = {i.id: i.boundary for i in g.items}
+    src = {i.id: i.source for i in g.items}
     gates = set(flow.gates)
     out: list[str] = []
     for k, _ in flow.imports:
@@ -315,6 +317,11 @@ def _import_warnings(g: Graph, flow: solve.Flow) -> list[str]:
         if (b := kind.get(k)) in _NOT_SOURCED:
             out.append(
                 f"imports {k} ({b}: {_NOT_SOURCED[b]}); the plan doesn't make it"
+            )
+        elif b == "raw" and src.get(k) is None:  # D389 (6): allowed, but warned
+            out.append(
+                f"imports {k} (raw: no recipe makes it and GOS has no source for it);"
+                " check where it comes from"
             )
         elif k in gates:
             out.append(f"imports {k}, which the route also makes (a gated import)")

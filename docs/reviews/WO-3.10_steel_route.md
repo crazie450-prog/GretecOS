@@ -195,7 +195,7 @@ secret: recipe ids and item keys only.
 
 Neither change touches `gtmath/`, ranking, the solver or the machine model.
 
-## 5. Proposed fixes (approved in D389; F1 built, D390)
+## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391)
 
 Each item is deterministic, uses only data GOS has (or a curated table, like `raw_inputs.tsv`
 and `scarcity.tsv`), and comes with tests. The steel-at-MV acceptance test above is the shared
@@ -211,7 +211,12 @@ copied, as D176). Stop flagging those recipes `eu0`, since primitive is not "pow
 odd way". Tests: a sizing unit test, and the harness graph shows `primitiveblastfurnace` steel
 recipes as valid candidates. *Question 1 decides whether the planner offers it at MV.*
 
-**F2. A raw-source gate (R3).** At graph build, each `raw` item gets a *source*:
+**F2. A raw-source gate (R3).** *Built (D391): reachable dimensions from the quest book
+(`data/curated/dimension_unlocks.tsv`; the Overworld and the Nether always), sources from the
+ore mixes and the curated table's new `source` column; the Steeleaf nugget is
+`dimension:Twilight Forest`, so on the harness the Steeleaf alloy smelter recipe is rejected and
+the top steel plan imports the locked Steeleaf ingot until F4; unknown raws are warned. No
+`me/prefs.md` list: D389 (2) says the quest book decides.* At graph build, each `raw` item gets a *source*:
 
 - `vein:<dims>` when it is an ore block in `ore_mix` (layers' `item`/`meta`): kept only if one
   of its dimensions is reachable;

@@ -9,6 +9,7 @@ pack, e.g. Play's own (read-only) or the zip's ``GT New Horizons 2.9.0/.minecraf
   tmp_path as BetterQuesting's ``saveConfig`` writes ``QuestDatabase.json``) reads the same;
 - every key quest in ``data/curated/tier_quests.tsv`` is in the book under its curated name,
   and each stage's key quest needs the stage before it (its prerequisite closure holds one);
+- every unlock quest in ``data/curated/dimension_unlocks.tsv`` is in the book under its name;
 - the tier and the frontier at every stage: with everything a key quest needs done, the tier
   is the stage before and the key quest is on the frontier; with the key quest done too, the
   tier is its stage; a new world's frontier is the first quest alone;
@@ -168,6 +169,14 @@ def test_the_curated_key_quests(book: bq.Book, keys: list[bq.TierKey]) -> None:
             if before:
                 assert closure(book, k.quest) & set(before), f"{k.name} skips a stage"
         before = [k.quest for k in mine]
+
+
+def test_the_curated_dimension_unlocks(book: bq.Book) -> None:
+    """Every quest of data/curated/dimension_unlocks.tsv is in the book under its curated
+    name (WO-3.10 F2, D389 (2))."""
+    for u in bq.read_dimension_unlocks(quest_db.DIMENSION_UNLOCKS):
+        assert u.quest in book.quests, f"{u.dimension}: q:{u.quest} is not in the book"
+        assert book.quests[u.quest].name == u.name
 
 
 def test_tier_and_frontier_at_every_stage(

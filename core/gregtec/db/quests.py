@@ -38,6 +38,7 @@ from gregtec.sync import _instance, _is_link
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TIER_KEYS = REPO_ROOT / "data" / "curated" / "tier_quests.tsv"
+DIMENSION_UNLOCKS = REPO_ROOT / "data" / "curated" / "dimension_unlocks.tsv"
 KV_SOURCE, KV_TIER, KV_OVERRIDE = "quests.source", "tier.detected", "tier.override"
 # Until WO-6.1's save loop times reads to the game's saves (D84, V27).
 PLAY_READ_NOTE = (
@@ -401,6 +402,27 @@ def tracked_player(conn: sqlite3.Connection) -> str:
     if source is None:
         raise QuestError("no quests loaded yet: run `gos quests load` first")
     return str(source.get("player") or "")
+
+
+def reachable_dimensions(
+    conn: sqlite3.Connection, unlocks: Path = DIMENSION_UNLOCKS
+) -> frozenset[str]:
+    """The dimensions the tracked player can reach (D389 (2)): the Overworld and the Nether,
+    and each dimension of ``data/curated/dimension_unlocks.tsv`` one of whose quests he has
+    completed. Read at plan time from ``quest_state``; with no quests loaded, the two."""
+    rows = bq.read_dimension_unlocks(unlocks)
+    try:
+        who = tracked_player(conn)
+    except QuestError:
+        return bq.ALWAYS_DIMENSIONS
+    done = {
+        str(r[0])
+        for r in conn.execute(
+            "SELECT quest_id FROM quest_state WHERE player_uuid = ? AND state IN (?, ?)",
+            (who, *bq.COMPLETE),
+        )
+    }
+    return bq.ALWAYS_DIMENSIONS | {u.dimension for u in rows if u.quest in done}
 
 
 def effective_tier(conn: sqlite3.Connection) -> tuple[str, str, str | None]:

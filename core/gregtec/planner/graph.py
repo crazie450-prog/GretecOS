@@ -33,6 +33,18 @@ machine with a badge (flagged, low confidence, custom, D142 (a)) still counts, a
 only badged machines run carries the badge as a warning. Crafting-table and furnace recipes
 (NEI's) are kept, flagged ``manual``.
 
+**Raw sources** (WO-3.10 F2, D389 (2), (6)): a raw input comes from an ore vein (an ore block
+GT's ore mixes place, ``ore_mix`` from ``gos ores load``: by its exact key, or any ore block of
+the mix's material in the same registry namespace, a Netherrack ore in the Nether only and an
+Endstone ore in the End only), a curated source (``data/curated/raw_inputs.tsv``: world, pump,
+mob, crop or ``dimension:<name>``), or nowhere GOS knows (allowed; the plan warns). The player
+reaches the Overworld and the Nether, and each dimension whose unlock quest he has completed
+(``BaseInputs.dimensions``). An ore a reachable dimension places is a ``raw`` boundary from the
+start (GT's space miner makes ores too, never expanded); a recipe that consumes an input only
+unreachable dimensions give, or an oredict or wildcard slot whose every member is one, is
+rejected ("Steeleaf Nugget: Twilight Forest, not reachable (D389)"), and such a member is left
+out of its slot. What he has (stock, line outputs, the request's boundary) is never gated.
+
 **Pruning** (§7.1): candidates are ordered by the heuristic key :func:`heuristic` (recycling,
 GT's container maps and EU-less recipes but a primitive machine's last, D142 (2), D189, D390;
 then the reverse of one of the item's own uses; avoid chanced-only; lower tier; the item as the main product before a
@@ -61,7 +73,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Literal
@@ -83,6 +95,14 @@ FULL = 10000
 MANUAL_SOURCES = frozenset({"crafting", "furnace"})
 RESEARCH_MAPS = ("gt.recipe.researchStation", "gt.recipe.scanner")
 RAW_INPUTS = chains.REPO_ROOT / "data" / "curated" / "raw_inputs.tsv"
+RAW_SOURCES = ("world", "pump", "mob", "crop")
+DIMENSION_SOURCE = "dimension:"
+# GT ore stones found in one dimension only (WO-3.10 F2): their ores are placed there or not
+# at all, whatever else their material's mixes place.
+STONE_DIMS: dict[str, frozenset[str]] = {
+    "oreNetherrack": frozenset({"Nether"}),
+    "oreEndstone": frozenset({"The End", "EndAsteroid"}),
+}
 GREGTECH = "gregtech"
 IC2_CELL = "IC2:itemCellEmpty"
 # GT maps that only move a material between containers or stack sizes (D189): ranked last.
@@ -186,6 +206,9 @@ class ItemNode:
     template: str | None = None  # the chain template that chose its recipes
     branch: str | None = None  # the template's branch-point id
     warnings: tuple[str, ...] = ()
+    # Where a raw input comes from (WO-3.10 F2, D389): "vein:<dims>" (an ore mix places it),
+    # a curated source (raw_inputs.tsv: world, pump, dimension:<name>...), None if unknown.
+    source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -738,7 +761,26 @@ class _Builder:
         self.excluded_recipes = cons.excluded_recipes()
         self.excluded_keys = cons.excluded_keys()
         self.excluded_mtes = cons.excluded_mtes()
-        self.boundary: dict[str, str] = dict.fromkeys(raw_inputs(), "raw")
+        src = sources(conn)
+        self.boundary: dict[str, str] = dict.fromkeys(src.curated, "raw")
+        # Where raws come from, and what this player can't reach (D389 (2), (6)): an ore an
+        # ore mix places in a reachable dimension is a raw input, never expanded (GT's space
+        # miner makes ores too); one only unreachable dimensions place, or a curated
+        # dimension:<name> row he can't reach, rejects every recipe that consumes it.
+        self.reach = frozenset(base.dimensions())
+        self.source: dict[str, str] = {}
+        self.unreachable: dict[str, str] = {}  # key -> where it comes from
+        for k, dims in src.vein.items():
+            if set(dims) & self.reach:
+                self.boundary.setdefault(k, "raw")
+                self.source[k] = "vein:" + ", ".join(dims)
+            else:
+                self.unreachable[k] = ", ".join(dims) or "no ore mix places it"
+        for k, where in src.curated.items():
+            self.source[k] = where
+            dim = where.removeprefix(DIMENSION_SOURCE)
+            if where.startswith(DIMENSION_SOURCE) and dim not in self.reach:
+                self.unreachable[k] = dim
         for k, v in sorted(base.line_outputs().items()):
             # A running line's output is a boundary for other designs, never for its own
             # target: redesigning (scaling, superseding) a running line must still route (D238).
@@ -749,6 +791,10 @@ class _Builder:
                 self.boundary[k] = "stock"
         for k in request.boundary:
             self.boundary[k] = "request"
+        for k, v in self.boundary.items():
+            if v in ("line", "stock", "request"):  # what he has is never gated
+                self.unreachable.pop(k, None)
+        self._slot_members: dict[str, list[str]] = {}
         self.uses: dict[str, frozenset[str]] = {}  # item -> made_from, minus boundaries
         self.checks: dict[int, _Check] = {}
         self.fit: dict[
@@ -806,6 +852,23 @@ class _Builder:
         for p in consumed:
             if p.key in self.excluded_keys:
                 return _Check(False, f"uses excluded {p.key}")
+        for p in consumed:
+            where = self.unreachable.get(p.key)
+            if where is None and _kind(p.key) in ("ore", "wildcard"):
+                if p.key not in self._slot_members:
+                    self._slot_members[p.key] = self.reader.members(p.key)
+                ms = self._slot_members[p.key]
+                if ms and all(m in self.unreachable for m in ms):
+                    where = "; ".join(sorted({self.unreachable[m] for m in ms}))
+                    where = f"every member: {where}"
+            if where is not None:
+                info = (
+                    self.reader.info(p.key)
+                    if _kind(p.key) in ("item", "fluid")
+                    else None
+                )
+                name = info.name if info else p.key
+                return _Check(False, f"{name}: {where}, not reachable (D389)")
         fluids = [p.key for p in consumed if p.key.startswith("fluid:")]
         dup = sorted({k for k in fluids if fluids.count(k) > 1})
         if dup:
@@ -1041,25 +1104,94 @@ class _Builder:
         return key in self.loops[choice.chain]
 
 
-def raw_inputs(path: Path = RAW_INPUTS) -> tuple[str, ...]:
-    """``data/curated/raw_inputs.tsv``'s keys: inputs taken from the world (D189)."""
-    keys: list[str] = []
+def raw_sources(path: Path = RAW_INPUTS) -> dict[str, str]:
+    """``data/curated/raw_inputs.tsv``: key -> source, inputs taken from the world (D189;
+    sources WO-3.10 F2): one of :data:`RAW_SOURCES` or ``dimension:<name>``."""
+    out: dict[str, str] = {}
     header = False
     for n, text in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not text.strip() or text.startswith("#"):
             continue
         cells = text.split("\t")
         if not header:
-            if cells[:2] != ["key", "note"]:
-                raise ValueError(f"{path.name}:{n}: header must be key, note")
+            if cells[:3] != ["key", "source", "note"]:
+                raise ValueError(f"{path.name}:{n}: header must be key, source, note")
             header = True
             continue
         if not is_stable_key(cells[0]):
             raise ValueError(
                 f"{path.name}:{n}: {cells[0]!r} is not an item or fluid key"
             )
-        keys.append(cells[0])
-    return tuple(keys)
+        where = cells[1] if len(cells) > 1 else ""
+        dim = where.removeprefix(DIMENSION_SOURCE)
+        if where not in RAW_SOURCES and not (
+            where.startswith(DIMENSION_SOURCE) and dim.strip()
+        ):
+            raise ValueError(
+                f"{path.name}:{n}: source {where!r} is not one of"
+                f" {', '.join(RAW_SOURCES)} or {DIMENSION_SOURCE}<name>"
+            )
+        out[cells[0]] = where
+    if not header:
+        raise ValueError(f"{path.name}: no header")
+    return out
+
+
+def raw_inputs(path: Path = RAW_INPUTS) -> tuple[str, ...]:
+    """``data/curated/raw_inputs.tsv``'s keys: inputs taken from the world (D189)."""
+    return tuple(raw_sources(path))
+
+
+@dataclass(frozen=True)
+class Sources:
+    """Where raw inputs come from (WO-3.10 F2): ore blocks by the dimensions GT's ore mixes
+    place them in (``ore_mix``, from ``gos ores load``; an empty tuple: its material has
+    mixes, but none in a dimension with its stone), and the curated table's rows."""
+
+    vein: Mapping[str, tuple[str, ...]]
+    curated: Mapping[str, str]
+
+    def digest(self) -> str:
+        data = (sorted(self.vein.items()), sorted(self.curated.items()))
+        return hashlib.sha256(repr(data).encode("utf-8")).hexdigest()
+
+
+def sources(conn: sqlite3.Connection) -> Sources:
+    """The raw-input sources for one build. Read per build, not in the shared reader: ``gos
+    ores load`` doesn't change the DB generation (D352). An ore block gets its mixes'
+    dimensions by its exact key, and every ore block of a mix's material (in the same
+    registry namespace: Minecraft's coal ore is Coal too) gets them as well, a Netherrack
+    ore only the Nether's and an Endstone ore only the End's. With no mixes loaded, none."""
+    exact: dict[str, set[str]] = {}
+    by_material: dict[tuple[str, str], set[str]] = {}
+    for dims_json, ores_json in conn.execute(
+        "SELECT dims, ores FROM ore_mix ORDER BY id"
+    ):
+        dims = set(json.loads(dims_json or "{}"))
+        for o in json.loads(ores_json or "[]"):
+            item, material = o.get("item"), o.get("material")
+            if item is None:
+                continue
+            exact.setdefault(f"{item}@{o.get('meta', 0)}", set()).update(dims)
+            if material:
+                ns = str(item).split(":")[0]
+                by_material.setdefault((ns, str(material)), set()).update(dims)
+    vein = {k: set(v) for k, v in exact.items()}
+    if by_material:
+        for reg, meta, prefix, material in conn.execute(
+            "SELECT registry_name, meta, gt_prefix, gt_material FROM item"
+            " WHERE gt_prefix LIKE 'ore%' AND nbt_hash = '' AND gt_material IS NOT NULL"
+        ):
+            dims = by_material.get((str(reg).split(":")[0], str(material)))
+            if dims is None:
+                continue  # no mix places its material: its source is unknown
+            if prefix in STONE_DIMS:
+                dims = dims & STONE_DIMS[prefix]
+            vein.setdefault(f"{reg}@{meta}", set()).update(dims)
+    return Sources(
+        {k: tuple(sorted(v)) for k, v in sorted(vein.items())},
+        raw_sources(),
+    )
 
 
 # --- step 2: build ---------------------------------------------------------------------------
@@ -1160,13 +1292,17 @@ def _build(
                 info = reader.info(key) if kind in ("item", "fluid") else None
                 name = info.name if info else key
                 if key in b.boundary:
-                    nodes[key] = ItemNode(key, kind, name, depth, b.boundary[key])
+                    nodes[key] = ItemNode(
+                        key, kind, name, depth, b.boundary[key],
+                        source=b.source.get(key),
+                    )  # fmt: skip
                     continue
                 if kind == "eu":
                     nodes[key] = ItemNode(key, kind, "EU", depth, "eu")
                     continue
                 if kind in ("ore", "wildcard"):
-                    members = reader.members(key)
+                    # A member he can't reach is never in the graph (D389 (2)).
+                    members = [m for m in reader.members(key) if m not in b.unreachable]
                     for m in members[:TOP_N]:
                         flows[(m, key, "member")] = 1.0
                         if m not in nodes:
@@ -1191,7 +1327,7 @@ def _build(
                     # Recipes make it, but none this player can run: locked, not a raw input.
                     nodes[key] = ItemNode(
                         key, kind, name, depth, "locked" if rejected else "raw",
-                        candidates=tuple(rejected),
+                        candidates=tuple(rejected), source=b.source.get(key),
                     )  # fmt: skip
                     continue
                 # A chain template off the route fixes its first pick, but a loop of the

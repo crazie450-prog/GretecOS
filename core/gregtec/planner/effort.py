@@ -321,8 +321,9 @@ class Effort:
         run (the scope's path and generation, and the run id), the component request's tier,
         machines, boundary and constraints (the request digest, per key), My base (its tier and
         which owned machines, stock and line outputs are positive: the graph boundaries and the
-        machine check read nothing more), the
-        chain templates and the raw inputs list (repo files the graph reads)."""
+        machine check read nothing more, and the dimensions he can reach), the
+        chain templates and the raw sources (the raw inputs list, a repo file, and the DB's ore
+        mixes)."""
         where = cache.scope(self.conn)
         if where is None:
             return None
@@ -339,10 +340,13 @@ class Effort:
             positive(b.owned_machines()),
             positive(b.stock()),
             positive(b.line_outputs()),
+            tuple(sorted(b.dimensions())),  # D389 (2)
         )
         tpl = chains.load() if self.templates is None else self.templates
+        # The raw sources: the curated table and the ore mixes, which `gos ores load`
+        # replaces without changing the DB generation (WO-3.10 F2).
         files = hashlib.sha256(
-            repr((tpl.rows, graph.raw_inputs())).encode("utf-8")
+            repr((tpl.rows, graph.sources(self.conn).digest())).encode("utf-8")
         ).hexdigest()
         return (*where, run, mine, files)
 
