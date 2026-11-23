@@ -155,7 +155,17 @@ def resolve_target(home: Path, text: str) -> graph.Resolved | prefetch.Clarify:
 
 
 SPEC_KEYS = frozenset(
-    {"target", "rate", "batch", "within", "tier", "routes", "addons", "pins"}
+    {
+        "target",
+        "rate",
+        "batch",
+        "within",
+        "tier",
+        "routes",
+        "addons",
+        "pins",
+        "simplest",
+    }
 )
 
 
@@ -166,13 +176,17 @@ def request_from_spec(
     or a key), ``rate`` ("2/s", "30/min") or ``batch`` (a quantity, with ``within`` "2h"; with
     neither, a batch of :data:`~gregtec.planner.request.DEFAULT_BATCH`, D389 (5)),
     ``tier`` (LV..MAX, else My base's), ``routes`` (1-3), ``addons`` (bool), ``pins``
-    ([{node, recipe}]). An unclear target gives the clarifying question instead."""
+    ([{node, recipe}]), ``simplest`` (bool, default true here: the simplest route beside the
+    ranked ones, D389 (4)). An unclear target gives the clarifying question instead."""
     unknown = set(spec) - SPEC_KEYS
     if unknown:
         raise DesignerError(f"unknown fields: {', '.join(sorted(unknown))}")
     target = spec.get("target")
     if not isinstance(target, str) or not target.strip():
         raise DesignerError("name a target item or fluid")
+    simplest = spec.get("simplest", True)
+    if not isinstance(simplest, bool):
+        raise DesignerError("simplest is true or false")
     found = resolve_target(home, target.strip())
     if isinstance(found, prefetch.Clarify):
         return found
@@ -184,6 +198,7 @@ def request_from_spec(
                 Pin(str(p["node"]), str(p["recipe"])) for p in spec.get("pins") or ()
             ),
             "routes": int(spec.get("routes") or 3),
+            "simplest": simplest,
         }
         if spec.get("batch") not in (None, ""):
             if spec.get("rate") not in (None, ""):
@@ -304,10 +319,13 @@ def latest(home: Path) -> list[str]:
 # --- what the view shows -----------------------------------------------------------------------
 
 
+_COLUMN_ORDER = {"base": 0, "simplest": 1, "addon": 2}
+
+
 def _order_key(p: Mapping[str, Any]) -> tuple[int, int, str]:
     r = p.get("rank") or {}
     return (
-        1 if r.get("column") == "addon" else 0,
+        _COLUMN_ORDER.get(str(r.get("column")), 0),
         int(r.get("position") or 0),
         p["id"],
     )
@@ -315,7 +333,7 @@ def _order_key(p: Mapping[str, Any]) -> tuple[int, int, str]:
 
 def group(home: Path, pid: str) -> list[dict[str, Any]]:
     """``pid`` and the routes solved with it (its ``alternatives``) that are still saved, in
-    rank order (the base routes by position, then the addon column)."""
+    rank order (the base routes by position, then the simplest and addon columns)."""
     first = load(home, pid)
     plans = [first]
     for other in first.get("alternatives") or ():
@@ -370,16 +388,23 @@ def _metric(p: Mapping[str, Any], key: str) -> float:
     return float(m.get(key) or 0)
 
 
+def _column(p: Mapping[str, Any]) -> str:
+    return str((p.get("rank") or {}).get("column") or "base")
+
+
 def _addon(p: Mapping[str, Any]) -> bool:
-    return (p.get("rank") or {}).get("column") == "addon"
+    return _column(p) == "addon"
 
 
 def _shown(plans: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """The routes the comparison card holds (at most 3, the catalog's limit): the top base
-    routes in rank order, with the addon column (D12) last whenever the design has one."""
-    base = [p for p in plans if not _addon(p)]
-    addon = [p for p in plans if _addon(p)][:1]
-    return base[: 3 - len(addon)] + addon
+    routes in rank order, then the simplest route (D389 (4)) and the addon column (D12)
+    whenever the design has them."""
+    base = [p for p in plans if _column(p) == "base"]
+    extras: list[Mapping[str, Any]] = []
+    for column in ("simplest", "addon"):
+        extras.extend([p for p in plans if _column(p) == column][:1])
+    return base[: 3 - len(extras)] + extras
 
 
 def _made_by(p: Mapping[str, Any]) -> dict[str, str]:
@@ -409,10 +434,10 @@ def comparison_card(
     prefs_line: str,
 ) -> dict[str, Any]:
     """The catalog's ``route_comparison`` card for up to 3 routes, in the order given (rank
-    order): the base routes, and when the design has an addon route, the top 2 base routes and
-    the addon column last (its rank reads ``addon``). A metric is marked ``best`` on the routes
-    that have the best value when the routes don't all tie; a choice ``differs`` when another
-    route makes that item with another recipe or not at all."""
+    order): the base routes, then the simplest route and the addon column when the design has
+    them, in fewer base routes' place (their rank reads ``simplest`` or ``addon``). A metric is
+    marked ``best`` on the routes that have the best value when the routes don't all tie; a
+    choice ``differs`` when another route makes that item with another recipe or not at all."""
     shown = _shown(plans)
     by_route = [_made_by(p) for p in shown]
     routes = []
@@ -452,7 +477,9 @@ def comparison_card(
             {
                 "id": p["id"],
                 "name": clip(p["name"], 200),
-                "rank": "addon" if _addon(p) else int(r.get("position") or i + 1),
+                "rank": _column(p)
+                if _column(p) != "base"
+                else int(r.get("position") or i + 1),
                 "ref": f"plan:{p['id']}",
                 "accepted": statuses.get(p["id"], "proposed") != "proposed",
                 "metrics": metrics,
@@ -465,6 +492,11 @@ def comparison_card(
     ]
     if any(_addon(p) for p in shown):
         notes.append("the addon column is ranked against the base routes, shown last")
+    if any(_column(p) == "simplest" for p in shown):
+        notes.append(
+            "the simplest route (each node's first recipe) is scored against the base "
+            "routes, shown after them"
+        )
     title = shown[0]["name"] if shown else "Routes"
     return checked(
         {
@@ -510,6 +542,7 @@ def view(home: Path, pid: str) -> dict[str, Any]:
                 "name": p["name"],
                 "status": statuses.get(p["id"], "proposed"),
                 "column": r.get("column"),
+                "simplest": bool((p.get("route") or {}).get("simplest")),
                 "position": r.get("position"),
                 "of": r.get("of"),
                 "score": r.get("score"),

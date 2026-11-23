@@ -12,8 +12,9 @@ every route has 0), so each term is in [0, 1]. The cost is the weighted mean of 
 
 **Order.** Higher score first; ties (equal rounded scores) break on fewer new machine types,
 then the lower highest machine tier, then the plan id (a hash of the route's choices). Nothing
-depends on dict or set order. The base routes are ranked among themselves; the addon route
-(D12) gets its score against the base routes and itself, and keeps its own column after them.
+depends on dict or set order. The base routes are ranked among themselves; the simplest route
+(D389 (4)) and the addon route (D12) each get a score against the base routes and themselves,
+and keep their own columns after them (simplest, then addon), so the base order never changes.
 
 **Weights** live in the vault's ``me/prefs.md`` (§6.2 grammar, read only here; never written):
 ``weights: balanced`` (D67: every weight 1) and optional ``w_<metric>: <number>`` lines that
@@ -64,6 +65,8 @@ POWER_LABELS = {
 }
 POWER_MODES = ("best", "max_output", "output_per_effort", "self_sustaining")
 DIGITS = 9
+# Columns beside the ranked base routes, in the order they follow them (D389 (4), D12).
+EXTRA_COLUMNS = ("simplest", "addon")
 PREFS = Path("me") / "prefs.md"
 _LINE = re.compile(r"([a-z_]+):\s*(.*?)\s*")
 
@@ -210,10 +213,12 @@ def _tier(m: Mapping[str, Any]) -> int:
 def order(
     plans: Sequence[dict[str, Any]], prefs: Prefs = BALANCED
 ) -> list[dict[str, Any]]:
-    """The plans ranked: each gets its ``rank``; the base routes in rank order, then the addon
-    column. Plans need their ``metrics``."""
-    base = [p for p in plans if p["route"]["column"] != "addon"]
-    addon = [p for p in plans if p["route"]["column"] == "addon"]
+    """The plans ranked: each gets its ``rank``; the base routes in rank order, then the
+    simplest and the addon columns. Plans need their ``metrics``."""
+    base = [p for p in plans if p["route"]["column"] not in EXTRA_COLUMNS]
+    extras = [
+        p for column in EXTRA_COLUMNS for p in plans if p["route"]["column"] == column
+    ]
     vals = [values(p["metrics"]) for p in base]
     scored = scores(vals, prefs)
     keyed = sorted(
@@ -229,10 +234,10 @@ def order(
     for pos, (p, v, (score, terms)) in enumerate(keyed, 1):
         p["rank"] = _rank(score, terms, v, prefs, "base", pos, len(base))
         out.append(p)
-    for p in addon:
+    for p in extras:
         v = values(p["metrics"])
         score, terms = scores([*vals, v], prefs)[-1]
-        p["rank"] = _rank(score, terms, v, prefs, "addon", 1, 1)
+        p["rank"] = _rank(score, terms, v, prefs, p["route"]["column"], 1, 1)
         out.append(p)
     return out
 

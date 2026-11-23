@@ -92,6 +92,11 @@ DESIGN_PRODUCTION_SCHEMA: dict[str, Any] = {
             "type": "boolean",
             "description": "also solve the best route on addon machines (its own column)",
         },
+        "simplest": {
+            "type": "boolean",
+            "description": "also the simplest route, each node's first recipe, as its own "
+            "column after the ranked routes (default true)",
+        },
     },
     "required": ["target"],
     "additionalProperties": False,
@@ -213,7 +218,7 @@ def _routes(home: Path, pid: str, call: Call, offset: int, head: list[tuple[str,
         m = r["metrics"]
         rows.append(
             (
-                r["position"] if r["column"] != "addon" else "addon",
+                r["position"] if r["column"] == "base" else r["column"],
                 f"plan:{r['id']}",
                 r["name"],
                 r["column"],

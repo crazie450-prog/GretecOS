@@ -1,7 +1,7 @@
 """``gos plan``: the designer's routes from the command line (WO-3.4, WO-3.5).
 
 - ``gos plan TARGET [--tier T] [--qty 2/s | --batch N [--within 2h]] [--routes N] [--addons]
-  [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
+  [--simplest] [--exact] [--pin ITEM=RECIPE ...] [--json] [--out DIR]``: resolves TARGET as ``gos graph``
   does (an ambiguous name prints the one clarifying question and exits 3), solves up to N routes
   on the newest export run in ``GOS_HOME/data/gos.sqlite`` (read-only) with My base's defaults,
   and prints a summary per route (with its effort breakdown table, WO-4.3, and a batch's ETA),
@@ -13,6 +13,8 @@
   explanation built from the metrics (the model-written one is the deep lane's, WO-3.7).
 - No ``--qty`` or ``--batch``: a batch of 64 (``request.DEFAULT_BATCH``, D389 (5)), with
   ``--within`` if given.
+- ``--simplest``: also the simplest route (each node's first recipe, D389 (4)), as an extra
+  column after the ranked routes, or ``[base, simplest]`` on the base route that is it.
 - ``--request FILE``: a request as JSON (``Request.from_json``) instead of TARGET and the flags.
 - ``gos plan TARGET --alternatives ITEM [--all]``: the candidate recipes for one node of the
   graph (D61), with ``--all`` the unchecked and rejected ones too.
@@ -80,6 +82,11 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     p.add_argument("--routes", type=int, default=3, help="routes to solve, 1-3")
     p.add_argument("--addons", action="store_true", help="allow addon machines (D12)")
+    p.add_argument(
+        "--simplest",
+        action="store_true",
+        help="also the simplest route: each node's first recipe (D389 (4))",
+    )
     p.add_argument(
         "--exact", action="store_true", help="whole machine counts (integer MILP)"
     )
@@ -239,6 +246,7 @@ def _request(
         "machines": "base+addons" if args.addons else "base",
         "pins": tuple(pins),
         "routes": args.routes,
+        "simplest": args.simplest,
     }
     within = parse_duration(args.within) if args.within else None
     if args.batch is None and args.qty is None:  # no amount: a batch of 64 (D389 (5))
@@ -327,7 +335,8 @@ def _run(
         r = p["route"]
         m, k = p["metrics"], p["rank"]
         machines = sum(n["count"] or 0 for n in p["nodes"])
-        print(f"{p['id']}  {p['name']}  [{r['column']}]", file=out)
+        also = ", simplest" if r.get("simplest") else ""  # a base route that is it
+        print(f"{p['id']}  {p['name']}  [{r['column']}{also}]", file=out)
         print(
             f"  score {k['score']:g}: {m['machines']} machines, {len(m['new_types'])} new "
             f"types, {m['eut_avg']:g} EU/t avg, scarcity "

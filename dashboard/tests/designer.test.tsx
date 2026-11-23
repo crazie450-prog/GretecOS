@@ -18,6 +18,7 @@ function route(id: string, position: number, over: Partial<DesignerRoute> = {}):
     name: `Steel Ingot line · 1/s · HV${position > 1 ? ` · route ${position}` : ""}`,
     status: "proposed",
     column: "base",
+    simplest: false,
     position,
     of: 2,
     score: position === 1 ? 0.76 : 0.5,
@@ -132,6 +133,16 @@ describe("helpers", () => {
   it("labels a route by the core's rank", () => {
     expect(routeLabel({ column: "base", position: 2, of: 3 })).toBe("Route 2 of 3");
     expect(routeLabel({ column: "addon", position: 1, of: 1 })).toBe("Addon column");
+    expect(routeLabel({ column: "simplest", position: 1, of: 1 })).toBe("Simplest route");
+    expect(routeLabel({ column: "base", position: 1, of: 2, simplest: true })).toBe("Route 1 of 2 (also the simplest)");
+  });
+
+  it("heads the comparison's simplest route as its own column (D389 (4))", () => {
+    const card = view("pl-bbbbbbbbbb", [route("pl-bbbbbbbbbb", 1), route("pl-dddddddddd", 1, { column: "simplest" })]).comparison;
+    card.routes[1].rank = "simplest";
+    render(<RouteComparisonView card={card} />);
+    const heads = [...document.querySelectorAll(".route-head .gos-label")].map((e) => e.textContent);
+    expect(heads).toEqual(["Route 1", "Simplest route"]);
   });
 
   it("heads the comparison's addon route as the addon column, never as a rank", () => {
@@ -144,6 +155,18 @@ describe("helpers", () => {
 });
 
 describe("the Designer view", () => {
+  it("can leave the simplest route out of a design", async () => {
+    jobAnswers({ ids: [FIRST.id], problems: [], view: FIRST });
+    render(<Designer />);
+    fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
+    fireEvent.click(screen.getByTestId("designer-simplest"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("designer-go"));
+    });
+    const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
+    expect(designs).toEqual([{ spec: { target: STEEL, batch: "64", routes: 3, addons: false, simplest: false } }]);
+  });
+
   it("says so when there is no design yet", async () => {
     render(<Designer />);
     expect((await screen.findByTestId("designer-empty")).textContent).toContain("No design open");
@@ -282,8 +305,8 @@ describe("the Designer view", () => {
     });
     const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
     expect(designs).toEqual([
-      { spec: { target: "ingot", batch: "64", tier: "HV", routes: 3, addons: false } },
-      { spec: { target: STEEL, batch: "64", tier: "HV", routes: 3, addons: false } },
+      { spec: { target: "ingot", batch: "64", tier: "HV", routes: 3, addons: false, simplest: true } },
+      { spec: { target: STEEL, batch: "64", tier: "HV", routes: 3, addons: false, simplest: true } },
     ]);
     await screen.findByTestId("route-1-base");
   });
@@ -302,7 +325,7 @@ describe("the Designer view", () => {
       fireEvent.click(screen.getByTestId("designer-go"));
     });
     const designs = calls.filter((c) => c.url === "/api/designer/jobs").map((c) => c.body);
-    expect(designs).toEqual([{ spec: { target: STEEL, rate: "2/s", routes: 3, addons: false } }]);
+    expect(designs).toEqual([{ spec: { target: STEEL, rate: "2/s", routes: 3, addons: false, simplest: true } }]);
     const head = await screen.findByTestId("route-1-base");
     expect(head.textContent).toContain("batch 64 · ETA 3291 s");
   });

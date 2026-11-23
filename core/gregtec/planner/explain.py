@@ -147,11 +147,12 @@ def template(doc: Mapping[str, Any]) -> str:
     lines = [f"Ranked by code, weights ({w['set']}): {weights}."]
     for r in doc["routes"]:
         m = r["metrics"]
-        head = (
-            f"Addon column: {r['name']}"
-            if r["column"] == "addon"
-            else f"{r['position']} of {r['of']}: {r['name']}"
-        )
+        if r["column"] == "addon":
+            head = f"Addon column: {r['name']}"
+        elif r["column"] == "simplest":
+            head = f"Simplest route (each node's first recipe): {r['name']}"
+        else:
+            head = f"{r['position']} of {r['of']}: {r['name']}"
         machines = ", ".join(
             f"{fmt(t['count'])} x {t['name']} ({t['tier']}"
             + (f", addon, confidence {fmt(t['confidence'])}" if t["addon"] else "")

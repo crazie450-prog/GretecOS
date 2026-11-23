@@ -6,13 +6,17 @@ choice and the whole design re-runs, D61), WO-3.2's machine for each recipe (:mo
 the staged MILP (:mod:`.solve`) for up to ``request.routes`` routes differing in a primary
 choice, and with ``machines: base+addons`` the best route on addon machines for the
 side-by-side column (D12), which lists the ``machine_fact`` confidence of each addon machine.
+With ``simplest`` (D389 (4)) it adds the **simplest route**: every primary node on its first
+candidate in the graph's heuristic order (pins kept), solved by the same staged MILP, as a
+``simplest`` column after the base routes; when a base route already uses exactly its recipes,
+that route gets ``route.simplest: true`` instead of a copy. The ranking is unchanged.
 
 Every route becomes one **plan**, a dict shaped as §7.1's sketch: ``id``, ``name``, ``v``, ``gt``,
 ``run`` (the export run key it was solved on, which WO-1.9's affected-plan check reads), ``kind``,
 ``target``, ``tier_cap``, ``machines``, ``pins``, ``nodes``, ``edges``, ``boundary``, ``metrics``
 and ``rank`` (WO-3.5's :mod:`.metrics` and :mod:`.rank`: the base routes come back in rank
-order, each named for its place, the addon route last), ``alternatives`` (the other routes' ids)
-and ``layout``
+order, each named for its place, then the simplest and addon routes), ``alternatives`` (the
+other routes' ids) and ``layout``
 (WO-3.6's bounding-box footprint, :mod:`.outputs.footprint`, D200), plus ``request`` (to re-solve it), ``route`` (the solver's view: choices,
 gates, the replay floor) and ``warnings`` (D194). ``plan_schema.json`` is its JSON Schema. Every
 number in it is the DB's or GT's math on it: a node cites its ``r:`` recipe and ``mte:`` machine
@@ -167,6 +171,8 @@ def design(
         built.append(
             _plan(g, request, run_key, net, flow, base_sized, "base", n, exact)
         )
+    if request.simplest:
+        _add_simplest(g, request, run_key, net, base_sized, exact, built)
     if request.addons:
         addon_sized = sizing.size(conn, g, player, addon=True, excluded_mtes=excluded)
         addon_net = network(g, request, addon_sized, base_only=False)
@@ -211,6 +217,31 @@ def design(
         p["metrics"] = _rounded(p["metrics"])
         p["rank"] = _rounded(r)
     return Design(g, tuple(ranked))
+
+
+def _add_simplest(
+    g: Graph,
+    request: Request,
+    run_key: str,
+    net: solve.Network,
+    sized: Mapping[str, sizing.Sized],
+    exact: bool,
+    built: list[dict[str, Any]],
+) -> None:
+    """The simplest route (D389 (4)): each primary node's first candidate, pins kept. Added
+    as its own column, or flagged on the base route that already has exactly its recipes."""
+    pins = dict(net.pinned)
+    first = {k: opts[0] for k, opts in net.choices if k not in pins}
+    try:
+        flow = solve.solve_route(net, first)
+    except solve.SolveError:
+        return  # no such route solves; the ranked routes stand alone
+    recipes = frozenset(pid for pid, _ in flow.crafts)
+    for p in built:
+        if frozenset(n["recipe"] for n in p["nodes"]) == recipes:
+            p["route"]["simplest"] = True
+            return
+    built.append(_plan(g, request, run_key, net, flow, sized, "simplest", 1, exact))
 
 
 def _rounded(value: object) -> object:
@@ -262,6 +293,8 @@ def _name(g: Graph, request: Request, column: str, n: int) -> str:
     parts = [f"{target} line", amount, VN[g.tier_cap]]
     if column == "addon":
         parts.append("addons")
+    elif column == "simplest":
+        parts.append("simplest")
     elif n > 1:
         parts.append(f"route {n}")
     return " · ".join(parts)

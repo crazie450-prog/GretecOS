@@ -197,6 +197,18 @@ def test_request_from_spec_defaults_to_a_batch_of_64(home: Path) -> None:
         )
 
 
+def test_request_from_spec_asks_for_the_simplest_route_by_default(home: Path) -> None:
+    """D389 (4): the Designer and the agent tool show the simplest route unless told not to."""
+    req = designer.request_from_spec(home, {"target": WIDGET, "rate": "2/s"})
+    assert isinstance(req, Request) and req.simplest
+    req = designer.request_from_spec(
+        home, {"target": WIDGET, "rate": "2/s", "simplest": False}
+    )
+    assert isinstance(req, Request) and not req.simplest
+    with pytest.raises(designer.DesignerError, match="simplest is true or false"):
+        designer.request_from_spec(home, {"target": WIDGET, "simplest": "yes"})
+
+
 def test_resolve_target(home: Path) -> None:
     found = designer.resolve_target(home, WIDGET)
     assert found.key == WIDGET  # type: ignore[union-attr]
@@ -442,3 +454,17 @@ def test_comparison_holds_the_addon_column() -> None:
         assert [c["differs"] for c in r["choices"]] == [True, False]
     base = designer.comparison_card(plans[:3], books, {}, "w")  # no addon: the top 3
     assert [r["rank"] for r in base["routes"]] == [1, 2, 3]
+    # D389 (4): the simplest route takes a base route's place, before the addon column
+    simplest = p("pl-e", 1, "simplest", "r:m/eeeeeeeeeeee")
+    both = designer.comparison_card(
+        [*plans, simplest], books | {"pl-e": Book()}, {}, "w"
+    )
+    check_card(both)
+    assert [r["rank"] for r in both["routes"]] == [1, "simplest", "addon"]
+    assert any("simplest route" in n for n in both["notes"])
+    one = designer.comparison_card(
+        [*plans[:3], simplest], books | {"pl-e": Book()}, {}, "w"
+    )
+    assert [r["id"] for r in one["routes"]] == ["pl-a", "pl-b", "pl-e"]
+    keys = sorted([plans[3], simplest, plans[1], plans[0]], key=designer._order_key)
+    assert [x["id"] for x in keys] == ["pl-a", "pl-b", "pl-e", "pl-d"]

@@ -943,7 +943,9 @@ export interface DesignerRoute {
   id: string;
   name: string;
   status: PlanStatus;
-  column: "base" | "addon";
+  column: "base" | "simplest" | "addon";
+  /** a base route that is also the simplest route (each node's first recipe, D389 (4)) */
+  simplest: boolean;
   position: number;
   of: number;
   score: number;
@@ -997,6 +999,8 @@ export interface DesignSpec {
   tier?: string;
   routes?: number;
   addons?: boolean;
+  /** also the simplest route (each node's first recipe), its own column; the server's default is on */
+  simplest?: boolean;
 }
 
 export interface Alternative {

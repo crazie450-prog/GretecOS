@@ -18,7 +18,10 @@ same request always has the same text and digest, and the graph built from it th
   keys), ``require_owned``, ``cleanroom``, ``coil_max``;
 - ``pins``: ``{node, recipe}``, a node being an item's stable key and the recipe its ``r:`` key
   (D61); at most one pin per node;
-- ``routes``: how many ranked routes to return, 1 to 3 (D11).
+- ``routes``: how many ranked routes to return, 1 to 3 (D11);
+- ``simplest``: also return the simplest route, every node on its first (heuristic) recipe,
+  as an extra column beside the ranked routes (D389 (4)); written only when true, so every
+  request from before keeps its text and digest.
 
 **My base** (:class:`BaseInputs`) is the interface WO-3.3 and WO-3.8 both code to: the player's
 tier cap, owned machines (by GT mte id), stock and the outputs of accepted lines (by stable
@@ -201,6 +204,7 @@ class Request:
     constraints: Constraints = field(default_factory=Constraints)
     pins: tuple[Pin, ...] = ()
     routes: int = MAX_ROUTES
+    simplest: bool = False  # D389 (4): the extra simplest-route column
 
     def __post_init__(self) -> None:
         if not is_stable_key(self.target):
@@ -241,6 +245,7 @@ class Request:
             or not 1 <= self.routes <= MAX_ROUTES
         ):
             raise RequestError(f"routes {self.routes!r}: 1 to {MAX_ROUTES}")
+        _flag("simplest", self.simplest)
 
     @property
     def rate_per_s(self) -> float | None:
@@ -256,7 +261,7 @@ class Request:
 
     def as_dict(self) -> dict[str, Any]:
         c = self.constraints
-        return {
+        out: dict[str, Any] = {
             "v": VERSION,
             "target": self.target,
             "mode": self.mode,
@@ -276,6 +281,9 @@ class Request:
             "pins": [{"node": p.node, "recipe": p.recipe} for p in self.pins],
             "routes": self.routes,
         }
+        if self.simplest:  # only when set: older requests keep their digest
+            out["simplest"] = True
+        return out
 
     def canonical(self) -> str:
         """The request as canonical JSON: sorted keys, no spaces, UTF-8 text."""
@@ -302,6 +310,7 @@ class Request:
             "constraints",
             "pins",
             "routes",
+            "simplest",
         }
         extra = sorted(set(data) - known)
         if extra:
@@ -341,6 +350,7 @@ class Request:
                     for p in data.get("pins") or ()
                 ),
                 routes=data.get("routes", MAX_ROUTES),
+                simplest=_flag("simplest", data.get("simplest", False)),
             )
         except (KeyError, TypeError) as exc:
             raise RequestError(f"malformed request: {exc}") from None

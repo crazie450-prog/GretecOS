@@ -216,7 +216,7 @@
       "properties": {
         "score": {"type": "number", "minimum": 0, "maximum": 1},
         "position": {"type": "integer", "minimum": 1},
-        "column": {"enum": ["base", "addon"]},
+        "column": {"enum": ["base", "simplest", "addon"]},
         "weights": {"enum": ["balanced", "custom"]}
       }
     },
@@ -243,8 +243,9 @@
       "required": ["n", "column", "mode", "exact", "choices", "gates", "all_run", "floor", "objectives", "big_m"],
       "properties": {
         "n": {"type": "integer", "minimum": 1},
-        "column": {"enum": ["base", "addon"]},
+        "column": {"enum": ["base", "simplest", "addon"]},
         "mode": {"enum": ["rate", "batch"]},
+        "simplest": {"type": "boolean", "description": "D389 (4): this base route is also the simplest route"},
         "exact": {"type": "boolean"},
         "choices": {"type": "array", "items": {"$ref": "#/$defs/pin"}},
         "gates": {"type": "array", "items": {"$ref": "#/$defs/key"}},

@@ -56,8 +56,10 @@ function showPlan(id: string): void {
 }
 
 /** The route's head line: its place in code's ranking, never a re-sort. */
-export function routeLabel(r: Pick<DesignerRoute, "column" | "position" | "of">): string {
-  return r.column === "addon" ? "Addon column" : `Route ${r.position} of ${r.of}`;
+export function routeLabel(r: Pick<DesignerRoute, "column" | "position" | "of"> & { simplest?: boolean }): string {
+  if (r.column === "addon") return "Addon column";
+  if (r.column === "simplest") return "Simplest route";
+  return `Route ${r.position} of ${r.of}${r.simplest ? " (also the simplest)" : ""}`;
 }
 
 function Cite({ cite }: { cite: string | null }) {
@@ -73,6 +75,7 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
   const [tier, setTier] = useState("");
   const [routes, setRoutes] = useState(3);
   const [addons, setAddons] = useState(false);
+  const [simplest, setSimplest] = useState(true);
   const submit = (e: FormEvent): void => {
     e.preventDefault();
     if (!target.trim()) return;
@@ -84,6 +87,7 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
       ...(tier ? { tier } : {}),
       routes,
       addons,
+      simplest,
     });
   };
   return (
@@ -146,6 +150,10 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
         <label className="field check">
           <input type="checkbox" checked={addons} onChange={(e) => setAddons(e.target.checked)} data-testid="designer-addons" />
           <span>Addon machines too</span>
+        </label>
+        <label className="field check">
+          <input type="checkbox" checked={simplest} onChange={(e) => setSimplest(e.target.checked)} data-testid="designer-simplest" />
+          <span>Simplest route too</span>
         </label>
         <Button type="submit" variant="primary" disabled={props.busy || !target.trim()} testId="designer-go">
           Design

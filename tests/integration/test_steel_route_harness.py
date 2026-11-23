@@ -15,6 +15,7 @@ The fixture loads
 the run's GT ore mixes as `gos ores load` does (no world, so no veins), so the raw-source gate
 (F2, D391) sees vein sources: ``test_twilight_raws_are_gated`` checks it, and
 ``test_steel_starts_with_iron_and_coal`` checks F3's ranking on them (D393).
+``test_simplest_steel_route_is_an_extra_column`` checks F5's extra column (D389 (4)).
 ``GOS_SERVER_RUN`` names another server run folder.
 """
 
@@ -171,6 +172,27 @@ def test_steel_starts_with_iron_and_coal(conn: sqlite3.Connection) -> None:
     started = time.perf_counter()
     graph.build(conn, Request(PLATINUM, tier_cap=IV), DefaultBaseInputs(0))
     assert time.perf_counter() - started < 2.0  # §8 row 3.3's LIMIT_S
+
+
+def test_simplest_steel_route_is_an_extra_column(
+    conn: sqlite3.Connection, best: dict[str, Any]
+) -> None:
+    """F5 (D389 (4)): asking for the simplest route adds it beside the ranked routes, made of
+    each node's first candidate (steel's: the Bricked Blast Furnace, F3), and leaves the
+    ranked routes as they were."""
+    req = Request(STEEL, tier_cap=MV, mode="batch", qty=DEFAULT_BATCH, simplest=True)
+    d = plan.design(conn, req, DefaultBaseInputs(MV))
+    base = [p for p in d.plans if p["rank"]["column"] == "base"]
+    # the same ranked routes (equal scores break on the plan id, which hashes the request)
+    assert base[0]["rank"]["score"] == best["rank"]["score"]
+    assert best["route"]["choices"] in [p["route"]["choices"] for p in base]
+    simplest = [p for p in d.plans if p["rank"]["column"] == "simplest"]
+    simplest += [p for p in base if p["route"].get("simplest")]
+    assert len(simplest) == 1, [p["rank"]["column"] for p in d.plans]
+    first = graph.build(conn, req, DefaultBaseInputs(MV)).item(STEEL).chosen[0]
+    assert first in {n["recipe"] for n in simplest[0]["nodes"]}
+    if simplest[0]["rank"]["column"] == "simplest":
+        assert d.plans.index(simplest[0]) == len(base)  # right after the ranked routes
 
 
 @pytest.mark.xfail(

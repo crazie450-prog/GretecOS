@@ -104,7 +104,10 @@ def plan_result(job: Mapping[str, Any], settings: BotSettings) -> str:
         return clip(head + "\n" + clarify(res["clarify"], "/plan"))
     lines = [head + ":"]
     for r in res.get("routes") or ():
-        where = "addon" if r.get("column") == "addon" else f"route {r.get('position')}"
+        column = r.get("column")
+        where = (
+            column if column in ("simplest", "addon") else f"route {r.get('position')}"
+        )
         lines.append(
             f"{where} of {r.get('of')}: {r.get('name')} (plan:{r.get('id')}): "
             f"{num(r.get('machines'))} machines, {num(r.get('eut_avg'))} EU/t average, "
