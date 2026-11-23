@@ -527,6 +527,13 @@ def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1", "--simplest"
     )
     assert code == 0 and "[base, simplest]" in text, text  # D389 (4)
+    # on by default (D404 (8)); --no-simplest leaves it out
+    code, text = run_cli(home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1")
+    assert code == 0 and "[base, simplest]" in text, text
+    code, text = run_cli(
+        home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1", "--no-simplest"
+    )
+    assert code == 0 and "simplest" not in text, text
     code, text = run_cli(home, monkeypatch, WIDGET, "--qty", "2/s", "--within", "1h")
     assert code == 2 and "--within is for --batch only" in text
     code, text = run_cli(

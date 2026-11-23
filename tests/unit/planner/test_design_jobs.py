@@ -16,9 +16,11 @@ from typing import Any
 
 import pytest
 
+from gregtec.agents import route_review as rr
 from gregtec.db import access
-from gregtec.planner import chains, designer, powerview, progress
+from gregtec.planner import chains, designer, powerview, progress, rank
 from gregtec.planner import design_jobs as dj
+from gregtec.planner import plan as plan_mod
 from gregtec.planner.outputs import store
 from gregtec.planner.request import Request
 from gregtec.vault import deploy as vault_deploy
@@ -143,10 +145,10 @@ def test_one_job_per_kind_and_the_other_kind_waits_for_the_planner(
 ) -> None:
     reg, _ = jobs
     first = Script()
-    job = reg.start("designer", "Designer: widget", first)
+    job = reg.start("shell", "Shell: tower", first)
     assert first.at["graph"].wait(10)
     with pytest.raises(dj.Busy, match="already running .*graph.*cancel it") as busy:
-        reg.start("designer", "Designer: gadget", Script())
+        reg.start("shell", "Shell: hall", Script())
     assert busy.value.job is job
     second = Script()
     other = reg.start("power", "Power: Best at tier", second)
@@ -344,6 +346,109 @@ def test_a_designer_job_cancelled_at_a_stage_saves_no_plan(
     assert _saved(home) == 0 and designer.latest(home) == []
     assert not list((home / "data" / "plans").glob("pl-*"))
     assert not list((home / "vault" / "plans").glob("pl-*.md"))
+
+
+class BlockingReviewer:
+    """A fake route reviewer (no model) that waits in its "model call" until the test lets it
+    go on, hearing a cancel as the real one does at each call; then it re-solves once."""
+
+    def __init__(self) -> None:
+        self.waiting = threading.Event()
+        self.go = threading.Event()
+
+    def run(
+        self,
+        base: plan_mod.Design,
+        request: Request,
+        solve_: Any,  # noqa: ANN401
+        prefs: rank.Prefs,
+        conn: sqlite3.Connection,
+    ) -> rr.Outcome:
+        progress.stage("review", 1, 8)
+        self.waiting.set()
+        while not self.go.wait(0.05):
+            progress.check()
+        solve_(request)  # a re-run takes the planner lock while it solves
+        return rr.Outcome({"id": "rv-0123456789", "status": "done"}, None)
+
+
+def _reviewed_job(
+    home: Path, req: Request
+) -> tuple[dj.DesignJobs, dj.Job, BlockingReviewer]:
+    reg = dj.DesignJobs(home, designer._LOCK)
+    rv = BlockingReviewer()
+    job = reg.start(
+        "designer",
+        "Designer: widget · reviewed",
+        lambda: _ids(designer.design(home, req, reviewer=rv)),  # type: ignore[arg-type]
+    )
+    assert rv.waiting.wait(120)
+    return reg, job, rv
+
+
+def test_the_review_runs_without_the_planner_lock(
+    plan_db: Path, tmp_path: Path
+) -> None:
+    """D404 (10): while a reviewed design's model call waits, a rename, a pin, an accept,
+    another design and a power job go ahead; the reviewed design then saves as before."""
+    home = _home(plan_db, tmp_path / "home")
+    pid = designer.design(home, Request(tp.WIDGET, qty=2, tier_cap="MV")).ids[0]
+    reg, job, rv = _reviewed_job(home, Request(tp.WIDGET, qty=3, tier_cap="MV"))
+    # Not held: this would block until the review ended (it never does unless let go).
+    assert designer._LOCK.acquire(timeout=5)
+    designer._LOCK.release()
+    assert designer.rename(home, pid, "Widget line")["name"] == "Widget line"
+    conn = access.connect(access.db_path(home), readonly=True)
+    try:
+        reactor = str(tp.ref_of(conn, "chemicalreactor", 0))
+    finally:
+        conn.close()
+    pinned = designer.pin(home, pid, tp.WIDGET, reactor)
+    assert designer.accept(home, pinned.ids[0]).status == "accepted"
+    other = designer.design(home, Request(tp.WIDGET, qty=4, tier_cap="MV"))
+    power = Script()
+    power.release()
+    pj = reg.start("power", "Power: Best at tier", power)
+    assert reg.wait(pj.id, 10).status == dj.DONE
+    assert reg.get(job.id).status == dj.RUNNING  # type: ignore[union-attr]
+    rv.go.set()
+    done = reg.wait(job.id, 120)
+    assert done.status == dj.DONE, done.error
+    ids = done.result["ids"]  # type: ignore[index]
+    assert ids and not set(ids) & set(other.ids)
+    assert designer.review_record(home, ids[0]) == {
+        "id": "rv-0123456789",
+        "status": "done",
+    }
+
+
+def test_a_cancel_during_the_review_saves_nothing(
+    plan_db: Path, tmp_path: Path
+) -> None:
+    home = _home(plan_db, tmp_path / "home")
+    reg, job, _ = _reviewed_job(home, Request(tp.WIDGET, qty=2, tier_cap="MV"))
+    assert reg.cancel(job.id).cancel_asked
+    assert reg.wait(job.id, 60).status == dj.CANCELLED
+    assert _saved(home) == 0 and designer.latest(home) == []
+    assert not (home / designer.REVIEWS).exists()
+
+
+def test_a_cancel_while_the_review_waits_for_the_planner_saves_nothing(
+    plan_db: Path, tmp_path: Path
+) -> None:
+    """The review's re-run (and its save) wait for the lock where a cancel is still heard."""
+    home = _home(plan_db, tmp_path / "home")
+    reg, job, rv = _reviewed_job(home, Request(tp.WIDGET, qty=2, tier_cap="MV"))
+    assert designer._LOCK.acquire(timeout=5)  # someone else's design holds the planner
+    try:
+        rv.go.set()
+        time.sleep(0.3)  # the re-run now waits for the lock
+        assert reg.get(job.id).status == dj.RUNNING  # type: ignore[union-attr]
+        assert reg.cancel(job.id).cancel_asked
+        assert reg.wait(job.id, 10).status == dj.CANCELLED
+    finally:
+        designer._LOCK.release()
+    assert _saved(home) == 0 and designer.latest(home) == []
 
 
 def test_a_power_design_as_a_job(

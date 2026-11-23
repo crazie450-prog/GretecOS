@@ -10,9 +10,14 @@ every route has 0), so each term is in [0, 1]. The cost is the weighted mean of 
 1 for a route that has nothing of anything). Terms and scores are rounded to
 :data:`DIGITS` decimals, so float noise can't decide an order.
 
-**Order.** Higher score first; ties (equal rounded scores) break on fewer new machine types,
-then the lower highest machine tier, then the plan id (a hash of the route's choices). Nothing
-depends on dict or set order. The base routes are ranked among themselves; the simplest route
+**Order.** A route that imports a locked or depth item (``route.unsourced``, plan.UNSOURCED,
+D395) ranks below every route that imports none (D404 (6)); then higher score first; ties
+(equal rounded scores) break on fewer new machine types, then the lower highest machine tier,
+then the route's own recipes (:func:`recipe_digest`, a hash of its nodes' ``r:`` ids and its
+choices), never the plan id: that hashes the request, whose flags (``simplest``, the
+reviewer's toggle ...) would then swap exactly tied routes (D404 (8)). The plan id is only
+the last resort, for routes with the same recipes and choices. Nothing depends on dict or set
+order. The base routes are ranked among themselves; the simplest route
 (D389 (4)) and the addon route (D12) each get a score against the base routes and themselves,
 and keep their own columns after them (simplest, then addon), so the base order never changes.
 
@@ -37,6 +42,8 @@ by default (D67) and printed with every result (:func:`describe_power`).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -210,6 +217,21 @@ def _tier(m: Mapping[str, Any]) -> int:
     return metrics.TIERS[t] if t else -1
 
 
+def recipe_digest(plan: Mapping[str, Any]) -> str:
+    """A hash of the route itself: its nodes' recipes and its choices, nothing of the
+    request (the tie-break of :func:`order`, D404 (8))."""
+    data = (
+        sorted(str(n["recipe"]) for n in plan["nodes"]),
+        sorted((str(c["node"]), str(c["recipe"])) for c in plan["route"]["choices"]),
+    )
+    return hashlib.sha256(json.dumps(data).encode("utf-8")).hexdigest()
+
+
+def unsourced(plan: Mapping[str, Any]) -> bool:
+    """Whether the route imports a locked or depth item (D395, D404 (6))."""
+    return bool(plan["route"].get("unsourced"))
+
+
 def order(
     plans: Sequence[dict[str, Any]], prefs: Prefs = BALANCED
 ) -> list[dict[str, Any]]:
@@ -224,9 +246,11 @@ def order(
     keyed = sorted(
         zip(base, vals, scored, strict=True),
         key=lambda t: (
+            unsourced(t[0]),
             -t[2][0],
             len(t[0]["metrics"]["new_types"]),
             _tier(t[0]["metrics"]),
+            recipe_digest(t[0]),
             t[0]["id"],
         ),
     )

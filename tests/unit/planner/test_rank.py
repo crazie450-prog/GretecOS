@@ -26,10 +26,19 @@ def plan(
     cx: int = 5,
     tier: str = "MV",
     column: str = "base",
+    recipes: tuple[str, ...] = (),
+    unsourced: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    route: dict[str, Any] = {
+        "column": column,
+        "choices": [{"node": f"n:{r}", "recipe": r} for r in recipes],
+    }
+    if unsourced:
+        route["unsourced"] = list(unsourced)
     return {
         "id": pid,
-        "route": {"column": column},
+        "nodes": [{"recipe": r} for r in recipes],
+        "route": route,
         "metrics": {
             "machines": machines,
             "new_types": [f"mte:{i}" for i in range(new)],
@@ -85,6 +94,31 @@ def test_ties_break_on_new_types_then_tier_then_id() -> None:
     weights = tuple((m, 0.0 if m == "new_types" else 1.0) for m in rank.METRICS)
     out = rank.order([more, fewer], rank.Prefs(weights, "custom"))
     assert ids(out) == ["pl-b", "pl-a"]
+
+
+def test_a_locked_or_depth_import_ranks_below_every_route_without_one() -> None:
+    """D404 (6): an unsourced import (plan.UNSOURCED) goes below, however good its score;
+    among themselves such routes rank by score as usual."""
+    locked = plan("pl-a", machines=1, eut=1, unsourced=("x:locked@0",))
+    worse = plan("pl-b", machines=40, eut=900)
+    deep = plan("pl-c", machines=2, eut=1, unsourced=("x:deep@0",))
+    out = rank.order([locked, worse, deep])
+    assert ids(out) == ["pl-b", "pl-a", "pl-c"]
+    # scores are kept as they are
+    assert out[1]["rank"]["score"] > out[0]["rank"]["score"]
+    assert [p["rank"]["position"] for p in out] == [1, 2, 3]
+
+
+def test_exact_ties_break_on_the_route_not_the_request() -> None:
+    """D404 (8): two exactly tied routes keep their order when only the plan ids (a hash of
+    the request, which ``simplest`` changes) differ: the route's own recipes decide."""
+    one, two = ("r:m/1", "r:m/2"), ("r:m/1", "r:m/3")
+    plain = [plan("pl-a", recipes=one), plan("pl-b", recipes=two)]
+    flagged = [plan("pl-d", recipes=one), plan("pl-c", recipes=two)]  # ids swap order
+    order = [p["nodes"] for p in rank.order(plain)]
+    assert [p["nodes"] for p in rank.order(flagged)] == order
+    digests = [rank.recipe_digest(p) for p in rank.order(plain)]
+    assert digests == sorted(digests)
 
 
 def test_float_noise_cannot_decide_the_order() -> None:

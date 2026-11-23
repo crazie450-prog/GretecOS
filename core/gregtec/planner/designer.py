@@ -73,9 +73,12 @@ LATEST = Path("data", "plans", "designer.json")  # in GOS_HOME
 REVIEWS = Path("data", "plans", "reviews")  # the route reviewer's records (D389 (7))
 LINES = "base/lines"
 NAME_MAX = 80
-# One design, pin, accept or rename at a time per process; re-entrant so a design job
-# (WO-3.9) can wait for it where a cancel is still heard, then call design() holding it.
+# One design, pin, accept or rename at a time per process; re-entrant so a power or shell
+# design job (WO-3.9) can wait for it where a cancel is still heard, then design holding it. The
+# Designer's own functions take it themselves (:func:`_planner`), so the route reviewer's model
+# calls run without it (D404 (10)): see design().
 _LOCK = threading.RLock()
+WAIT_S = 0.25  # how often a design waiting for the planner lock checks for a cancel
 
 # The route comparison card's metrics, in the order the routes are ranked on (rank.METRICS),
 # then the score; each says which way is better.
@@ -256,6 +259,19 @@ def _solve(conn: sqlite3.Connection, home: Path, request: Request) -> plan.Desig
         raise DesignerError(f"can't design it: {exc}") from None
 
 
+@contextmanager
+def _planner() -> Iterator[None]:
+    """Hold the planner lock (:data:`_LOCK`). A design job waiting for it still hears a
+    cancel (D353): :func:`progress.check` raises once the job is cancelled; outside a job it
+    just waits."""
+    while not _LOCK.acquire(timeout=WAIT_S):
+        progress.check()
+    try:
+        yield
+    finally:
+        _LOCK.release()
+
+
 def _save_all(
     home: Path,
     d: plan.Design,
@@ -282,24 +298,34 @@ def design(
     ``reviewer`` (the toggle, D389 (7)) the route reviewer reads the ranked routes first; its
     re-runs are solved in memory, so a cancel still saves nothing (D353). Its reviewed route,
     when it made one, is saved as an extra column beside the planner's own routes, and its
-    record goes to ``data/plans/reviews/<the top route's id>.json``."""
-    with _LOCK, _conn(home, readonly=True) as conn:
-        d = _solve(conn, home, request)
-        out = None
-        if reviewer is not None:
-            prefs = rank.read_prefs(home / "vault")
-            out = reviewer.run(d, request, lambda r: _solve(conn, home, r), prefs, conn)
-        progress.stage("saving")  # a design job's last cancel point (D353)
-        if out is None:
-            return _save_all(home, d, conn)
-        extra = [out.reviewed] if out.reviewed is not None else []
-        for p in d.plans:
-            p["alternatives"] = [*p["alternatives"], *(r["id"] for r in extra)]
-        saved = _save_all(home, d, conn, extra, out.record["id"])
-        atomic_write(
-            home / REVIEWS / f"{d.plans[0]['id']}.json",
-            json.dumps(out.record, sort_keys=True, indent=1).encode("utf-8"),
-        )
+    record goes to ``data/plans/reviews/<the top route's id>.json``.
+
+    The planner lock (D404 (10)): the base solve holds it, the review's model calls don't (a
+    pin, an accept, a rename or another design goes ahead meanwhile), each re-solve holds it
+    while it solves, and saving holds it."""
+    with _conn(home, readonly=True) as conn:
+        with _planner():
+            d = _solve(conn, home, request)
+            if reviewer is None:
+                progress.stage("saving")  # a design job's last cancel point (D353)
+                return _save_all(home, d, conn)
+
+        def resolve_(r: Request) -> plan.Design:
+            with _planner():
+                return _solve(conn, home, r)
+
+        prefs = rank.read_prefs(home / "vault")
+        out = reviewer.run(d, request, resolve_, prefs, conn)
+        with _planner():
+            progress.stage("saving")  # a design job's last cancel point (D353)
+            extra = [out.reviewed] if out.reviewed is not None else []
+            for p in d.plans:
+                p["alternatives"] = [*p["alternatives"], *(r["id"] for r in extra)]
+            saved = _save_all(home, d, conn, extra, out.record["id"])
+            atomic_write(
+                home / REVIEWS / f"{d.plans[0]['id']}.json",
+                json.dumps(out.record, sort_keys=True, indent=1).encode("utf-8"),
+            )
         saved.review = out.record
         saved.reviewed = extra[0]["id"] if extra else None
         return saved
@@ -338,7 +364,7 @@ def pin(home: Path, pid: str, node: str, recipe: str | None) -> Designed:
         )
     except ValueError as exc:
         raise DesignerError(str(exc)) from None
-    with _LOCK, _conn(home, readonly=True) as conn:
+    with _planner(), _conn(home, readonly=True) as conn:
         d = _solve(conn, home, changed)
         if recipe is not None:
             check_pin(d, node, recipe)
@@ -462,17 +488,15 @@ def _addon(p: Mapping[str, Any]) -> bool:
 
 
 def _shown(plans: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    """The routes the comparison card holds (at most 3, the catalog's limit): the top base
-    routes in rank order, then the simplest route (D389 (4)), the addon column (D12) and the
-    reviewed route (D389 (7)) whenever the design has them, but never fewer than one base
-    route (D11): with all three extras the simplest route is left out."""
-    base = [p for p in plans if _column(p) == "base"]
+    """The routes the comparison card holds (at most 3, the catalog's limit): the top 3 base
+    routes in rank order (D404 (8)), then the addon column (D12) and the reviewed route
+    (D389 (7)) in the places they leave. The simplest route is never on the card; it shows
+    in the route list only (D404 (8))."""
+    base = [p for p in plans if _column(p) == "base"][:3]
     extras: list[Mapping[str, Any]] = []
-    for column in ("simplest", "addon", "reviewed"):
+    for column in ("addon", "reviewed"):
         extras.extend([p for p in plans if _column(p) == column][:1])
-    if base:  # the top ranked route always stays: the simplest route gives way first
-        extras = extras[-2:]
-    return base[: 3 - len(extras)] + extras
+    return base + extras[: 3 - len(base)]
 
 
 def _made_by(p: Mapping[str, Any]) -> dict[str, str]:
@@ -502,8 +526,8 @@ def comparison_card(
     prefs_line: str,
 ) -> dict[str, Any]:
     """The catalog's ``route_comparison`` card for up to 3 routes, in the order given (rank
-    order): the base routes, then the simplest route and the addon column when the design has
-    them, in fewer base routes' place (their rank reads ``simplest`` or ``addon``). A metric is
+    order), as :func:`_shown` picks them: the base routes, then the addon and reviewed columns
+    in the places they leave (their rank reads ``addon`` or ``reviewed``). A metric is
     marked ``best`` on the routes that have the best value when the routes don't all tie; a
     choice ``differs`` when another route makes that item with another recipe or not at all."""
     shown = _shown(plans)
@@ -560,11 +584,6 @@ def comparison_card(
     ]
     if any(_addon(p) for p in shown):
         notes.append("the addon column is ranked against the base routes, shown last")
-    if any(_column(p) == "simplest" for p in shown):
-        notes.append(
-            "the simplest route (each node's first recipe) is scored against the base "
-            "routes, shown after them"
-        )
     if any(_column(p) == "reviewed" for p in shown):
         notes.append(
             "the reviewed route is the route reviewer's change, re-solved and scored by the "

@@ -479,6 +479,23 @@ def test_template_passes_the_validator(conn: sqlite3.Connection) -> None:
         assert text.splitlines()[0].startswith("Ranked by code, weights (balanced)")
 
 
+def test_an_unsourced_import_is_why_a_route_ranks_lower(
+    conn: sqlite3.Connection,
+) -> None:
+    """D404 (6): the facts and the template say a route imports locked or depth items, the
+    reason rank.py puts it below better-scored routes; the validator still passes it."""
+    plans = list(design(conn, Request(WIDGET, qty=2)).plans)
+    plans[0]["route"]["unsourced"] = ["test:locked@0"]
+    doc = explain.facts(plans, "Widget", rank.BALANCED)
+    assert doc["routes"][0]["unsourced"] == ["test:locked@0"]
+    assert all(r["unsourced"] == [] for r in doc["routes"][1:])
+    text = explain.template(doc)
+    assert "Imports locked or depth items it doesn't make (test:locked@0)" in text
+    assert text.count("Imports locked or depth items") == 1
+    result = validate.check(text, doc, explain.names(doc))
+    assert result.ok, result.offending
+
+
 def test_template_with_injected_wrong_numbers_is_caught(
     conn: sqlite3.Connection,
 ) -> None:

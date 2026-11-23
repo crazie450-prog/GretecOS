@@ -148,6 +148,14 @@ def test_unknown_raws_rank_last_only_with_source_data(
     assert not any(w.startswith("no ore mixes loaded") for w in g.warnings)
 
 
+def test_no_ore_mixes_is_always_said_once(conn: sqlite3.Connection) -> None:
+    """D404 (5): with no vein data the graph says so (pointing at ``gos ores load``) even
+    when no unknown raw meets a candidate: Ore A at hand, so no recipe has one."""
+    g = tg.build_graph(conn, Request(GEAR, boundary=(ORE_A,)))
+    said = [w for w in g.warnings if w.startswith("no ore mixes loaded")]
+    assert len(said) == 1 and "gos ores load" in said[0], g.warnings
+
+
 def builder(conn: sqlite3.Connection, request: Request) -> graph._Builder:
     return graph._Builder(
         conn, request, tg.Base(), chains.EMPTY, machines.current_run(conn)

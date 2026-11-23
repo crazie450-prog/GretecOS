@@ -274,13 +274,15 @@ def test_a_follow_up_that_discord_refuses_goes_by_dm(core: FakeCore) -> None:
 def test_plan_validates_its_options(core: FakeCore) -> None:
     async def go() -> None:
         bot = make_bot(core, [])
-        for opts in (
-            {"target": "", "amount": "2/s"},
-            {"target": "steel", "amount": " "},
-        ):
+        for opts in ({"target": "", "amount": "2/s"}, {"target": " "}):
             it = clayton(core)
             await bot.interaction(it, "plan", opts)
             assert "Give a target" in it.texts[0]
+        it = clayton(core)  # no amount: the designer's batch of 64 (D404 (9))
+        await bot.interaction(it, "plan", {"target": "steel", "amount": " "})
+        (call,) = [c for c in core.calls if c[0] == "submit_job"]
+        assert call[1][:2] == ("plan", {"target": "steel"})
+        core.calls.clear()
         it = clayton(core)
         await bot.interaction(
             it,
@@ -681,5 +683,14 @@ def test_a_plan_reply_names_the_simplest_route() -> None:
         return texts.plan_result(job, SETTINGS)
 
     assert "route 1 (also the simplest) of 2: Steel" in reply(row("base", 1, True))
+    # no amount (D404 (9)): the head says the routes' batch, each route its ETA
+    text = reply({**row("base", 1), "batch": 64, "eta_s": 3240})
+    assert text.startswith("Plan job 1 (steel, batch 64):"), text
+    assert "effort 1 h, batch 64 ETA 3,240 s" in text
+    # a long reply (a batch's warnings) is clipped before the link, never through it
+    long = {**row("base", 1), "warnings": ["w" * 200] * 3}
+    text = reply(*[{**long, "id": f"pl-0000000{i}"} for i in range(1, 5)])
+    assert len(text) <= texts.MSG_MAX and "…" in text
+    assert text.endswith("/#/designer/pl-00000001"), text[-200:]
     text = reply(row("base", 1), row("simplest", 2))
     assert "route 1 of 2: Steel" in text and "simplest of 2: Steel" in text

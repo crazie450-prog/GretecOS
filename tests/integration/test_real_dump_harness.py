@@ -43,7 +43,7 @@ from gregtec.db import access
 from gregtec.db import structures as structure_db
 from gregtec.ingest import collect
 from gregtec.planner import plan
-from gregtec.planner.request import DefaultBaseInputs, Request
+from gregtec.planner.request import DefaultBaseInputs, Pin, Request
 from gregtec.vault.io import VaultIO
 
 REPO = Path(__file__).resolve().parents[2]
@@ -90,10 +90,22 @@ def home(
         report = structure_db.load(conn, Path(DUMP))
         print("\n" + "\n".join(report.lines()))
         key, tier = _g3().LINES["steel (EBF)"]
-        d = plan.design(
-            conn, Request(key, qty=1, tier_cap=tier), DefaultBaseInputs.from_db(conn)
-        )
+        base = DefaultBaseInputs.from_db(conn)
+        d = plan.design(conn, Request(key, qty=1, tier_cap=tier), base)
         assert d.plans, "the steel line didn't design"
+        # Since D390 MV steel's best routes can all be the hand-fed Bricked Blast Furnace (a
+        # "primitive" machine, no multiblock) or single blocks. This file is about multiblock
+        # footprints, so then the steel is pinned to its first EBF recipe in the graph.
+        if not any(_multis(dict(p)) for p in d.plans):
+            ebf = next(
+                c.recipe
+                for c in d.graph.item(key).candidates
+                if c.status != "rejected"
+                and c.recipe.startswith("r:gt.recipe.blastfurnace/")
+            )
+            pinned = Request(key, qty=1, tier_cap=tier, pins=(Pin(key, ebf),))
+            d = plan.design(conn, pinned, base)
+            assert d.plans, f"the steel line didn't design pinned to {ebf}"
     finally:
         conn.close()
     # the best route with a multiblock (on the client harness DB the best one is single blocks

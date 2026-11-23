@@ -51,17 +51,22 @@ test("a typed request designs every route, in the core's rank order, differences
   await expect(page.getByTestId("route-3-base")).toBeVisible({ timeout: 30_000 });
   const pid = planInHash();
   const ids = await routeIds();
-  expect(ids).toHaveLength(3);
   expect(ids[0]).toBe(pid);
-  // The order on screen is the core's (rank.py's), never re-sorted.
+  // The order on screen is the core's (rank.py's), never re-sorted: the three ranked routes,
+  // then the simplest route's own column (on by default, D399, D404 (8)).
   const core = await asAdmin<DesignerView>(`/api/plans/${pid}/designer`);
   expect(ids).toEqual(core.routes.map((r) => r.id));
-  expect(core.routes.map((r) => r.position)).toEqual([1, 2, 3]);
+  expect(core.routes.map((r) => [r.column, r.position])).toEqual([
+    ["base", 1],
+    ["base", 2],
+    ["base", 3],
+    ["simplest", 1],
+  ]);
   const compare = page.getByTestId("designer-compare");
   await expect(compare.locator("li.differs").first()).toBeVisible();
   await expect(compare.locator("dd.best").first()).toBeVisible();
   // Each route's flow diagram, laid out by elkjs (the card's one layout, D159).
-  await expect(page.locator(".designer-route .flow-canvas")).toHaveCount(3);
+  await expect(page.locator(".designer-route .flow-canvas")).toHaveCount(ids.length);
   await expect(page.locator(".designer-route .react-flow__node").first()).toBeVisible();
   await page.screenshot({ path: shot("designer-routes") });
 });
@@ -100,8 +105,11 @@ test("a route's floor plan lays its machines out with corridors (WO-10.5)", asyn
 });
 
 test("a pin made in the Designer survives a reload and a re-solve", async () => {
-  const second = page.locator(".designer-route").nth(1);
-  await second.locator(`.designer-node[data-node="${DUST}"] button.result`).click();
+  // The first route that makes Steel Dust (the Bricked Blast Furnace route, from iron and coal,
+  // has none, and where it ranks follows its hand-fed effort, D404 (4)).
+  const dust = `.designer-node[data-node="${DUST}"] button.result`;
+  const route = page.locator(".designer-route").filter({ has: page.locator(dust) }).first();
+  await route.locator(dust).click();
   const panel = page.getByTestId("designer-alternatives");
   await expect(panel.locator("tr[data-recipe]").first()).toBeVisible();
   const free = panel.locator("tr[data-recipe]:not(.used)").first();

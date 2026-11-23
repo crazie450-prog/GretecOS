@@ -234,7 +234,7 @@ def add_commands(tree: app_commands.CommandTree, bot: Bot) -> None:
     )
     @app_commands.describe(
         target="item or fluid",
-        amount="a rate (2/s, 30/min) or a quantity (64)",
+        amount="a rate (2/s, 30/min) or a quantity; default a batch of 64",
         within="for a quantity: how long (2h)",
         tier="highest tier (LV..MAX); default: yours",
     )
@@ -242,7 +242,7 @@ def add_commands(tree: app_commands.CommandTree, bot: Bot) -> None:
     async def plan(
         inter: discord.Interaction,
         target: str,
-        amount: str,
+        amount: str | None = None,
         within: str | None = None,
         tier: str | None = None,
     ) -> None:

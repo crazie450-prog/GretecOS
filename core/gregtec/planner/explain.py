@@ -26,7 +26,8 @@ INSTRUCTIONS = """\
 Explain these GregTech production routes to the player, in the order given: the ranking comes \
 from code and is final, so never reorder the routes or call a lower-ranked one better overall. \
 Say what each route needs and its trade-offs against the others, and why it ranks where it \
-does, from the scores, terms and weights. Use only numbers that appear in the JSON below, \
+does, from the scores, terms and weights (a route with "unsourced" imports, locked or depth \
+items it doesn't make, ranks below every route without one, whatever its score). Use only numbers that appear in the JSON below, \
 copied as they are, with their units (per second, per hour, h, s, EU/t). You may round to 3 \
 significant digits, write "about" or "~" before a rounder number, or add numbers of the same \
 kind (machine counts, hours). Name items, machines and tiers as the JSON names them. Plain \
@@ -52,6 +53,7 @@ def _metrics(m: Mapping[str, Any]) -> dict[str, Any]:
         "eff_h": m["eff_h"],
         "build_h": m["build_h"],
         "unlock_h": m["unlock_h"],
+        "hand_h": m.get("hand_h", 0),
         "scarcity": m["scarcity"],
         "complexity": c["score"],
         "nodes": c["nodes"],
@@ -99,6 +101,8 @@ def facts(
                 "of": p["rank"]["of"],
                 "score": p["rank"]["score"],
                 "terms": p["rank"]["terms"],
+                # D404 (6): why a route sits below better-scored ones
+                "unsourced": list(p["route"].get("unsourced", [])),
                 "metrics": _metrics(p["metrics"]),
             }
             for p in plans
@@ -165,10 +169,18 @@ def template(doc: Mapping[str, Any]) -> str:
             f"{head}. Score {fmt(r['score'])}. {fmt(m['machines'])} machines ({machines}); "
             f"{fmt(m['new_types'])} new machine types; {fmt(m['eut_avg'])} EU/t average, "
             f"{fmt(m['eut_peak'])} EU/t peak; effort {fmt(m['eff_h'])} h "
-            f"(build {fmt(m['build_h'])} h, unlock {fmt(m['unlock_h'])} h); scarcity "
+            f"(build {fmt(m['build_h'])} h, unlock {fmt(m['unlock_h'])} h"
+            + (f", by hand {fmt(m['hand_h'])} h" if m.get("hand_h") else "")
+            + "); scarcity "
             f"{fmt(m['scarcity'])}; complexity {fmt(m['complexity'])} ({fmt(m['nodes'])} "
             f"nodes, {fmt(m['fluids'])} fluids, {fmt(m['loops'])} loops)."
         )
+        if r.get("unsourced"):
+            lines.append(
+                "  Imports locked or depth items it doesn't make ("
+                + ", ".join(r["unsourced"])
+                + "), so it ranks below every route that imports none."
+            )
         if m["raw_in_h"]:
             lines.append(
                 "  Inputs: "

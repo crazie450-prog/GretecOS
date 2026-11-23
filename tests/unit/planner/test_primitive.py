@@ -7,11 +7,15 @@ for Widget. Every item, recipe and machine is made up; no pack data.
 - It doesn't take one of the :data:`graph.TOP_N` slots: the first primitive recipe is kept
   beside the first four others.
 - An EU-less recipe on a map no primitive machine runs is still ``eu0``.
+- A plan running the furnace is warned that it is fed and emptied by hand, and its effort
+  pays a hand step per craft, so it ranks below an otherwise equal automatable route (D404 (4)).
 """
 
 from __future__ import annotations
 
+import copy
 import importlib.util
+import math
 import sqlite3
 import sys
 from collections.abc import Iterator
@@ -21,7 +25,7 @@ from types import ModuleType
 import pytest
 
 from gregtec.db import access
-from gregtec.planner import chains, graph
+from gregtec.planner import chains, effort, graph, plan, rank
 from gregtec.planner.request import Pin, Request
 
 
@@ -127,3 +131,38 @@ def test_a_primitive_recipe_ranked_below_the_top_four_is_still_checked(
     status = {c.recipe: c.status for c in g.item(WIDGET).candidates}
     assert status[smelt.id] in ("chosen", "alternative")
     assert "unchecked" in status.values()  # a plain recipe below the top 4 still waits
+
+
+def test_a_hand_fed_route_is_warned_and_pays_for_it(conn: sqlite3.Connection) -> None:
+    """D404 (4): the Bricked Blast Furnace takes no pipe or hopper, so a plan running it says
+    so once, and its effort counts one hand step (craft_s) per craft it runs: an otherwise
+    equal route without that hand work ranks above it."""
+    (smelt,) = conn.execute(
+        "SELECT r.ref FROM recipe AS r JOIN recipe_map AS m ON m.id = r.recipe_map_id"
+        " WHERE m.unloc_name = ?",
+        (f"gt.recipe.{PRIMITIVE_MAP}",),
+    ).fetchone()
+    req = Request(WIDGET, mode="batch", qty=64, routes=1, pins=(Pin(WIDGET, smelt),))
+    p = plan.design(conn, req, tg.Base(), templates=chains.EMPTY).plans[0]
+    node = next(n for n in p["nodes"] if n["recipe"] == smelt)
+    assert node["machine"]["hand_fed"] is True
+    said = [w for w in p["warnings"] if "fed and emptied by hand" in w]
+    assert len(said) == 1 and f"mte:{BBF_MTE}" in said[0] and smelt in said[0]
+    m = p["metrics"]
+    crafts = math.ceil(node["crafts"])
+    assert m["hand_h"] == pytest.approx(crafts * effort.CRAFT_S / 3600, rel=1e-6)
+    hand = [r for r in m["effort"]["rows"] if r["part"] == "hand"]
+    assert [(r["mte"], r["crafts"], r["machines"]) for r in hand] == [
+        (BBF_MTE, crafts, 1)
+    ]
+    assert m["eff_h"] == pytest.approx(
+        m["build_h"] + m["unlock_h"] + m["hand_h"], rel=1e-6
+    )
+    assert "+ by hand" in effort.summary(m)
+    # The same route, automatable: no hand work, so a lower effort and the better rank.
+    piped = copy.deepcopy(p)
+    piped["id"] = "pl-piped"
+    piped["metrics"]["eff_h"] -= m["hand_h"]
+    out = rank.order([copy.deepcopy(p), piped])
+    assert [x["id"] for x in out] == ["pl-piped", p["id"]]
+    assert out[0]["rank"]["score"] > out[1]["rank"]["score"]

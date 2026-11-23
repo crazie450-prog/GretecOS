@@ -19,7 +19,7 @@ curated scarcity table's weight times one, or the effort model's (:mod:`.effort`
   in ``data/curated/scarcity.tsv`` (``scarce`` lists the weighted inputs);
 - ``footprint``: None here; :func:`gregtec.planner.plan.design` fills it from WO-3.6's layout
   (:mod:`.outputs.footprint`, D200);
-- ``eff_h``, ``build_h``, ``unlock_h`` and ``effort`` (the breakdown table, :mod:`.effort`);
+- ``eff_h``, ``build_h``, ``unlock_h``, ``hand_h`` (D404 (4)) and ``effort`` (the breakdown table, :mod:`.effort`);
 - ``complexity``: ``nodes``, ``fluids`` (distinct fluids the route moves), ``loops`` (strongly
   connected sets in the route's own item-recipe graph) and ``score`` (their sum);
 - in batch mode, ``batch``: the quantity, window, ETA (``eta_s``, ``eta_h``), the batch's inputs
@@ -258,6 +258,7 @@ def route(
         "eff_h": effort["eff_h"],
         "build_h": effort["build_h"],
         "unlock_h": effort["unlock_h"],
+        "hand_h": effort.get("hand_h", 0.0),
         "effort": {
             k: effort[k]
             for k in ("craft_s", "rows", "components", "unlocks", "uncounted", "notes")

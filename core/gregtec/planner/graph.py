@@ -51,8 +51,8 @@ GT's container maps and EU-less recipes but a primitive machine's last, D142 (2)
 then the reverse of one of the item's own uses; avoid chanced-only; inputs closer to the world
 (WO-3.10 F3, D389 (3), (6), D393: every input it uses up at hand or one step from it, then some
 not, then an unknown raw among them; a fluid cell counts as its fluid, and a recipe that uses
-cells up is never in the first group; with no ore mixes loaded an unknown raw ranks as unsourced, and
-the graph warns, since every ore block is unknown then); lower tier; the item as the main
+cells up is never in the first group; with no ore mixes loaded an unknown raw ranks as unsourced,
+since every ore block is unknown then, and the graph always says no ore mixes are loaded, D404 (5)); lower tier; the item as the main
 product before a byproduct route; fluid cells after none; fewer inputs; base machine first;
 machine before manual; unbadged first; fewer unsourced inputs; key) and the first :data:`TOP_N` valid ones are kept, plus the first
 recipe a primitive machine runs (the Bricked Blast Furnace beside the EBF, D389 (1), D390); every
@@ -927,7 +927,6 @@ class _Builder:
         # Unknown raws rank last only where GOS has source data (ore mixes loaded): without
         # it every ore block is unknown and a space-mined one would outrank them.
         self.unknown_last = bool(src.vein)
-        self.collapsed = False  # an unknown raw ranked as unsourced (no source data)
         self.src: dict[str, int] = {}
         self.checks: dict[int, _Check] = {}
         self.fit: dict[
@@ -1171,8 +1170,6 @@ class _Builder:
             self.src[k] for k in {p.key for p in rec.inputs if p.consumed} - {EU_KEY}
         ]
         unsourced = sum(v >= 2 for v in levels)
-        if 3 in levels and not self.unknown_last:
-            self.collapsed = True
         rank = 2 if 3 in levels and self.unknown_last else 1 if unsourced else 0
         if "cells" in rec.flags:
             rank = max(rank, 1)
@@ -1690,10 +1687,11 @@ def _build(
     routed = on_route(direct)
     primary.update(n.id for n in items if n.branch and n.template in routed)
     primary &= {n.id for n in items if n.chosen}
-    if b.collapsed:
+    if not b.unknown_last:  # D404 (5): said whenever GOS has no vein data, once
         b.warnings.append(
-            "no ore mixes loaded (gos ores load): inputs no recipe makes and GOS has no"
-            " source for rank with the other unsourced ones, not last (D389 (6))"
+            "no ore mixes loaded (run gos ores load): GOS knows no veins, so inputs no"
+            " recipe makes and GOS has no source for rank with the other unsourced ones,"
+            " not last (D389 (6))"
         )
     warnings = list(b.warnings)
     for n in items:
