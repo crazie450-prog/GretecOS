@@ -723,7 +723,9 @@ def test_cells_container_and_reverse_use_flags(conn: sqlite3.Connection) -> None
     assert b.reader.made_from(ACID) == {GAS, SALT, WATER}
     b.reader.load_makers([ACID])
     b.candidates(ACID)
-    assert b.uses[ACID] == {GAS, SALT}
+    # Widget is this request's target, though: making acid from it loops back to the
+    # target, so for this request it counts as a reversal too (WO-3.10).
+    assert b.uses[ACID] == {GAS, SALT, WIDGET}
 
 
 def test_same_request_same_graph(db: Path, conn: sqlite3.Connection) -> None:

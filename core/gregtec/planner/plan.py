@@ -295,6 +295,32 @@ def _sizes(size: sizing.NodeSize) -> dict[str, Any]:
     return out
 
 
+# Boundaries a plan imports although nothing tells it the player has them (WO-3.10).
+_NOT_SOURCED = {
+    "locked": "no recipe for it runs at this tier or for this request",
+    "depth": "the graph stopped at its depth limit",
+}
+
+
+def _import_warnings(g: Graph, flow: solve.Flow) -> list[str]:
+    """One warning per import the plan takes without making or sourcing it: a locked or
+    depth boundary (free to the solver, but not to the player), or a gated intermediate (an
+    item the route makes, imported as well)."""
+    kind = {i.id: i.boundary for i in g.items}
+    gates = set(flow.gates)
+    out: list[str] = []
+    for k, _ in flow.imports:
+        if k == EU_KEY:
+            continue
+        if (b := kind.get(k)) in _NOT_SOURCED:
+            out.append(
+                f"imports {k} ({b}: {_NOT_SOURCED[b]}); the plan doesn't make it"
+            )
+        elif k in gates:
+            out.append(f"imports {k}, which the route also makes (a gated import)")
+    return out
+
+
 def _plan(
     g: Graph,
     request: Request,
@@ -418,6 +444,8 @@ def _plan(
     for w in g.warnings:
         if w not in warnings:
             warnings.append(w)
+    # Last, so views that show only the first few warnings keep the graph's (WO-3.10).
+    warnings.extend(_import_warnings(g, flow))
     return {
         "id": plan_id(request, run_key, column, flow.choice),
         "name": _name(g, request, column, n),
