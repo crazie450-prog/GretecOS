@@ -356,6 +356,8 @@ class MachineOption:
     alternative: Sizing | None = (
         None  # the other state, when a state variable changes it
     )
+    # fed and emptied by hand, no pipe or hopper (the Bricked Blast Furnace, D404 (4))
+    hand_fed: bool = False
 
     @property
     def ref(self) -> str:
@@ -490,6 +492,7 @@ def size_primitive(
         return opt
     return replace(
         opt,
+        hand_fed=True,
         notes=(
             *opt.notes,
             "all input and output by hand through the controller (no pipe or hopper)",

@@ -52,6 +52,7 @@ def _metrics(m: Mapping[str, Any]) -> dict[str, Any]:
         "eff_h": m["eff_h"],
         "build_h": m["build_h"],
         "unlock_h": m["unlock_h"],
+        "hand_h": m.get("hand_h", 0),
         "scarcity": m["scarcity"],
         "complexity": c["score"],
         "nodes": c["nodes"],
@@ -165,7 +166,9 @@ def template(doc: Mapping[str, Any]) -> str:
             f"{head}. Score {fmt(r['score'])}. {fmt(m['machines'])} machines ({machines}); "
             f"{fmt(m['new_types'])} new machine types; {fmt(m['eut_avg'])} EU/t average, "
             f"{fmt(m['eut_peak'])} EU/t peak; effort {fmt(m['eff_h'])} h "
-            f"(build {fmt(m['build_h'])} h, unlock {fmt(m['unlock_h'])} h); scarcity "
+            f"(build {fmt(m['build_h'])} h, unlock {fmt(m['unlock_h'])} h"
+            + (f", by hand {fmt(m['hand_h'])} h" if m.get("hand_h") else "")
+            + "); scarcity "
             f"{fmt(m['scarcity'])}; complexity {fmt(m['complexity'])} ({fmt(m['nodes'])} "
             f"nodes, {fmt(m['fluids'])} fluids, {fmt(m['loops'])} loops)."
         )

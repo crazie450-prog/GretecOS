@@ -395,6 +395,7 @@ def _plan(
     nodes: list[dict[str, Any]] = []
     sizes: dict[str, sizing.NodeSize] = {}
     warnings: list[str] = list(flow.warnings)
+    hand: dict[tuple[int, str], list[str]] = {}  # hand-fed machine -> its recipes
     for pid, x in order:
         rec = g.recipe(pid)
         made = [k for k in procs[pid].made() if k in {i.id for i in g.items}]
@@ -435,7 +436,10 @@ def _plan(
             "mod": option.mod,
             "confidence": _num(min((f.confidence for f in option.facts), default=1.0)),
             "requires": list(option.requires),
+            **({"hand_fed": True} if option.hand_fed else {}),
         }
+        if option.hand_fed:
+            hand.setdefault((option.mte_id, option.name), []).append(pid)
         node.update(_sizes(size))
         steady = None
         if option.alternative is not None:
@@ -449,6 +453,11 @@ def _plan(
         for b in option.badges:
             warnings.append(f"{pid} on mte:{option.mte_id} ({option.name}) is {b}")
         nodes.append(node)
+    for (mte, name), pids in sorted(hand.items()):
+        warnings.append(
+            f"mte:{mte} ({name}) is fed and emptied by hand, no pipe or hopper"
+            f" ({', '.join(pids)}); the route's effort counts the hand work (D404 (4))"
+        )
     edges = _edges(net, flow, node_of)
     target_out = dict(flow.exports).get(g.target, rate)
     target: dict[str, Any] = {"id": g.target, "rate_s": _num(target_out)}
@@ -487,6 +496,9 @@ def _plan(
             warnings.append(w)
     # Last, so views that show only the first few warnings keep the graph's (WO-3.10).
     warnings.extend(_import_warnings(g, flow))
+    kind = {i.id: i.boundary for i in g.items}
+    # Locked or depth imports: rank.py puts the route below every route without one (D404 (6)).
+    unsourced = sorted(k for k, _ in flow.imports if kind.get(k) in UNSOURCED)
     return {
         "id": plan_id(request, run_key, column, flow.choice),
         "name": _name(g, request, column, n),
@@ -521,6 +533,7 @@ def _plan(
                 "machines": _num(flow.objectives[2]),
             },
             "big_m": _num(flow.big_m),
+            **({"unsourced": unsourced} if unsourced else {}),
         },
         "warnings": warnings,
     }

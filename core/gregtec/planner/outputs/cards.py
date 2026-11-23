@@ -137,6 +137,11 @@ def effort_card(plan: Mapping[str, Any]) -> dict[str, Any]:
         ("effort", effort.duration(float(m["eff_h"]))),
         ("build", effort.duration(float(m["build_h"]))),
         ("unlock", effort.duration(float(m["unlock_h"]))),
+        *(
+            [("by hand", effort.duration(float(m["hand_h"])))]
+            if m.get("hand_h")
+            else []
+        ),
         ("not counted", f"{int(eff.get('uncounted', 0))} items (see the notes)"),
         ("crafting-table step", f"{float(eff['craft_s']):g} s"),
         ("components", str(len(eff["components"]))),

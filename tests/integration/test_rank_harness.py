@@ -122,8 +122,8 @@ def test_benchmarks_return_two_or_three_ranked_routes(
         assert p["rank"]["w"] == rank.BALANCED.as_dict()
         m = p["metrics"]
         assert m["machines"] >= 1 and m["eut_avg"] >= 0 and m["scarcity"] >= 0
-        assert m["eff_h"] == pytest.approx(
-            m["build_h"] + m["unlock_h"], rel=1e-8, abs=1e-12
+        assert m["eff_h"] == pytest.approx(  # hand_h: a hand-fed machine, D404 (4)
+            m["build_h"] + m["unlock_h"] + m["hand_h"], rel=1e-8, abs=1e-12
         )
     doc = explain.facts(d.plans, d.graph.item(d.graph.target).name, rank.BALANCED)
     text = explain.template(doc)
@@ -266,8 +266,8 @@ def test_effort_on_a_run_with_crafting_recipes(client: sqlite3.Connection) -> No
     for p in d.plans:
         m = p["metrics"]
         assert m["build_h"] > 0 and m["unlock_h"] == 0
-        assert m["eff_h"] == pytest.approx(
-            m["build_h"] + m["unlock_h"], rel=1e-8, abs=1e-12
+        assert m["eff_h"] == pytest.approx(  # hand_h: a hand-fed machine, D404 (4)
+            m["build_h"] + m["unlock_h"] + m["hand_h"], rel=1e-8, abs=1e-12
         )
         hand = [r for r in m["effort"]["rows"] if r["map"] == effort.HAND]
         assert hand and hand[0]["h"] == pytest.approx(

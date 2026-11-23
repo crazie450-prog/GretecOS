@@ -97,7 +97,8 @@
         "addon": {"type": "boolean"},
         "mod": {"type": ["string", "null"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "requires": {"type": "array", "items": {"type": "string"}}
+        "requires": {"type": "array", "items": {"type": "string"}},
+        "hand_fed": {"type": "boolean", "description": "D404 (4): fed and emptied by hand, no pipe or hopper (the Bricked Blast Furnace)"}
       }
     },
     "node": {
@@ -261,7 +262,12 @@
             "machines": {"type": "number"}
           }
         },
-        "big_m": {"type": "number"}
+        "big_m": {"type": "number"},
+        "unsourced": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/key"},
+          "description": "D404 (6): the locked or depth items the route imports; rank.py puts it below every route without one"
+        }
       }
     },
     "warnings": {"type": "array", "items": {"type": "string"}},
