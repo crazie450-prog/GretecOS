@@ -97,8 +97,10 @@ def _check_amounts(spec: Mapping[str, str]) -> None:
             if "within" in spec:
                 parse_duration(spec["within"])
         else:
-            if "within" in spec and "rate" in spec:  # no amount is a batch (D389 (5))
-                raise JobError("within is for a batch only")
+            if "within" in spec:
+                if "rate" in spec:
+                    raise JobError("within is for a batch only")
+                parse_duration(spec["within"])  # no amount is a batch (D389 (5))
             if "rate" in spec and parse_qty(spec["rate"])[1] is None:
                 raise JobError("a rate needs /s, /min or /h")
         if "tier" in spec:

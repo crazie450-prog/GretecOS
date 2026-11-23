@@ -143,6 +143,7 @@ def test_check_spec_folds_whitespace_and_drops_empty_fields() -> None:
         ({"batch": "64/s"}, "a batch is a quantity"),
         ({"batch": "64", "within": "soon"}, "within 'soon'"),
         ({"rate": "2/s", "within": "2h"}, "within is for a batch only"),
+        ({"within": "soon"}, "within 'soon'"),  # no amount: the batch of 64's window
         ({"rate": "2/s", "tier": "XV"}, "unknown voltage tier"),
     ],
 )

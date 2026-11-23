@@ -267,7 +267,8 @@ rather than replacing them, unless Clayton prefers it as the default (Question 4
 tool, the Designer form and API; the `Request` dataclass default stays 1/s). The `gos plan`
 summary, `plan_get` summary and the Designer's route header show a batch's ETA. The acceptance
 test now asks for a batch of 64 and stays xfail: 12 machines (7 Bricked Blast Furnaces at
-7200 ticks an ingot fill the hour) and its iron is magnetite's.* A missing rate becomes a **batch**: `qty` items, with the
+7200 ticks an ingot fill the hour) and its iron is magnetite's. Reviewed (D398): the
+phone's job check parses a `within` given with no amount.* A missing rate becomes a **batch**: `qty` items, with the
 ETA reported, instead of 1/s. Or the default rate becomes a smaller one, Clayton's choice
 (Question 5). Either way the plan's name already shows the rate ("· 1/s ·"); the Designer should
 put it in front of him before solving. Tests: request defaults, CLI default.
