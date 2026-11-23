@@ -249,6 +249,11 @@ def test_a_tiny_locked_import_still_opens_its_gate() -> None:
     x = np.zeros(len(m.lb))
     x[m.imp["x"]] = x[m.imp["y"]] = 3e-8  # between ABS_TOL and RUNNING
     assert solve._open_gates(m, x) == {"x": 1.0, "y": 0.0}
+    # The flow lists the open gate's import, so the plan shows and warns it.
+    x[m.gate["x"]] = 1.0
+    flow = solve._flow(m, x, (1.0, 0.0, 0.0, None), {}, None, ())
+    assert flow.gates == ("x",)
+    assert dict(flow.imports) == {"x": pytest.approx(3e-8 * m.c["x"] * m.scale)}
 
 
 def a_or_b() -> Network:

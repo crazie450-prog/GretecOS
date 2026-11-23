@@ -150,6 +150,8 @@ def test_a_locked_import_is_gated_and_warned(
     for w in p["warnings"]:
         if w.startswith("imports "):
             assert w.split()[1] in imports
+        if "(locked:" in w or "(depth:" in w:  # every unsourced import is a gate
+            assert w.split()[1] in p["route"]["gates"], w
 
 
 def test_steel_starts_with_iron_and_coal(conn: sqlite3.Connection) -> None:

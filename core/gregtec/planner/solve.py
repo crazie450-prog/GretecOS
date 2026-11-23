@@ -669,13 +669,17 @@ def _flow(
 ) -> Flow:
     s = m.scale
 
-    def val(i: int, c: float = 1.0) -> float:
+    def val(i: int, c: float = 1.0, noise: float = RUNNING) -> float:
         v = float(x[i])
-        return 0.0 if abs(v) < RUNNING else v * c * s
+        return 0.0 if abs(v) < noise else v * c * s
 
     crafts = tuple(sorted((p.id, val(m.x[p.id], 1 / m.cr[p.id])) for p in m.procs))
+    # A gated_in import is real down to ABS_TOL, as _open_gates counts its gate, so the plan
+    # lists (and warns) every such import whose gate it counts (WO-3.10 F4).
     imports = tuple(
-        (k, val(i, m.c[k])) for k, i in sorted(m.imp.items()) if val(i, m.c[k]) > 0
+        (k, v)
+        for k, i in sorted(m.imp.items())
+        if (v := val(i, m.c[k], ABS_TOL if k in m.net.gated_in else RUNNING)) > 0
     )
     exports = [
         (k, val(i, m.c[k])) for k, i in sorted(m.exp.items()) if val(i, m.c[k]) > 0
