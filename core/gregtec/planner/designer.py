@@ -73,9 +73,12 @@ LATEST = Path("data", "plans", "designer.json")  # in GOS_HOME
 REVIEWS = Path("data", "plans", "reviews")  # the route reviewer's records (D389 (7))
 LINES = "base/lines"
 NAME_MAX = 80
-# One design, pin, accept or rename at a time per process; re-entrant so a design job
-# (WO-3.9) can wait for it where a cancel is still heard, then call design() holding it.
+# One design, pin, accept or rename at a time per process; re-entrant so a power or shell
+# design job (WO-3.9) can wait for it where a cancel is still heard, then design holding it. The
+# Designer's own functions take it themselves (:func:`_planner`), so the route reviewer's model
+# calls run without it (D404 (10)): see design().
 _LOCK = threading.RLock()
+WAIT_S = 0.25  # how often a design waiting for the planner lock checks for a cancel
 
 # The route comparison card's metrics, in the order the routes are ranked on (rank.METRICS),
 # then the score; each says which way is better.
@@ -256,6 +259,19 @@ def _solve(conn: sqlite3.Connection, home: Path, request: Request) -> plan.Desig
         raise DesignerError(f"can't design it: {exc}") from None
 
 
+@contextmanager
+def _planner() -> Iterator[None]:
+    """Hold the planner lock (:data:`_LOCK`). A design job waiting for it still hears a
+    cancel (D353): :func:`progress.check` raises once the job is cancelled; outside a job it
+    just waits."""
+    while not _LOCK.acquire(timeout=WAIT_S):
+        progress.check()
+    try:
+        yield
+    finally:
+        _LOCK.release()
+
+
 def _save_all(
     home: Path,
     d: plan.Design,
@@ -282,24 +298,34 @@ def design(
     ``reviewer`` (the toggle, D389 (7)) the route reviewer reads the ranked routes first; its
     re-runs are solved in memory, so a cancel still saves nothing (D353). Its reviewed route,
     when it made one, is saved as an extra column beside the planner's own routes, and its
-    record goes to ``data/plans/reviews/<the top route's id>.json``."""
-    with _LOCK, _conn(home, readonly=True) as conn:
-        d = _solve(conn, home, request)
-        out = None
-        if reviewer is not None:
-            prefs = rank.read_prefs(home / "vault")
-            out = reviewer.run(d, request, lambda r: _solve(conn, home, r), prefs, conn)
-        progress.stage("saving")  # a design job's last cancel point (D353)
-        if out is None:
-            return _save_all(home, d, conn)
-        extra = [out.reviewed] if out.reviewed is not None else []
-        for p in d.plans:
-            p["alternatives"] = [*p["alternatives"], *(r["id"] for r in extra)]
-        saved = _save_all(home, d, conn, extra, out.record["id"])
-        atomic_write(
-            home / REVIEWS / f"{d.plans[0]['id']}.json",
-            json.dumps(out.record, sort_keys=True, indent=1).encode("utf-8"),
-        )
+    record goes to ``data/plans/reviews/<the top route's id>.json``.
+
+    The planner lock (D404 (10)): the base solve holds it, the review's model calls don't (a
+    pin, an accept, a rename or another design goes ahead meanwhile), each re-solve holds it
+    while it solves, and saving holds it."""
+    with _conn(home, readonly=True) as conn:
+        with _planner():
+            d = _solve(conn, home, request)
+            if reviewer is None:
+                progress.stage("saving")  # a design job's last cancel point (D353)
+                return _save_all(home, d, conn)
+
+        def resolve_(r: Request) -> plan.Design:
+            with _planner():
+                return _solve(conn, home, r)
+
+        prefs = rank.read_prefs(home / "vault")
+        out = reviewer.run(d, request, resolve_, prefs, conn)
+        with _planner():
+            progress.stage("saving")  # a design job's last cancel point (D353)
+            extra = [out.reviewed] if out.reviewed is not None else []
+            for p in d.plans:
+                p["alternatives"] = [*p["alternatives"], *(r["id"] for r in extra)]
+            saved = _save_all(home, d, conn, extra, out.record["id"])
+            atomic_write(
+                home / REVIEWS / f"{d.plans[0]['id']}.json",
+                json.dumps(out.record, sort_keys=True, indent=1).encode("utf-8"),
+            )
         saved.review = out.record
         saved.reviewed = extra[0]["id"] if extra else None
         return saved
@@ -338,7 +364,7 @@ def pin(home: Path, pid: str, node: str, recipe: str | None) -> Designed:
         )
     except ValueError as exc:
         raise DesignerError(str(exc)) from None
-    with _LOCK, _conn(home, readonly=True) as conn:
+    with _planner(), _conn(home, readonly=True) as conn:
         d = _solve(conn, home, changed)
         if recipe is not None:
             check_pin(d, node, recipe)
