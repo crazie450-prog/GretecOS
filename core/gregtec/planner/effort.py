@@ -415,7 +415,7 @@ class Effort:
                 gated = tuple(
                     (k, imports[k] * window)
                     for k in flow.gates
-                    if k != key and imports.get(k, 0) > 0
+                    if k != key and imports.get(k, 0) > 0 and k not in net.gated_in
                 )
                 out = _Solved(g, sized, crafts, gated)
         except (graph.GraphError, RequestError, LookupError, solve.SolveError):

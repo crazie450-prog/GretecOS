@@ -59,8 +59,15 @@ KIND = "production"
 SCHEMA = Path(__file__).with_name("plan_schema.json")
 BATCH_WINDOW_S = 3600.0  # D14: a batch with no within: is sized at qty per hour
 # Graph boundaries the player supplies or takes away freely (D63); a byproduct or catalyst
-# is free by structure (nothing uses it up), the target is the plan's export.
+# is free by structure (nothing uses it up), the target is the plan's export. Locked and
+# depth are free only to export: importing one is a gate (UNSOURCED, WO-3.10 F4).
 FREE = frozenset({"raw", "stock", "line", "request", "locked", "depth", "eu"})
+# Boundaries a plan imports although nothing tells it the player has them (WO-3.10).
+_NOT_SOURCED = {
+    "locked": "no recipe for it runs at this tier or for this request",
+    "depth": "the graph stopped at its depth limit",
+}
+UNSOURCED = frozenset(_NOT_SOURCED)
 
 
 @dataclass(frozen=True)
@@ -131,6 +138,7 @@ def network(
         free_out=free,
         choices=tuple(choices),
         pinned=pins,
+        gated_in=frozenset(i.id for i in g.items if i.boundary in UNSOURCED),
     )
 
 
@@ -295,16 +303,9 @@ def _sizes(size: sizing.NodeSize) -> dict[str, Any]:
     return out
 
 
-# Boundaries a plan imports although nothing tells it the player has them (WO-3.10).
-_NOT_SOURCED = {
-    "locked": "no recipe for it runs at this tier or for this request",
-    "depth": "the graph stopped at its depth limit",
-}
-
-
 def _import_warnings(g: Graph, flow: solve.Flow) -> list[str]:
     """One warning per import the plan takes without making or sourcing it: a locked or
-    depth boundary (free to the solver, but not to the player), a raw input GOS knows no
+    depth boundary (a gate to the solver, WO-3.10 F4), a raw input GOS knows no
     source for (no ore mix, not curated: D389 (6)), or a gated intermediate (an item the
     route makes, imported as well)."""
     kind = {i.id: i.boundary for i in g.items}

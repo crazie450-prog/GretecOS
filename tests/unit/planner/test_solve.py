@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from gregtec.planner import solve
@@ -201,6 +202,53 @@ def test_exact_counts_are_whole_and_cover_the_rate() -> None:
     for pid, n in counts.items():
         assert n * cps[pid] >= flow.rate(pid) - 1e-9
         assert n == math.ceil(flow.rate(pid) / cps[pid] - 1e-9)
+
+
+def unsourced(gated_in: frozenset[str], only_a: bool = False) -> Network:
+    """The target t from A (fast, takes x, which nothing makes) or B (slow, from raw y)."""
+    a = Proc("A", (("x", 1.0),), (("t", 1.0),), 1.0)
+    b = Proc("B", (("y", 1.0),), (("t", 1.0),), 10.0)
+    if only_a:
+        return Network(procs=(a,), targets=(("t", 1.0),), gated_in=gated_in)
+    return Network(
+        procs=(a, b),
+        targets=(("t", 1.0),),
+        choices=(("t", ("A", "B")),),
+        gated_in=gated_in,
+    )
+
+
+def test_a_locked_import_is_a_gate_so_a_route_from_raws_wins() -> None:
+    """WO-3.10 F4: an import nothing makes is free unless the graph says it's unsourced
+    (locked or depth); then it is gated, and a slower route from reachable raws wins."""
+    free = solve.routes(unsourced(frozenset()), 1)[0]
+    assert dict(free.choice) == {"t": "A"} and free.gates == ()
+    gated = solve.routes(unsourced(frozenset({"x"})), 1)[0]
+    assert dict(gated.choice) == {"t": "B"} and gated.gates == ()
+    # Still legal when nothing else makes the target: imported through its gate.
+    net = unsourced(frozenset({"x"}), only_a=True)
+    flow = solve.solve_route(net)
+    assert flow.gates == ("x",)
+    assert flow.objectives[0] == pytest.approx(1.0)
+    assert dict(flow.imports)["x"] == pytest.approx(1.0)
+    assert solve.exact_counts(net, flow, {"A": 0.4}) == {"A": 3}
+
+
+def test_a_tiny_locked_import_still_opens_its_gate() -> None:
+    """A recipe at the stage-4 floor can need less of a locked item than solver noise
+    (RUNNING); nothing else makes it, so its gate counts as open and fixing the gates
+    doesn't leave the replay infeasible (WO-3.10 F4, the harness epoxid line). A gated
+    intermediate keeps the noise threshold."""
+    procs = (
+        Proc("A", (("x", 1.0), ("y", 1.0)), (("t", 1.0),), 1.0),
+        Proc("B", (("y", 2.0),), (("y", 1.0), ("z", 1.0)), 1.0),
+    )
+    net = Network(procs=procs, targets=(("t", 1.0),), gated_in=frozenset({"x"}))
+    m = solve._build(net, list(procs), solve.BIG_M[0], {}, ())
+    assert set(m.gate) == {"x", "y"}
+    x = np.zeros(len(m.lb))
+    x[m.imp["x"]] = x[m.imp["y"]] = 3e-8  # between ABS_TOL and RUNNING
+    assert solve._open_gates(m, x) == {"x": 1.0, "y": 0.0}
 
 
 def a_or_b() -> Network:

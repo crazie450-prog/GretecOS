@@ -8,18 +8,20 @@ load``'s own loader, as WO-10.2's harness test does:
 - the dump in GOS_STRUCTURES_DATASET when it is set (a real ``gos structures extract`` output),
   else the repo's self-authored fixture (tests/fixtures/gtnh-extractor).
 
-The two lines: G3's steel line (``test_g3_lines_harness.LINES["steel (EBF)"]``, an EBF line at
-MV) and G4's benzene gas-turbine line (``test_g4_lines_harness.LINES["benzene"]``, EV), each
+The two lines: G3's steel line (``test_g3_lines_harness.LINES["steel (EBF)"]``, at MV; its
+best route is the Bricked Blast Furnace's since WO-3.10 F4, a primitive structure) and G4's
+benzene gas-turbine line (``test_g4_lines_harness.LINES["benzene"]``, EV), each
 designed by its own designer on the harness DB, laid out alone and together. Each layout holds
 every acceptance property (the unit tests' ``check``: no two keep-outs overlap, nor a keep-out
 and a corridor or chase; everything inside the bounding volume; every machine's front and a cell
 of each of its hatch kinds reached from the entrance by flood fill; the JSON schema), and the
 same plans give the same layout.
 
-With a real dump every multi the lines use has its own footprint, and none is left unplaced.
-Without one (CI: the extractor's dump is pack data and never in the repo), each benchmark multi
-gets a **stand-in**: the fixture's made-up 3x3x3 shape copied under its MTE id in the tmp DB only,
-so the placement, corridors and reach are still checked end to end on the real plans' machines and
+With a real dump every multi (and primitive structure) the lines use has its own footprint,
+and none is left unplaced. Without one (CI: the extractor's dump is pack data and never in the
+repo), each benchmark multi or primitive structure gets a **stand-in**: the fixture's made-up
+3x3x3 shape copied under its MTE id in the tmp DB only, so the placement, corridors and reach
+are still checked end to end on the real plans' machines and
 counts. The stand-in is test data, never a size GOS uses. ``-s`` prints the layouts.
 """
 
@@ -160,7 +162,7 @@ def conn(db: Path, lines: list[dict[str, Any]]) -> Iterator[sqlite3.Connection]:
         for p in lines
         for n in p["nodes"]
         for m in ([n["machine"]] if isinstance(n.get("machine"), dict) else [])
-        if m.get("kind") == "multiblock" and m.get("mte") is not None
+        if m.get("kind") in ("multiblock", "primitive") and m.get("mte") is not None
     } | {
         int(g["mte"])
         for p in lines
@@ -197,7 +199,9 @@ def test_two_benchmark_lines_are_laid_out(
             if (n.get("machine") or {}).get("mte") is not None and n.get("count")
         )
         assert len(lay["placements"]) == wanted
-        assert any(p["kind"] == "multiblock" for p in lay["placements"])
+        # a structure is placed: steel's best route is the Bricked Blast Furnace's (a
+        # primitive structure, WO-3.10 F4), benzene's has the gas turbines
+        assert any(p["kind"] in ("multiblock", "primitive") for p in lay["placements"])
         again = layout.plan_layout(conn, json.loads(json.dumps(chosen)))
         assert again == lay
         assert layout.card(lay)["type"] == "layout"

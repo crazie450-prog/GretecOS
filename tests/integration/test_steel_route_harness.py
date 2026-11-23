@@ -10,7 +10,8 @@ input comes from.
 
 ``test_steel_at_mv_is_iron_and_carbon`` is the acceptance test of the fixes Clayton approved
 (D389): a strict xfail until then, so it fails CI the day the planner starts passing it
-(remove the mark in that PR). ``test_a_locked_import_is_warned`` holds today. The fixture loads
+(remove the mark in that PR). ``test_a_locked_import_is_gated_and_warned`` checks F4 (D395).
+The fixture loads
 the run's GT ore mixes as `gos ores load` does (no world, so no veins), so the raw-source gate
 (F2, D391) sees vein sources: ``test_twilight_raws_are_gated`` checks it, and
 ``test_steel_starts_with_iron_and_coal`` checks F3's ranking on them (D393).
@@ -34,12 +35,13 @@ from gregtec.db import quests as quest_db
 from gregtec.ingest import collect
 from gregtec.ingest import quests as bq
 from gregtec.planner import graph, plan
-from gregtec.planner.request import Constraints, DefaultBaseInputs, Request
+from gregtec.planner.request import DefaultBaseInputs, Request
 
 REPO = Path(__file__).resolve().parents[2]
 STEEL = "gregtech:gt.metaitem.01@11305"
 STEELEAF_NUGGET = "gregtech:gt.metaitem.01@9339"
 STEELEAF_INGOT = "gregtech:gt.metaitem.01@11339"
+STEELEAF_DUST = "gregtech:gt.metaitem.01@2339"
 STEELEAF_ALLOY = "r:gt.recipe.alloysmelter/1d5e67877281"  # nuggets -> Steeleaf ingot
 IRON_ORE = "gregtech:gt.blockores2@32"
 NETHER_IRON_ORE = "gregtech:gt.blockores2@1032"
@@ -128,15 +130,22 @@ def test_every_ore_mix_dimension_is_known(conn: sqlite3.Connection) -> None:
     assert named - bq.ALWAYS_DIMENSIONS - unlocks == set()
 
 
-def test_a_locked_import_is_warned(conn: sqlite3.Connection) -> None:
-    """Holds today: with the Steeleaf nugget left out, the best plan imports the Steeleaf
-    ingot, which this player can't make (locked), and its warnings say so."""
-    req = Request(
-        STEEL, tier_cap=MV, constraints=Constraints(exclude=(STEELEAF_NUGGET,))
-    )
-    p = plan.design(conn, req, DefaultBaseInputs(MV)).plans[0]
+def test_a_locked_import_is_gated_and_warned(
+    conn: sqlite3.Connection, best: dict[str, Any]
+) -> None:
+    """F4 (D389 (6), D395): a locked import is a gate, so steel's best plan makes its steel
+    from reachable raws instead of importing the locked Steeleaf ingot (the best plan before
+    F4). It stays legal: Steeleaf dust, which only the ingot's macerator recipe makes, still
+    gets a plan that imports the ingot through a gate, with its warning."""
+    imports = {b["id"] for b in best["boundary"]["in"]}
+    assert STEELEAF_INGOT not in imports, imports
+    assert not [w for w in best["warnings"] if "(locked" in w], best["warnings"]
+    p = plan.design(
+        conn, Request(STEELEAF_DUST, tier_cap=MV), DefaultBaseInputs(MV)
+    ).plans[0]
     imports = {b["id"] for b in p["boundary"]["in"]}
     assert STEELEAF_INGOT in imports, imports
+    assert STEELEAF_INGOT in p["route"]["gates"]
     assert f"imports {STEELEAF_INGOT} (locked" in "\n".join(p["warnings"])
     for w in p["warnings"]:
         if w.startswith("imports "):
@@ -162,7 +171,10 @@ def test_steel_starts_with_iron_and_coal(conn: sqlite3.Connection) -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="WO-3.10: F1, F2 and F3 are built; F4 is not yet",
+    reason=(
+        "WO-3.10: F1-F4 are built; the best plan is the Bricked Blast Furnace's from"
+        " magnetite and coal ores, 395 machines at the default 1/s (12 at a 64 batch)"
+    ),
 )
 def test_steel_at_mv_is_iron_and_carbon(
     conn: sqlite3.Connection, best: dict[str, Any]

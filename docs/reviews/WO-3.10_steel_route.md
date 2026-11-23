@@ -195,7 +195,7 @@ secret: recipe ids and item keys only.
 
 Neither change touches `gtmath/`, ranking, the solver or the machine model.
 
-## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393, reviewed D394)
+## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393, reviewed D394; F4 built, D395)
 
 Each item is deterministic, uses only data GOS has (or a curated table, like `raw_inputs.tsv`
 and `scarcity.tsv`), and comes with tests. The steel-at-MV acceptance test above is the shared
@@ -245,7 +245,13 @@ needs no item values (§7.1 step 4's "no per-item cost values" holds). It is a r
 change to the *graph's* heuristic, not to `rank.py`, so it needs Clayton's yes (Question 3).
 Tests: unit fixtures where a tier-0 detour and a tier-1 direct recipe compete.
 
-**F4. Imports the player can't make are not free (R4).** Make `locked` and `depth` boundaries
+**F4. Imports the player can't make are not free (R4).** *Built (D395): a locked or depth
+import is a gate (`solve.Network.gated_in`), still legal and still warned; effort doesn't
+recurse into one. On the harness with the run's mixes, steel's best plan is the Bricked Blast
+Furnace's from magnetite and coal ores (12 machines at a 64 batch, 395 at 1/s), not the locked
+Steeleaf ingot; Steeleaf dust still imports the ingot through a gate. Epoxid at EV trades an
+End ore import (35 machines) for 6 gates (54). The acceptance test stays xfail: its iron is
+magnetite's and it is over 10 machines even at a 64 batch.* Make `locked` and `depth` boundaries
 *gated* for the solver instead of free, so a route that makes everything beats one that imports
 what can't be made. Where no such route exists, the plan still solves and keeps the PR's warning.
 Tests: the fixture case in `test_route_sanity.py`, which then expects the non-importing route
