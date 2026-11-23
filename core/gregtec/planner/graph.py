@@ -633,7 +633,7 @@ def heuristic(
     """§7.1's pruning order for recipe ``rec`` as a way to make ``item`` (smaller first):
     recycling, GT's container maps and EU-less recipes last (D142 (2), D189); then the reverse
     of one of ``item``'s own uses (it consumes the main product of a recipe that uses ``item``
-    up, ``made_from``, D189); avoid chanced-only; lower tier; ``item`` as the recipe's main
+    up, ``made_from``, D189; the builder adds the request's target, WO-3.10); avoid chanced-only; lower tier; ``item`` as the recipe's main
     product (first output) before a byproduct route; recipes that use fluid cells after those
     that don't (D189); fewer inputs; base machine first (D12); machine before manual; unbadged
     first (D142 (a)); then the key. All but the last four are known before the machine check

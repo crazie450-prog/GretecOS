@@ -441,10 +441,11 @@ def _plan(
             warnings.append(
                 f"pin {p.node}={p.recipe} not available on base machines; {p.node} {how}"
             )
-    warnings.extend(_import_warnings(g, flow))
     for w in g.warnings:
         if w not in warnings:
             warnings.append(w)
+    # Last, so views that show only the first few warnings keep the graph's (WO-3.10).
+    warnings.extend(_import_warnings(g, flow))
     return {
         "id": plan_id(request, run_key, column, flow.choice),
         "name": _name(g, request, column, n),

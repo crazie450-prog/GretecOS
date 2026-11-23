@@ -54,13 +54,16 @@ uv run gos plan gregtech:gt.metaitem.01@11305 --tier MV --alternatives gregtech:
 
 ## 2. Root causes
 
+Bare file names below (`graph.py`, `plan.py`, `rank.py`, …) are under `core/gregtec/planner/`.
+Each root cause was checked by an independent agent trying to refute it, on the same DB.
+
 ### R1. The early steel route can't be planned: the Bricked Blast Furnace has no machine model
 
-`planner/machines.py:883` (`options_for`, kind `None`): a machine class the model doesn't know
+`core/gregtec/planner/machines.py:883` (`options_for`, kind `None`): a machine class the model doesn't know
 is rejected as "a single block with its own recipe check, not modelled (D176)". Checked one by
 one, **every one of the 36 `gt.recipe.primitiveblastfurnace` recipes that make a steel ingot**
 (for example `r:gt.recipe.primitiveblastfurnace/004d368834c4`: 10 iron dust + 4 blocks of coal)
-is rejected with `no machine: Bricked Blast Furnace: MTEBrickedBlastFurnace: … not modelled`.
+is rejected with `no machine: Bricked Blast Furnace: MTEBrickedBlastFurnace: … not modelled`. 27 of them take iron (ingot, dust or block) plus a carbon fuel, and 9 remelt steel dust with one. They are the only iron + carbon route to steel in the harness DB: no EBF recipe there takes iron + oxygen or carbon, and no mixer makes steel dust.
 Even with a model they would rank last: `graph.py:810-814` flags EU/t-0 recipes `eu0`, and
 `_cheap` (`graph.py:657`) puts `eu0` with recycling and container maps, at the very end. That
 rule was written for the Eye of Harmony and the neutron activator (D189), not for primitive
@@ -73,14 +76,18 @@ never reaches them.
 *chanced only*, then **`rec.tier`**, then main product, cells and the input count. Nothing
 measures how far a recipe's inputs are from something the player can get. So for steel ingot the
 tier-0 alloy-smelter (9 nuggets + ingot mould) and solidifier (molten steel) recipes come before
-the MV EBF, and only the top 4 are kept (`graph.py:929`): the EBF magnetic-steel recipe
+the MV EBF, and only the top 4 are kept (`choose`, `graph.py:974-975`): the EBF magnetic-steel recipe
 `r:gt.recipe.blastfurnace/d8d71e0067d5` is `pruned`. For steel dust the top picks are tier-0
 centrifuge recipes that *decompose other steels* (Steeleaf, Damascus, Knightmetal).
 
-On equal keys the last tie-break is the recipe's hash, `rec.id` (`graph.py:646`): deterministic,
-but arbitrary. The first-ranked recipe was tied with 2-3 others on every key but the hash at
-three of the five primary nodes (steel ingot, molten steel, steel dust). Off the primary nodes
-only the first recipe expands (`graph.py:1203`), so a hash decides the whole branch below.
+On equal keys the last tie-break is the recipe id, `rec.id` (`graph.py:646`), `r:<map>/<hash>`:
+the recipe map's name in alphabetical order first, then the hash. That is deterministic, but
+arbitrary. At three of the five primary nodes the first-ranked recipe was tied with others on
+every key but the id: 2 others at steel ingot and at molten steel, and 6 at steel dust (centrifuge,
+macerator and multi-centrifuge recipes that take other steels apart; the map names alone kept 4 of
+the 7 and pruned 3). At a primary node all of the top 4 expand, so there the order decides what
+enters the graph. Off the primary nodes only the first recipe expands (`graph.py:1203`), so the
+id order decides the whole branch below (Steeleaf dust from `r:gt.recipe.macerator/3a53ad155a71`).
 
 ### R3. A raw input is "anything no recipe makes", with no notion of where it comes from
 
@@ -89,10 +96,12 @@ only the first recipe expands (`graph.py:1203`), so a hash decides the whole bra
 `solve.py:77`, `:317`). A Twilight Forest nugget, a Moon or Mars ore and iron ore all look the
 same. The only curated raw list, `data/curated/raw_inputs.tsv`, holds water, lava and air.
 
-GOS *does* hold data that could gate this, and the planner reads none of it (`grep` finds no
+GOS *does* hold data that could gate this once it is loaded (`gos ores load`, the quest
+watcher), and the planner reads none of it (`grep` finds no
 `ore_mix`, `vein` or quest table read under `planner/` except the stage-to-tier map):
 
-- `ore_mix.dims` from `gt_ore_mixes.json`: every GT vein's dimensions, by name (the harness
+- `ore_mix.dims` from `gt_ore_mixes.json` (empty in the harness DB, which never ran `gos ores
+  load`; the export file itself has it): every GT vein's dimensions, by name (the harness
   export lists Overworld, Nether, The End, Twilight Forest and space dimensions such as
   `tcetie`), with each layer's ore block (`registry@meta`);
 - `vein`: the veins Clayton's world has generated or he has found (VisualProspecting);
@@ -108,9 +117,12 @@ automatically without a curated table.
 `plan.py:63` `FREE` also holds `locked` (every recipe for the item was rejected for this player:
 above the tier cap, no machine) and `depth` (the graph stopped at depth 12). Up to now the plan
 said nothing about it. Excluding the Steeleaf nugget (`Constraints(exclude=…)`) gives a
-61-machine plan that just imports the Steeleaf *ingot* (locked). Excluding the whole Steeleaf
-family gives a 4-machine "plan" that imports 144 L/s of molten steel, the item it is meant to
-make (a gated import). Both looked like ordinary plans.
+61-machine plan that just imports the Steeleaf *ingot* (locked). Excluding the Steeleaf nugget,
+ingot and dust (`@9339`, `@11339`, `@2339`) gives a 4-machine "plan" that imports 144 L/s of
+molten steel, the item it is meant to make (a gated import, not a locked one). Both looked like
+ordinary plans. A third case stays unwarned even with this PR: excluding only the nugget and the
+ingot gives a 61-machine plan importing the Steeleaf Buzzsaw Blade (`gregtech:gt.metaitem.02@15339`),
+a `raw` item. Raw imports are only gated by F2.
 
 ### R5. Recipes that use the target up were treated as ways to make its inputs
 
@@ -128,9 +140,12 @@ plan they only bloated the graph, but they are exactly the "into X and back agai
 `rank.py` is doing what D198 says: it normalises six metrics among the routes it is given
 (`rank.py:195`) and orders them. The three steel routes all came from R1-R3's graph, so the
 "least bad Steeleaf route" won. No ranking weight would have produced iron + coal, because no
-iron + coal route existed. The `scarcity` metric can't help either: its table
-(`data/curated/scarcity.tsv`) has no Twilight Forest or space materials, and only an imported raw
-item with a weight counts.
+iron + coal route existed. The `scarcity` metric can't help either. Its table
+(`data/curated/scarcity.tsv`) weights a few named materials (the platinum group, the naquadah
+chain, rare earths, tungsten, neutronium, helium-3), some of them space-only ores, but it has no
+Twilight Forest material and says nothing about where an item comes from. Steeleaf has no row,
+so all three steel routes score scarcity 0, and an unlisted space ore would score 0 too. Only a
+boundary input whose key or material has a weight counts (`metrics.py:121-146`).
 
 ### R7. Size: the default target is 1 ingot per second
 
@@ -162,15 +177,19 @@ secret: recipe ids and item keys only.
    and is a side route, so a primary node doesn't expand it (a pin still can). On the harness
    steel graph it drops two loop recipes (26 → 24: a steel-nugget alloy-smelter recipe and a
    fluid extractor, both using steel ingot up) and leaves the routes as they were: they were
-   already loop-free. An item with a single recipe keeps it, as before (magnetic steel ingot,
-   polarised from steel ingot): with one candidate there is nothing to reorder. The unit test `test_cells_container_and_reverse_use_flags` pinned
+   already loop-free (one steel-dust candidate is also demoted, 8 valid → 7). The reason shown
+   is the existing one, "the reverse of one of its uses". An item with a single recipe keeps it, as before (magnetic steel ingot,
+   polarised from steel ingot): with one candidate there is nothing to reorder. An ore-dict
+   target (`ore:ingotSteel`) isn't covered either: its member items never equal the target key. The unit test `test_cells_container_and_reverse_use_flags` pinned
    the old set; its comment and assertion are updated (Widget is that request's target).
 2. **Import warnings (R4).** `plan.py` `_import_warnings`: a plan that imports a `locked` or
-   `depth` boundary, or a gated intermediate, says so in `warnings` ("imports X (locked: …); the
+   `depth` boundary, or a gated intermediate, says so in `warnings`, after the graph's own
+   warnings, so views that show only the first few keep those ("imports X (locked: …); the
    plan doesn't make it"). Nothing is reordered or removed, and the plan JSON schema is
    unchanged (the warnings array already exists).
 3. **Tests.** `tests/unit/planner/test_route_sanity.py` (fixture DB, no pack data) covers both.
-   `tests/integration/test_steel_route_harness.py` holds the **steel-at-MV acceptance test**:
+   `tests/integration/test_steel_route_harness.py` checks the locked-import warning on the
+   harness DB (Steeleaf nugget excluded) and holds the **steel-at-MV acceptance test**:
    iron in, carbon in, no Twilight Forest material, at most 10 machines. It is a strict `xfail`
    today, so CI fails the day it starts passing and the mark must come off in that PR.
 

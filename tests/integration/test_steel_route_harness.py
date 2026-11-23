@@ -10,7 +10,8 @@ input comes from.
 
 ``test_steel_at_mv_is_iron_and_carbon`` is the acceptance test of the fix Clayton is asked to
 approve: a strict xfail until then, so it fails CI the day the planner starts passing it
-(remove the mark in that PR). The other test holds today.
+(remove the mark in that PR). ``test_a_locked_import_is_warned`` holds today.
+``GOS_SERVER_RUN`` names another server run folder.
 """
 
 from __future__ import annotations
@@ -26,10 +27,12 @@ import pytest
 from gregtec.db import access
 from gregtec.ingest import collect
 from gregtec.planner import plan
-from gregtec.planner.request import DefaultBaseInputs, Request
+from gregtec.planner.request import Constraints, DefaultBaseInputs, Request
 
 REPO = Path(__file__).resolve().parents[2]
 STEEL = "gregtech:gt.metaitem.01@11305"
+STEELEAF_NUGGET = "gregtech:gt.metaitem.01@9339"
+STEELEAF_INGOT = "gregtech:gt.metaitem.01@11339"
 MV = 2
 IRON = {"Iron", "WroughtIron", "PigIron"}
 CARBON = {"Coal", "Charcoal", "Coke", "Carbon", "Lignite"}
@@ -42,7 +45,7 @@ def conn(
 ) -> Iterator[sqlite3.Connection]:
     if os.environ.get("GOS_REQUIRE_HARNESS_RUN") != "1":
         pytest.skip("set GOS_REQUIRE_HARNESS_RUN=1 after running the harnesses")
-    game = REPO / "mod" / "run" / "server"
+    game = Path(os.environ.get("GOS_SERVER_RUN") or REPO / "mod" / "run" / "server")
     if not (game / collect.EXPORTS).is_dir():
         pytest.fail(f"no harness run in {game / collect.EXPORTS} (mod/README.md)")
     home = tmp_path_factory.mktemp("steel-route-harness")
@@ -77,10 +80,17 @@ def materials(conn: sqlite3.Connection, keys: set[str]) -> set[str]:
     return out
 
 
-def test_every_import_the_plan_cannot_source_is_warned(best: dict[str, Any]) -> None:
-    """Holds today: whatever the route, a locked or gated import is in the warnings."""
-    imports = {b["id"] for b in best["boundary"]["in"]}
-    for w in best["warnings"]:
+def test_a_locked_import_is_warned(conn: sqlite3.Connection) -> None:
+    """Holds today: with the Steeleaf nugget left out, the best plan imports the Steeleaf
+    ingot, which this player can't make (locked), and its warnings say so."""
+    req = Request(
+        STEEL, tier_cap=MV, constraints=Constraints(exclude=(STEELEAF_NUGGET,))
+    )
+    p = plan.design(conn, req, DefaultBaseInputs(MV)).plans[0]
+    imports = {b["id"] for b in p["boundary"]["in"]}
+    assert STEELEAF_INGOT in imports, imports
+    assert f"imports {STEELEAF_INGOT} (locked" in "\n".join(p["warnings"])
+    for w in p["warnings"]:
         if w.startswith("imports "):
             assert w.split()[1] in imports
 
