@@ -25,7 +25,8 @@ from types import ModuleType
 import pytest
 
 from gregtec.db import access
-from gregtec.planner import chains, effort, graph, plan, rank
+from gregtec.planner import chains, effort, explain, graph, plan, rank
+from gregtec.planner.outputs import cards
 from gregtec.planner.request import Pin, Request
 
 
@@ -161,6 +162,10 @@ def test_a_hand_fed_route_is_warned_and_pays_for_it(conn: sqlite3.Connection) ->
     )
     assert "+ by hand" in effort.summary(m)
     assert any("5.0 min per machine" in w for w in said)
+    head = {h["key"]: h["value"] for h in cards.effort_card(p)["head"]}
+    assert head["by hand"].endswith(f"({count} x 5.0 min)")
+    doc = explain.facts([p], "Widget", rank.Prefs())
+    assert f"for {count} hand-fed machines" in explain.template(doc)
     # D411 (1): neither the batch size nor rate mode moves it, only the furnace count.
     for other in (
         Request(WIDGET, mode="batch", qty=640, routes=1, pins=(Pin(WIDGET, smelt),)),
@@ -168,6 +173,7 @@ def test_a_hand_fed_route_is_warned_and_pays_for_it(conn: sqlite3.Connection) ->
     ):
         q = plan.design(conn, other, tg.Base(), templates=chains.EMPTY).plans[0]
         n = next(n for n in q["nodes"] if n["recipe"] == smelt)
+        assert n["count"] >= 1
         assert q["metrics"]["hand_h"] == pytest.approx(n["count"] * 5 / 60, rel=1e-6)
     # The same route, automatable: no hand work, so a lower effort and the better rank.
     piped = copy.deepcopy(p)
