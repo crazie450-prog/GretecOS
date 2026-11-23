@@ -8,14 +8,14 @@ for Widget. Every item, recipe and machine is made up; no pack data.
   beside the first four others.
 - An EU-less recipe on a map no primitive machine runs is still ``eu0``.
 - A plan running the furnace is warned that it is fed and emptied by hand, and its effort
-  pays a hand step per craft, so it ranks below an otherwise equal automatable route (D404 (4)).
+  pays a fixed 5 minutes per furnace it builds, whatever the batch or the rate (D411 (1)), so
+  it ranks below an otherwise equal automatable route (D404 (4)).
 """
 
 from __future__ import annotations
 
 import copy
 import importlib.util
-import math
 import sqlite3
 import sys
 from collections.abc import Iterator
@@ -135,8 +135,9 @@ def test_a_primitive_recipe_ranked_below_the_top_four_is_still_checked(
 
 def test_a_hand_fed_route_is_warned_and_pays_for_it(conn: sqlite3.Connection) -> None:
     """D404 (4): the Bricked Blast Furnace takes no pipe or hopper, so a plan running it says
-    so once, and its effort counts one hand step (craft_s) per craft it runs: an otherwise
-    equal route without that hand work ranks above it."""
+    so once, and its effort counts a fixed 5 minutes per furnace the route builds (D411 (1)),
+    the same for any batch and in rate mode: an otherwise equal route without that hand work
+    ranks above it."""
     (smelt,) = conn.execute(
         "SELECT r.ref FROM recipe AS r JOIN recipe_map AS m ON m.id = r.recipe_map_id"
         " WHERE m.unloc_name = ?",
@@ -149,16 +150,25 @@ def test_a_hand_fed_route_is_warned_and_pays_for_it(conn: sqlite3.Connection) ->
     said = [w for w in p["warnings"] if "fed and emptied by hand" in w]
     assert len(said) == 1 and f"mte:{BBF_MTE}" in said[0] and smelt in said[0]
     m = p["metrics"]
-    crafts = math.ceil(node["crafts"])
-    assert m["hand_h"] == pytest.approx(crafts * effort.CRAFT_S / 3600, rel=1e-6)
+    assert effort.HAND_FED_S == 300.0
+    count = node["count"]
+    assert count >= 1
+    assert m["hand_h"] == pytest.approx(count * 5 / 60, rel=1e-6)
     hand = [r for r in m["effort"]["rows"] if r["part"] == "hand"]
-    assert [(r["mte"], r["crafts"], r["machines"]) for r in hand] == [
-        (BBF_MTE, crafts, 1)
-    ]
+    assert [(r["mte"], r["machines"]) for r in hand] == [(BBF_MTE, count)]
     assert m["eff_h"] == pytest.approx(
         m["build_h"] + m["unlock_h"] + m["hand_h"], rel=1e-6
     )
     assert "+ by hand" in effort.summary(m)
+    assert any("5.0 min per machine" in w for w in said)
+    # D411 (1): neither the batch size nor rate mode moves it, only the furnace count.
+    for other in (
+        Request(WIDGET, mode="batch", qty=640, routes=1, pins=(Pin(WIDGET, smelt),)),
+        Request(WIDGET, mode="rate", qty=0.05, routes=1, pins=(Pin(WIDGET, smelt),)),
+    ):
+        q = plan.design(conn, other, tg.Base(), templates=chains.EMPTY).plans[0]
+        n = next(n for n in q["nodes"] if n["recipe"] == smelt)
+        assert q["metrics"]["hand_h"] == pytest.approx(n["count"] * 5 / 60, rel=1e-6)
     # The same route, automatable: no hand work, so a lower effort and the better rank.
     piped = copy.deepcopy(p)
     piped["id"] = "pl-piped"

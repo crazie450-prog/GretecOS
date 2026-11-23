@@ -226,5 +226,8 @@ def test_steel_at_mv_is_iron_and_carbon(
     said = [w for w in best["warnings"] if "fed and emptied by hand" in w]
     assert len(said) == len({n["machine"]["mte"] for n in hand}), best["warnings"]
     assert (best["metrics"]["hand_h"] > 0) == bool(hand)
+    # D411 (1): 5 minutes per furnace the route builds, not per craft.
+    furnaces = sum(n["count"] for n in hand)
+    assert best["metrics"]["hand_h"] == pytest.approx(furnaces * 5 / 60, rel=1e-6)
     # D404 (5): the ore mixes are loaded here, so no "no ore mixes" warning.
     assert not [w for w in best["warnings"] if w.startswith("no ore mixes")]
