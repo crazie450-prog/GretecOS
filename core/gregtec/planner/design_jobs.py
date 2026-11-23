@@ -18,8 +18,9 @@ always when it starts and ends.
   started during a Designer job's solve waits (``waiting``) and can be cancelled while it does.
   A power or shell job holds the lock for the whole job; a Designer job doesn't: the Designer's
   functions take it themselves, where a cancel is still heard, so a reviewed design's model
-  calls run without it and a power job, a pin, an accept or a rename goes ahead meanwhile
-  (D404 (10)).
+  calls run without it and a power job, an accept, a rename or a sync design or pin (the API's
+  own endpoints, the CLI, the agent tools) goes ahead meanwhile (D404 (10)); a pin or re-solve
+  as a second Designer job is still :class:`Busy`.
 - **Cancel** (D353) is checked at every checkpoint: between stages, between solver calls, between
   the items the graph builder expands and between the components of the effort walk. Every
   checkpoint comes before ``saving``, so a cancelled job saved nothing (no plan, no vault note,
