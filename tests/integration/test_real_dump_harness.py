@@ -43,7 +43,7 @@ from gregtec.db import access
 from gregtec.db import structures as structure_db
 from gregtec.ingest import collect
 from gregtec.planner import plan
-from gregtec.planner.request import DefaultBaseInputs, Request
+from gregtec.planner.request import Constraints, DefaultBaseInputs, Request
 from gregtec.vault.io import VaultIO
 
 REPO = Path(__file__).resolve().parents[2]
@@ -90,10 +90,35 @@ def home(
         report = structure_db.load(conn, Path(DUMP))
         print("\n" + "\n".join(report.lines()))
         key, tier = _g3().LINES["steel (EBF)"]
-        d = plan.design(
-            conn, Request(key, qty=1, tier_cap=tier), DefaultBaseInputs.from_db(conn)
-        )
+        base = DefaultBaseInputs.from_db(conn)
+        d = plan.design(conn, Request(key, qty=1, tier_cap=tier), base)
         assert d.plans, "the steel line didn't design"
+        # Since D390 MV steel's best routes are the hand-fed Bricked Blast Furnace (a
+        # "primitive" machine, no multiblock): this file is about multiblock footprints, so
+        # the primitive machines are left out and the EBF routes come back.
+        primitive = tuple(
+            sorted(
+                {
+                    f"mte:{n['machine']['mte']}"
+                    for p in d.plans
+                    for n in p["nodes"]
+                    if isinstance(n.get("machine"), dict)
+                    and n["machine"].get("kind") == "primitive"
+                }
+            )
+        )
+        if primitive:
+            d = plan.design(
+                conn,
+                Request(
+                    key,
+                    qty=1,
+                    tier_cap=tier,
+                    constraints=Constraints(exclude=primitive),
+                ),
+                base,
+            )
+            assert d.plans, "the steel line didn't design without primitive machines"
     finally:
         conn.close()
     # the best route with a multiblock (on the client harness DB the best one is single blocks
