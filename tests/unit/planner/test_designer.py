@@ -468,3 +468,19 @@ def test_comparison_holds_the_addon_column() -> None:
     assert [r["id"] for r in one["routes"]] == ["pl-a", "pl-b", "pl-e"]
     keys = sorted([plans[3], simplest, plans[1], plans[0]], key=designer._order_key)
     assert [x["id"] for x in keys] == ["pl-a", "pl-b", "pl-e", "pl-d"]
+
+
+def test_the_card_keeps_a_ranked_route_beside_every_extra_column() -> None:
+    """With the simplest, addon and reviewed columns all present, the comparison card still
+    holds the top ranked route (D11); the simplest route gives way first."""
+
+    def p(pid: str, column: str) -> dict[str, Any]:
+        return {"id": pid, "rank": {"column": column}}
+
+    base = [p("pl-1", "base"), p("pl-2", "base"), p("pl-3", "base")]
+    extras = [p("pl-s", "simplest"), p("pl-a", "addon"), p("pl-r", "reviewed")]
+    shown = [x["id"] for x in designer._shown([*base, *extras])]
+    assert shown == ["pl-1", "pl-a", "pl-r"]
+    shown = [x["id"] for x in designer._shown([*base, extras[0], extras[2]])]
+    assert shown == ["pl-1", "pl-s", "pl-r"]
+    assert [x["id"] for x in designer._shown(extras)] == ["pl-s", "pl-a", "pl-r"]

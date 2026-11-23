@@ -1243,7 +1243,17 @@ class _Builder:
         unchecked: list[Candidate] = []
         group: tuple[object, ...] | None = None
         for prefix, _, rid, node in cheap:
-            if _plain(valid) >= TOP_N and prefix != group and node.id not in need:
+            # A primitive recipe is still checked past the top 4 until one is valid: it
+            # takes its own slot, not one of theirs (D390 (c)).
+            extra = "primitive" in node.flags and not any(
+                "primitive" in n.flags for n in valid
+            )
+            if (
+                _plain(valid) >= TOP_N
+                and prefix != group
+                and node.id not in need
+                and not extra
+            ):
                 unchecked.append(Candidate(node.id, "unchecked", "below the top 4"))
                 continue
             group = prefix if _plain(valid) < TOP_N else group

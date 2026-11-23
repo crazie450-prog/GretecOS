@@ -464,11 +464,14 @@ def _addon(p: Mapping[str, Any]) -> bool:
 def _shown(plans: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """The routes the comparison card holds (at most 3, the catalog's limit): the top base
     routes in rank order, then the simplest route (D389 (4)), the addon column (D12) and the
-    reviewed route (D389 (7)) whenever the design has them."""
+    reviewed route (D389 (7)) whenever the design has them, but never fewer than one base
+    route (D11): with all three extras the simplest route is left out."""
     base = [p for p in plans if _column(p) == "base"]
     extras: list[Mapping[str, Any]] = []
     for column in ("simplest", "addon", "reviewed"):
         extras.extend([p for p in plans if _column(p) == column][:1])
+    if base:  # the top ranked route always stays: the simplest route gives way first
+        extras = extras[-2:]
     return base[: 3 - len(extras)] + extras
 
 

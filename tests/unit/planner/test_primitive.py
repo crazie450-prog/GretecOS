@@ -105,3 +105,25 @@ def test_a_primitive_recipe_is_kept_beside_the_top_four(
     g = graph.build(conn, pinned, tg.Base(), templates=chains.EMPTY)
     flags = g.recipe(mixer4).flags
     assert "eu0" in flags and "primitive" not in flags
+
+
+def test_a_primitive_recipe_ranked_below_the_top_four_is_still_checked(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The extra slot holds even when the furnace's recipe sorts after four valid others (its
+    inputs further from the world than theirs, say): the check goes on past the top 4 until
+    a primitive recipe passes, instead of filing it "below the top 4" (D390 (c))."""
+    cheap = graph._cheap
+
+    def last(
+        item: str, rec: graph.RecipeNode, *args: object, **kw: object
+    ) -> tuple[object, ...]:
+        key = cheap(item, rec, *args, **kw)  # type: ignore[arg-type]
+        return (*key[:2], True, 9, *key[4:]) if "primitive" in rec.flags else key
+
+    monkeypatch.setattr(graph, "_cheap", last)
+    g = graph.build(conn, Request(WIDGET), tg.Base(), templates=chains.EMPTY)
+    smelt = next(r for r in g.recipes if r.map == f"gt.recipe.{PRIMITIVE_MAP}")
+    status = {c.recipe: c.status for c in g.item(WIDGET).candidates}
+    assert status[smelt.id] in ("chosen", "alternative")
+    assert "unchecked" in status.values()  # a plain recipe below the top 4 still waits
