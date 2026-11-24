@@ -1119,6 +1119,7 @@ GTNH 2.9.0 replaced IC2 crops with **CropsNH 2.0.140**, and CropsNH dropped Open
 | 10.6 | Theme engine with all 3 selection modes; 2 starter themes | Clayton creates and refines a theme by voice |
 | 10.7 | **Shell designer:** the `architect` subagent designs shells from theme, prompt and layout (the img2schem SOW's core); procedural generator as fallback and test baseline | A Claude-designed shell is pasted in the Lab with no tile entities, and respects keep-outs and corridors |
 | 10.8 | 3D build guide UI (rotate, zoom, hover, layers, materials, checklist, hatch markers) | Clayton builds one multi in the Lab from the guide alone |
+| 10.16 | **Building-first site mode** (D422, `docs/design/building_first_site_mode.md`): the model designs any building inside a SITE sized from the machines; GOS derives the roofed floor, checks capacity (keep-outs + 25%) and fits every machine deterministically, then gates it; program.json, revise/refit, `gos shell refit`, `gos shell design --mode site`, prompt v6 and site bake-off scores. New AI designs use it; saved shells and the procedural generator stay layout-first | Layout-first ids and outputs unchanged; a procedural and a scripted site build fit, export, revise and refit in CI with fakes; refusals name exact numbers |
 | **G10** | | Reviewer report; Clayton sign-off |
 
 ### Phase 11: Hardening and day one

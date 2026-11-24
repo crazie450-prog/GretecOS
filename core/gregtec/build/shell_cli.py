@@ -1,11 +1,14 @@
 """``gos shell``: decorative shells around a line (WO-10.7, plan 7.10, D316-D318).
 
 - ``gos shell design PLAN_ID [PLAN_ID ...] [--theme ID] [--prompt TEXT] [--line-type T]
-  [--palette FILE] [--exclude BLOCK ...] [--max-blocks N] [--headroom N] [--design FILE]``: lays
-  the plans out (WO-10.5), designs the shell (the procedural generator, or the operations in
-  ``--design``, a JSON list in the architect's vocabulary), checks it (repairs a small breach,
-  refuses anything else) and saves the build in ``GOS_HOME/data/build/shells/<sh-id>/``. Works with
-  no AI and no key (No-AI mode). Exit 0 saved, 1 refused (nothing written), 2 bad input or setup.
+  [--palette FILE] [--exclude BLOCK ...] [--max-blocks N] [--headroom N] [--design FILE]
+  [--mode layout|site]``: lays the plans out (WO-10.5), designs the shell (the procedural
+  generator, or the operations in ``--design``, a JSON list in the architect's vocabulary),
+  checks it (repairs a small breach, refuses anything else) and saves the build in
+  ``GOS_HOME/data/build/shells/<sh-id>/``. ``--mode site`` (D422) designs the building first
+  inside a site sized from the machines and fits the machines into it afterwards; ``layout``
+  (the default) builds around the laid-out machines. Works with no AI and no key (No-AI mode).
+  Exit 0 saved, 1 refused (nothing written), 2 bad input or setup.
 - ``gos shell list`` and ``gos shell show BUILD [--card]``: saved builds; one build's palette
   manifest, notes and paste steps (or its dashboard card).
 - ``gos shell export BUILD [--world NAME | --world-dir DIR] [--over split|addblocks] [--out FILE]``:
@@ -22,6 +25,9 @@ Iterating (WO-10.10, D367): every saved design starts a **design** whose version
 - ``gos shell revise [--design DS] [--theme ID] [--max-blocks N] [--headroom N] WORDS...``: a new
   version of the current design (or ``--design``) by GOS's own reviser (no AI, free), through the
   same gate; refused: nothing written, the current version stays. Exit 0, 1 refused, 2.
+- ``gos shell refit BUILD``: a site build's (D422) new version with the same building and its
+  plans' machines as they are today fitted into it again (export names it when they changed);
+  free, no AI. Exit 0, 1 refused (they no longer fit: revise the building), 2.
 - ``gos shell undo [DESIGN]`` and ``gos shell current DESIGN BUILD``: make the previous version, or
   any version, current again.
 - ``gos shell compare BUILD BUILD``: two versions' materials and block counts side by side.
@@ -81,6 +87,13 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     d.add_argument(
         "--design", type=Path, default=None, help="a JSON list of operations"
     )
+    d.add_argument(
+        "--mode",
+        choices=shell_store.MODES,
+        default="layout",
+        help="layout: build around the laid-out machines (default); site: design the "
+        "building first and fit the machines into it (D422)",
+    )
     sub.add_parser("list", help="the saved shell builds")
     v = sub.add_parser("versions", help="the shell designs, or one design's versions")
     v.add_argument("design", nargs="?", default=None)
@@ -94,6 +107,10 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     r.add_argument("--theme", default=None, help="th-<name>: another theme's palette")
     r.add_argument("--max-blocks", type=int, default=None)
     r.add_argument("--headroom", type=int, default=None)
+    f = sub.add_parser(
+        "refit", help="a site build's machines as they are today, fitted again (D422)"
+    )
+    f.add_argument("build")
     u = sub.add_parser("undo", help="make the current version's parent current again")
     u.add_argument("design", nargs="?", default=None)
     c = sub.add_parser("current", help="make one version of a design current")
@@ -122,7 +139,7 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     e.add_argument("--over", choices=("split", "addblocks"), default="split")
     e.add_argument("--out", type=Path, default=None, help="the .schematic to write")
     shell_bakeoff_cli.add_parsers(sub)  # gos shell bakeoff ... (WO-10.11)
-    for each in (d, sub.choices["list"], s, e, v, r, u, c, k):
+    for each in (d, sub.choices["list"], s, e, v, r, f, u, c, k):
         each.add_argument("--config", type=Path, default=None, help="gos.toml to read")
 
 
@@ -172,7 +189,7 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
         return 2
     if args.shell_command == "design":
         return _design(cfg, args, out)
-    if args.shell_command == "revise":
+    if args.shell_command in ("revise", "refit"):
         return _revise(cfg, args, out)
     return _export(cfg, args, out)
 
@@ -237,16 +254,19 @@ def _revise(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
     home = cfg.gos_home
     conn = access.connect(access.db_path(home), readonly=True)
     try:
-        got = versions.revise(
-            conn,
-            home,
-            VaultIO(home / "vault"),
-            args.design,
-            " ".join(args.words),
-            theme_id=args.theme,
-            max_blocks=args.max_blocks,
-            headroom=args.headroom,
-        )
+        if args.shell_command == "refit":
+            got = versions.refit(conn, home, args.build)
+        else:
+            got = versions.revise(
+                conn,
+                home,
+                VaultIO(home / "vault"),
+                args.design,
+                " ".join(args.words),
+                theme_id=args.theme,
+                max_blocks=args.max_blocks,
+                headroom=args.headroom,
+            )
     except (shell.ShellError, palette.CatalogError) as exc:
         print(str(exc), file=out)
         return 2
@@ -335,6 +355,7 @@ def _design(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
             max_blocks=args.max_blocks,
             headroom=args.headroom,
             ops=ops,
+            mode=args.mode,
         )
     except (shell.ShellError, palette.CatalogError) as exc:
         print(str(exc), file=out)

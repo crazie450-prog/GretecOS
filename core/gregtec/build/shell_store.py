@@ -52,6 +52,8 @@ BUILD_ID = re.compile(r"sh-[0-9a-f]{12}")
 FILES = ("design.json", "layout.json", "palette.tsv", "preview.json", "notes.txt")
 # a site build (D422) also keeps its machine program, so it is fitted again without the plans
 SITE_FILES = (*FILES, "program.json")
+# a site version whose machines kept an earlier version's places: that layout (D422)
+PRIOR = "prior.json"
 MODES = ("layout", "site")
 MAX_PLANS = shell.MAX_PLANS
 MAX_CARD_FACES = 6000  # the shell card's limit (core/gregtec/cards/schema.json)
@@ -437,15 +439,20 @@ def save(
     made: Made,
     lay: Mapping[str, Any],
     program: Mapping[str, Any] | None = None,
+    prior: Mapping[str, Any] | None = None,
 ) -> Path:
     """Write the build's files (atomically, each); a refused outcome is never saved. A site
-    build (D422) also writes its ``program.json``."""
+    build (D422) also writes its ``program.json``, and a version fitted keeping an earlier
+    version's places that layout (``prior.json``), so it fits again the same from its own
+    files."""
     if not made.outcome.ok:
         raise shell.ShellError("a refused design is never written")
     rec = made.record
     where = folder(home, made.build)
     if program is not None:
         atomic_write(where / "program.json", _json(program))
+    if prior is not None:
+        atomic_write(where / PRIOR, _json(prior))
     rows = ["role\tblock\tname\tcount"] + [
         f"{m['role']}\t{m['block']}\t{m['name'] or ''}\t{m['count']}"
         for m in rec["materials"]
@@ -666,14 +673,15 @@ def _site_cells(
     """A site build's operations compiled once with its design-time spec, its machines fitted
     again from its saved program and the saved layout required back; the fitted spec (the
     saved layout's volumes) and the compiled cells to gate against it. The fit runs as it did
-    at design time (no prior: a prior pass names itself in the layout's ``fit``, so its id
-    would never be the saved one); fit is deterministic, so the same files give the same id."""
+    at design time: with no prior, or with the earlier version's layout the version kept
+    places from (its ``prior.json``); fit is deterministic, so the same files give the same
+    id."""
     spec, prog, opts = _site_spec(home, build, rec, swatches)
     try:
         got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
     except shell.ShellError as exc:
         raise shell.ShellError(f"build {build} no longer passes: {exc}") from None
-    res = _refit(prog, opts, spec, got, rec, None)
+    res = _refit(prog, opts, spec, got, rec, _saved_prior(home, build, rec))
     if res.layout is None:
         raise shell.ShellError(
             f"build {build} no longer fits its machines: " + " | ".join(res.reasons)
@@ -707,6 +715,106 @@ def _refit(
         info.get("zones") or (),
         prior=prior,
     )
+
+
+def _saved_prior(
+    home: Path, build: str, rec: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """The layout a site version was fitted keeping places from (its ``prior.json``), if any."""
+    if not (rec.get("fit") or {}).get("prior"):
+        return None
+    try:
+        got: dict[str, Any] = json.loads(
+            (folder(home, build) / PRIOR).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise shell.ShellError(
+            f"build {build}'s {PRIOR} can't be read: {exc}"
+        ) from None
+    return got
+
+
+@dataclass(frozen=True)
+class Fitted:
+    """A site design gated and fitted (:func:`fit_site`)."""
+
+    spec: shell.Spec  # the fitted spec when the fit passed, else the design-time one
+    outcome: shell.Outcome
+    build: str
+    layout: dict[str, Any] | None  # the fitted layout; None when refused
+    program: dict[str, Any]
+    fit: dict[str, Any]  # design.json's ``fit``
+    prior: dict[str, Any] | None  # the layout whose places were kept, if that was used
+
+
+def _spots(lay: Mapping[str, Any] | None) -> list[tuple[Any, ...]]:
+    return sorted(
+        (str(p["id"]), str(p["facing"]), tuple(p["lo"]), tuple(p["hi"]))
+        for p in (lay or {}).get("placements", [])
+    )
+
+
+def fit_site(
+    conn: sqlite3.Connection,
+    spec: shell.Spec,
+    ops: Sequence[Mapping[str, Any]],
+    source: str,
+    prog: layout_lib.Program,
+    opts: layout_lib.Options,
+    entrance: Mapping[str, Any] | None,
+    zones: Sequence[Mapping[str, Any]],
+    prior: Mapping[str, Any] | None,
+    prior_build: str | None = None,
+) -> Fitted:
+    """A new version of a site build (D422, design §2.7: a revision or a refit): ``ops``
+    compiled once with the design-time ``spec``, the palette and size gate, the machines fitted
+    into the building, then the gate on the fitted volumes. Fitted from scratch; when that
+    moves a machine of ``prior`` (the parent's layout) and a fit keeping ``prior``'s places
+    that still fit passes, that one (the version then keeps ``prior`` as its ``prior.json``)."""
+    from gregtec.build import fit as fit_lib
+
+    assert spec.site is not None
+    program = prog.to_json(opts)
+    hint = None if entrance is None else dict(entrance)
+    zone_list = [dict(z) for z in zones]
+    info: dict[str, Any] = {
+        "mode": "site",
+        "site": spec.site.to_json(),
+        "need": dict(spec.need or {}),
+        "entrance": hint,
+        "zones": zone_list,
+        "buffer": opts.buffer,
+    }
+    build = shell.build_id(spec, ops, program, hint, zone_list)
+
+    def refused(out: shell.Outcome) -> Fitted:
+        return Fitted(spec, out, build, None, program, info, None)
+
+    try:
+        got = shell.compile_ops(spec, ops)
+    except shell.ShellError as exc:
+        return refused(shell.Outcome("refused", source, {}, {}, (str(exc),)))
+    first = shell.design(conn, spec, ops, source, compiled=got)
+    if not first.ok:
+        return refused(first)
+    progress.stage("fit")
+    res = fit_lib.fit(prog, got.cells, spec.site, opts, hint, zone_list)
+    kept = None
+    if prior is not None and _spots(res.layout) != _spots(prior):
+        again = fit_lib.fit(
+            prog, got.cells, spec.site, opts, hint, zone_list, prior=prior
+        )
+        if again.ok and _spots(again.layout) != _spots(res.layout):
+            res, kept = again, dict(prior)
+    info["fit"] = res.stats
+    if not res.ok or res.layout is None:
+        return refused(shell.Outcome("refused", source, {}, {}, tuple(res.reasons)))
+    if kept is not None:
+        info["prior"] = {"build": prior_build, "layout": kept.get("id")}
+        build = shell.build_id(spec, ops, program, hint, zone_list, str(kept.get("id")))
+    fitted = shell.fitted_spec(spec, res.layout)
+    outcome = shell.design(conn, fitted, ops, source, compiled=got)
+    return Fitted(fitted, outcome, build, res.layout, program, info, kept)
 
 
 def _saved_options(home: Path, rec: Mapping[str, Any]) -> dict[str, int]:
@@ -781,7 +889,7 @@ def _check_site(
         got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
     except shell.ShellError as exc:
         raise shell.ShellError(f"build {build} no longer passes: {exc}") from None
-    res = _refit(now, opts, spec, got, rec, None)
+    res = _refit(now, opts, spec, got, rec, _saved_prior(home, build, rec))
     if res.layout == lay:
         return
     # changed: do they still fit, from scratch or the machines that can staying put?

@@ -62,7 +62,7 @@ When Clayton asks to change a shell ("make the roof steeper", "taller, and no wi
 
 | Tool | What it does |
 |---|---|
-| `build_revise(words, design?, design_ops?, theme?, max_blocks?, headroom?, save?)` | A new version of the design's current shell. `save` false: the current version's operations (`current ops` note) and what GOS's own reviser makes of the words, nothing saved. With `design_ops`: your revised operations; without: GOS's reviser. The same gate as `build_request`. |
+| `build_revise(words, design?, design_ops?, theme?, max_blocks?, headroom?, save?, entrance?, zones?)` | A new version of the design's current shell. `save` false: the current version's operations (`current ops` note) and what GOS's own reviser makes of the words, nothing saved. With `design_ops`: your revised operations; without: GOS's reviser. The same gate as `build_request`. A site design's machines are fitted into the revised building again (the ones whose places still fit stay); `entrance` and `zones` as for `build_request`, left out to keep the current version's. |
 
 1. Call it with `save` false and `words` set to what he said: you get the current operations. If GOS's reviser did exactly what he asked, call it again without `save`.
 2. Otherwise copy the current operations, change **only what he asked** (a roof's `style` gable and `pitch` 1-3 for steeper, the walls' and roof's `y` plus `headroom` for taller, a window op's `sides`, ...), keep everything else as it was, and send them as `design_ops` with his words.

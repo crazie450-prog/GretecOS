@@ -566,6 +566,8 @@ def test_build_revise_is_the_architects_and_deep_lane_only(reg: Any) -> None:  #
         "theme",
         "max_blocks",
         "headroom",
+        "entrance",  # a site build's door hint and steering boxes (D422), as data
+        "zones",
         "save",
     }
     assert tool.input_schema["additionalProperties"] is False
@@ -612,6 +614,221 @@ def test_build_revise_looks_revises_and_refuses(
     out = reg.call("build_revise", {"words": "no lights"}, lane=DEEP)  # GOS's reviser
     assert not out.is_error and "version: v3" in out.text
     assert reg.call("build_revise", {"words": "x"}, lane=FAST).is_error
+
+
+# --- site builds (D422) ------------------------------------------------------------------------
+
+
+def site_first(conn: sqlite3.Connection, home: Path) -> tuple[str, shell_store.Made]:
+    """A procedural foundry site build around the steel line, started as a design."""
+    made = shell_store.make(
+        conn,
+        home,
+        VaultIO(home / "vault"),
+        ["pl-steel"],
+        theme_id="th-foundry",
+        mode="site",
+    )
+    assert made.outcome.status == "accepted", made.outcome.reasons
+    d = versions.start(home, made.build, asked="a foundry hall", by="procedural")
+    return d["id"], made
+
+
+def _spots(lay: dict[str, Any]) -> dict[str, tuple[Any, ...]]:
+    return {
+        p["id"]: (p["facing"], tuple(p["lo"]), tuple(p["hi"]))
+        for p in lay["placements"]
+    }
+
+
+def _reloads(conn: sqlite3.Connection, home: Path, build: str) -> None:
+    """A saved site version gives its own cells and layout again from its own files."""
+    spec, out = shell_store.rebuild(conn, home, build)
+    _, cells = shell_store.cells_of(home, build)
+    assert cells == dict(out.cells)
+    assert spec.layout == versions._layout_of(home, build)["id"]
+    shell_store.check_layout(conn, home, shell_store.load(home, build))
+
+
+def test_a_site_revision_fits_again_from_its_program_and_never_reads_structure(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    ds, made = site_first(conn, home)
+
+    def deny(action: int, table: str | None, *_: object) -> int:
+        if action == sqlite3.SQLITE_READ and table == "structure":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    conn.set_authorizer(deny)
+    try:
+        got = rev(conn, home, "make the roof steeper")
+    finally:
+        conn.set_authorizer(None)
+    assert got.saved and got.record is not None, got.reasons
+    rec = got.record
+    assert shell_store.site_mode(rec) and rec["fit"]["site"]["lo"] == [0, 0, 0]
+    # the headroom grew for the gable: the site with it, its floor the parent's
+    old = shell_store.load(home, made.build)["fit"]["site"]
+    up = rec["headroom"] - made.record["headroom"]
+    assert up > 0 and rec["fit"]["site"]["hi"] == [
+        old["hi"][0],
+        old["hi"][1] + up,
+        old["hi"][2],
+    ]
+    where = shell_store.folder(home, got.build)
+    assert sorted(p.name for p in where.iterdir()) == sorted(shell_store.SITE_FILES)
+    assert (where / "program.json").read_bytes() == (
+        shell_store.folder(home, made.build) / "program.json"
+    ).read_bytes()
+    lay = versions._layout_of(home, got.build)
+    assert _spots(lay) == _spots(versions._layout_of(home, made.build))
+    assert "fitted in the building" in " ".join(rec["notes"])
+    _reloads(conn, home, got.build)
+    # lower than the layout-first top: a site build has none; the fit is the floor
+    versions.make_current(home, ds, made.build)  # the flat roof again
+    low = rev(conn, home, "shorter by 4")
+    assert low.saved, low.reasons
+    assert low.record is not None and low.record["wall_top"] - 4 >= 0
+    _reloads(conn, home, low.build)
+    for k in range(1, 12):  # lower still, until the machines no longer fit
+        too = rev(conn, home, f"shorter by {k}", save_it=False)
+        if too.outcome.status == "refused":
+            break
+    assert "high; the tallest such floor is" in too.reasons[0], too.reasons
+    assert "puts the roof on the floor" in rev(conn, home, "shorter by 30").reasons[0]
+    with pytest.raises(versions.VersionError, match="for a site build"):
+        ds2, _ = first(conn, home)
+        rev(conn, home, "no lights", zones=[])
+    assert versions.current_id(home) == ds2 != ds
+
+
+def test_a_site_revision_keeps_the_places_that_still_fit(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    _, made = site_first(conn, home)
+    lay = versions._layout_of(home, made.build)
+    was = _spots(lay)
+    # a pillar through one machine: a fresh fit would move others; they stay put
+    hit = next(p for p in lay["placements"] if p["id"] == "m4")
+    x, z = hit["lo"][0], hit["lo"][2]
+    ops = [
+        *made.ops,
+        {"op": "fill", "role": "pillar", "lo": [x, 0, z], "hi": [x, 11, z]},
+    ]
+    got = rev(conn, home, "a pillar", ops=ops, by="architect")
+    assert got.saved and got.record is not None, got.reasons
+    prior = got.record["fit"]["prior"]
+    assert prior == {"build": made.build, "layout": lay["id"]}
+    where = shell_store.folder(home, got.build)
+    assert sorted(p.name for p in where.iterdir()) == sorted(
+        (*shell_store.SITE_FILES, shell_store.PRIOR)
+    )
+    assert json.loads((where / shell_store.PRIOR).read_text("utf-8")) == lay
+    now = _spots(versions._layout_of(home, got.build))
+    assert now["m4"] != was["m4"]
+    assert {k: v for k, v in now.items() if k != "m4"} == {
+        k: v for k, v in was.items() if k != "m4"
+    }
+    _reloads(conn, home, got.build)  # fitted again with its prior, the same id
+
+
+def test_refit_fits_todays_machines_into_the_same_building(
+    conn: sqlite3.Connection, home: Path, tmp_path: Path
+) -> None:
+    from gregtec.build.worldreg import WorldRegistry
+
+    _, made = site_first(conn, home)
+    same = versions.refit(conn, home, made.build)
+    assert not same.saved and "nothing changes" in same.reasons[0]
+    plan_file = home / "data" / "plans" / "pl-steel.json"
+    saved_plan = plan_file.read_text(encoding="utf-8")
+    more = json.loads(saved_plan)
+    more["nodes"][0]["count"] += 1
+    plan_file.write_text(json.dumps(more), encoding="utf-8")
+    rec = shell_store.load(home, made.build)
+    names = {m["block"].split("@")[0] for m in rec["materials"]}
+    world = WorldRegistry("lab", frozenset(names), frozenset(), "level.dat")
+    with pytest.raises(shell.ShellError, match="gos shell refit " + made.build):
+        shell_store.export(conn, home, made.build, world)
+    got = versions.refit(conn, home, made.build)
+    assert got.saved and got.version is not None, got.reasons
+    v = got.version
+    assert (v["n"], v["by"], v["asked"], v["cost_usd"]) == (2, "procedural", "refit", 0)
+    assert got.ops == tuple(rec["ops"]) and got.parent == made.build
+    new = shell_store.load(home, got.build)
+    assert new["fit"]["site"] == rec["fit"]["site"]  # the same building
+    assert new["fit"]["fit"]["of"] == rec["fit"]["fit"]["of"] + 1
+    lay = versions._layout_of(home, got.build)
+    assert len(lay["placements"]) == new["fit"]["fit"]["of"]
+    _reloads(conn, home, got.build)
+    assert shell_store.export(conn, home, got.build, world).paths
+    # only the current version is refitted; a layout-first build never is
+    with pytest.raises(versions.VersionError, match="not the current version"):
+        versions.refit(conn, home, made.build)
+    # far more machines: they no longer fit, nothing is written
+    more["nodes"][0]["count"] += 40
+    plan_file.write_text(json.dumps(more), encoding="utf-8")
+    before = builds_on_disk(home)
+    no = versions.refit(conn, home, got.build)
+    assert not no.saved and no.reasons[-1] == "revise the building", no.reasons
+    assert builds_on_disk(home) == before
+    plan_file.write_text(saved_plan, encoding="utf-8")
+    _, v1 = first(conn, home)
+    with pytest.raises(versions.VersionError, match="layout-first"):
+        versions.refit(conn, home, v1)
+
+
+def test_gos_shell_design_site_and_refit(
+    home: Path, tmp_path: Path, conn: sqlite3.Connection
+) -> None:
+    code, text = _gos(
+        home, tmp_path, "design", "pl-steel", "--theme", "th-foundry", "--mode", "site"
+    )
+    assert code == 0 and "machines fitted in the building" in text, text
+    build = text.split()[1]
+    assert shell_store.site_mode(shell_store.load(home, build))
+    code, text = _gos(home, tmp_path, "refit", build)
+    assert code == 1 and "nothing changes" in text, text
+    plan_file = home / "data" / "plans" / "pl-steel.json"
+    more = json.loads(plan_file.read_text(encoding="utf-8"))
+    more["nodes"][0]["count"] += 1
+    plan_file.write_text(json.dumps(more), encoding="utf-8")
+    code, text = _gos(home, tmp_path, "refit", build)
+    assert code == 0 and "v2" in text and "refit" in text, text
+    code, text = _gos(home, tmp_path, "refit", build)
+    assert code == 2 and "not the current version" in text, text
+
+
+def test_build_revise_takes_a_site_builds_entrance_and_zones(
+    reg: Any,  # noqa: ANN401
+    conn: sqlite3.Connection,
+    home: Path,
+) -> None:
+    ds, made = site_first(conn, home)
+    lay = versions._layout_of(home, made.build)
+    door = next(e for e in lay["entrances"] if e["id"] == "e1")
+    ent = {"side": door["side"], "at": [door["lo"][0], door["lo"][2]]}
+    out = reg.call(
+        "build_revise",
+        {"words": "no lights", "entrance": json.dumps(ent), "zones": "[]"},
+        lane=DEEP,
+    )
+    assert not out.is_error and "machines fitted in the building" in out.text, out.text
+    rec = shell_store.load(home, versions.get(home, ds)["current"])
+    assert rec["fit"]["entrance"] == ent and rec["fit"]["fit"]["entrance_from"] == (
+        "answer"
+    )
+    bad = {"side": "north", "at": [1, 1]}
+    out = reg.call(
+        "build_revise",
+        {"words": "no pillars", "entrance": json.dumps(bad)},
+        lane=DEEP,
+    )
+    assert out.is_error and "nothing was written" in out.text, out.text
+    first(conn, home)  # a layout-first design is current: no entrance there
+    out = reg.call("build_revise", {"words": "no lights", "zones": "[]"}, lane=DEEP)
+    assert out.is_error and "for a site build" in out.text
 
 
 # --- gos shell --------------------------------------------------------------------------------

@@ -1860,7 +1860,9 @@ def test_gos_shell_bakeoff_with_the_fake_models_start_to_end(
     assert code == 0, text
     assert "Contacts: nothing" in text and "Type yes" not in text  # free: no question
     rid = next(w for w in text.split() if bo.RUN_ID.fullmatch(w))
-    assert f"Run {rid}: done. 8 calls, $0.00." in text
+    # marble-temple's "no lights": the fakes' site halls have none, so both follow-ups are
+    # refused as changing nothing (D422) and take their two repair rounds
+    assert f"Run {rid}: done. 12 calls, $0.00." in text
     assert (
         "fake-" not in text.split("Run " + rid + " (Ctrl+C")[1]
     )  # the progress is blind
@@ -2069,13 +2071,15 @@ def test_a_paid_run_gets_no_more_than_the_day_cap_leaves(
         assert "Hard cap for this run: $3.60" in text
         second = bo.load(home, bo.runs(home)[0]["id"])
         assert second["caps"]["usd"] == 3.6 and second["status"] == bo.DONE
-        assert code == 0 and "4 calls, $1.80." in text
-        # a third run asks for more than is left: it gets what is left, and the day cap holds
+        # marble-temple's "no lights" changes nothing on a site hall with none (D422): its
+        # follow-up is refused and takes its two repair rounds
+        assert code == 0 and "6 calls, $2.70." in text
+        # a third run asks for more than is left: its cap is lowered to what is left, less
+        # than one answer can cost, so it is not run and the day cap holds
         code, text = gos(toml, *argv, "--limit", "2", "--cap-usd", "9")
-        assert "is lowered from $9.00 to that" in text and "leaves $1.80" in text
-        third = bo.load(home, bo.runs(home)[0]["id"])
-        assert third["id"] != second["id"] and third["caps"]["usd"] == 1.8
-        assert third["spent"]["usd"] <= 1.8
+        assert "is lowered from $9.00 to that" in text and "leaves $0.90" in text
+        assert "Not run: this run's cap $0.90 is less than one answer" in text
+        assert bo.runs(home)[0]["id"] == second["id"]
         store = Store(access.db_path(home))
         try:
             today = CostWatch.of(store, config.load(toml)).caps()["day"]

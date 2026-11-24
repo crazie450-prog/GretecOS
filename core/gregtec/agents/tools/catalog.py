@@ -532,8 +532,9 @@ TOOLS = (
         "asked changed), or leave them out for GOS's own reviser. save false shows the current "
         "operations and the reviser's attempt and saves nothing. The same gate checks it; a "
         "refused revision writes nothing and the current version stays current. Every version "
-        "is kept; undo makes the previous one current again. A site build's result carries "
-        "its fit line.",
+        "is kept; undo makes the previous one current again. A site build's machines are "
+        "fitted into the revised building again (entrance and zones: leave out to keep the "
+        "current version's); its result carries its fit line.",
         shells.BUILD_REVISE_SCHEMA,
         shells.build_revise,
         read_only=False,

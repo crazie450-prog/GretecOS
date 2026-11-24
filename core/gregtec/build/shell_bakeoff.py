@@ -1449,6 +1449,11 @@ class Runner:
                     ops=said.ops,
                     by="architect",
                     asked=case["followup"],
+                    **(
+                        {"entrance": said.entrance, "zones": said.zones}
+                        if shell_store.site_mode(old)
+                        else {}
+                    ),
                 )
             except (shell.ShellError, palette.CatalogError) as exc:
                 return f"no revision: {exc}"

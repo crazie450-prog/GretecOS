@@ -1479,12 +1479,14 @@ def build_id(
     program: Mapping[str, Any] | None = None,
     entrance: Mapping[str, Any] | None = None,
     zones: Sequence[Mapping[str, Any]] = (),
+    prior: str | None = None,
 ) -> str:
     """``sh-`` + 12 hex: the same layout, palette, options and operations give the same id.
 
     A site build (D422) is named by its site, its program (``program.json``, hashed), the
-    answer's entrance and zones instead of the layout, which is derived from them; a layout
-    build's payload is unchanged."""
+    answer's entrance and zones instead of the layout, which is derived from them, and, when
+    its machines were fitted keeping an earlier version's places, that layout's id
+    (``prior``); a layout build's payload is unchanged."""
     payload: dict[str, Any] = {
         "layout": spec.layout,
         "theme": spec.theme,
@@ -1511,6 +1513,8 @@ def build_id(
             "entrance": None if entrance is None else dict(entrance),
             "zones": [dict(z) for z in zones] or None,
         }
+        if prior is not None:
+            payload["prior"] = prior
     text = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )

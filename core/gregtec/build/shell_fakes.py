@@ -309,6 +309,8 @@ def revised(user: str, facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     m = _REQUEST.search(user)
     words = m.group(1) if m else ""
     rec = {**facts, "ops": current}
+    if site(facts):  # as a saved site build's record says (D422)
+        rec["fit"] = {"mode": "site"}
     got = shell_revise.revise(rec, words)
     return [dict(o) for o in (got.ops if got.ok else current)]
 

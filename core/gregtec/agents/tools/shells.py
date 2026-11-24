@@ -386,6 +386,9 @@ BUILD_REVISE_SCHEMA: dict[str, Any] = {
         },
         "max_blocks": BUILD_REQUEST_SCHEMA["properties"]["max_blocks"],
         "headroom": BUILD_REQUEST_SCHEMA["properties"]["headroom"],
+        # a site build's (D422); left out: the current version's
+        "entrance": BUILD_REQUEST_SCHEMA["properties"]["entrance"],
+        "zones": BUILD_REQUEST_SCHEMA["properties"]["zones"],
         "save": {
             "type": "boolean",
             "description": "false: save nothing; return the current version's operations and "
@@ -417,6 +420,8 @@ def build_revise(call: Call, args: dict[str, Any], offset: int) -> Result:
         if not isinstance(ops, list):
             raise ToolError("design_ops is a JSON list of operations")
     save = args.get("save", True)
+    entrance = _json_arg(args, "entrance", dict, "a JSON object {side, at}")
+    zones = _json_arg(args, "zones", list, "a JSON list of {kind, lo, hi}")
     # The chain's note is Clayton's own request when a lane passes it on, else the words.
     asked = call.request or words
     try:
@@ -463,6 +468,8 @@ def build_revise(call: Call, args: dict[str, Any], offset: int) -> Result:
             headroom=args.get("headroom"),
             asked=asked,
             save_it=save,
+            entrance=entrance,
+            zones=zones,
         )
     except (shell.ShellError, palette.CatalogError) as exc:
         raise ToolError(f"no revision: {exc}") from None
