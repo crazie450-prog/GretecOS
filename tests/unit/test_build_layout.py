@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import io
 import itertools
 import json
@@ -175,7 +176,18 @@ STEPS = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
 
 
 def check(lay: Mapping[str, Any]) -> None:
-    """Every acceptance property of one layout."""
+    """Every acceptance property of one layout laid out by plan_layout: the common ones, and
+    its one entrance in the hall's west face."""
+    check_common(lay)
+    for e in lay["entrances"]:
+        assert e["side"] == "west" and e["lo"][0] == 0 == e["hi"][0]
+
+
+def check_common(
+    lay: Mapping[str, Any], extra_open: frozenset[Cell] = frozenset()
+) -> None:
+    """The acceptance properties of any layout, a fitted one (D422) too; ``extra_open`` is
+    the open air a fitted layout's reach also walks through."""
     jsonschema.Draft202012Validator(SCHEMA).validate(lay)
     keep = lay["keepouts"]
     free = [*lay["corridors"], *lay["chases"]]
@@ -200,13 +212,12 @@ def check(lay: Mapping[str, Any]) -> None:
         assert [p["hi"][0] + c, p["hi"][1] + ct, p["hi"][2] + c] == k["hi"]
         assert p["lo"][1] == 0
         assert _inside(tuple(p["controller"]), p)
-    # an entrance is on the bounding volume's face, inside a corridor
+    # an entrance is inside a corridor
     corridors = {x["id"]: x for x in lay["corridors"]}
     for e in lay["entrances"]:
-        assert e["side"] == "west" and e["lo"][0] == 0 == e["hi"][0]
         assert all(_inside(cell, corridors[e["corridor"]]) for cell in _cells(e))
     # flood fill from the entrance through corridors and keep-outs minus machine boxes
-    open_cells: set[Cell] = set()
+    open_cells: set[Cell] = set(extra_open)
     for x in lay["corridors"]:
         open_cells.update(_cells(x))
     machine = {p["id"]: p for p in lay["placements"]}
@@ -357,6 +368,79 @@ def test_an_mv_line_on_an_ev_power_plan_needs_a_transformer(
     assert "<tier>" not in w
     assert "gos dist transformer --from EV --to MV --amps 2" in w
     assert "gos dist transformer --from HV --to MV --amps 2" in w
+
+
+def test_the_ids_are_unchanged_by_site_mode(conn: sqlite3.Connection) -> None:
+    """D422 split plan_layout (program(), keepout_of, reach's extra_open) and added the buffer
+    option: layouts from before keep their bytes and ids (computed before the split)."""
+    golden = [
+        ([production()], layout.Options(), "lo-020a7e7f7c83", "d6b5b5eeebc36e48"),
+        ([production(), power()], None, "lo-bd81ad638e02", "c85da0779b8bfc40"),
+        (
+            [production()],
+            layout.Options(spacing=2, band_gap=3, max_run=12),
+            "lo-64a0be12fc46",
+            "8cf739402f494372",
+        ),
+    ]
+    for plans, opts, lid, digest in golden:
+        lay = layout.plan_layout(conn, plans, opts)
+        text = json.dumps(lay, sort_keys=True).encode()
+        assert lay["id"] == lid
+        assert hashlib.sha256(text).hexdigest()[:16] == digest
+        assert "buffer" not in lay["options"] and "fit" not in lay
+    # the buffer is a site-mode option: off its default it is in the JSON and the id
+    lay = layout.plan_layout(conn, [production()], layout.Options(buffer=40))
+    assert lay["options"]["buffer"] == 40 and lay["id"] != "lo-020a7e7f7c83"
+    check(lay)
+
+
+def test_the_program_is_what_plan_layout_places(conn: sqlite3.Connection) -> None:
+    plans = [production(), power()]
+    prog = layout.program(conn, plans)
+    lay = layout.plan_layout(conn, plans)
+    assert list(prog.plans) == lay["plans"]
+    assert prog.gt == lay["gt"] and prog.run == lay["run"]
+    assert [(i.plan, i.node, i.mte) for i in prog.instances] == [
+        (p["plan"], p["node"], p["mte"]) for p in lay["placements"]
+    ]
+    assert list(prog.unplaced) == lay["unplaced"]
+    # every instance placed as m<i>: the services are the layout's
+    assert list(prog.services) == lay["services"]
+    assert all(w in lay["warnings"] for w in prog.service_warnings)
+    with pytest.raises(layout.LayoutError, match="twice"):
+        layout.program(conn, [production(), production()])
+
+
+def test_a_keep_out_is_the_box_grown_by_the_clearance() -> None:
+    body = layout.Box((4, 0, 6), (6, 3, 9))
+    assert layout.keepout_of(body, 1, 1) == layout.Box((3, 0, 5), (7, 4, 10))
+    assert layout.keepout_of(body, 2, 3) == layout.Box((2, 0, 4), (8, 6, 11))
+
+
+def test_open_air_beyond_the_corridors_is_walked_through() -> None:
+    # the corridor ends two blocks short of the keep-out: only the open air between (a fitted
+    # layout's floor, D422) joins them
+    boxes = {"m1": layout.Box((6, 0, 4), (8, 2, 6))}
+    keep = [{"id": "k1", "of": "m1", "lo": [5, 0, 3], "hi": [9, 3, 7]}]
+    corridors = [{"id": "c1", "lo": [0, 0, 3], "hi": [2, 2, 5]}]
+    entrances = [{"id": "e1", "lo": [0, 0, 3], "hi": [0, 2, 5]}]
+
+    def placed() -> dict[str, Any]:
+        return {
+            "id": "m1",
+            "front": [7, 0, 3],
+            "hatches": [{"p": [6, 0, 4], "kinds": ["Maintenance"]}],
+        }
+
+    p = placed()
+    layout.reach_all([p], keep, corridors, entrances, boxes)
+    assert p["reach"]["ok"] is False  # x 3..4 is no corridor
+    gap = frozenset((x, y, z) for x in (3, 4) for y in range(3) for z in range(3, 6))
+    q = placed()
+    layout.reach_all([q], keep, corridors, entrances, boxes, gap)
+    assert q["reach"]["ok"] is True
+    assert layout.service_cells(keep, corridors, boxes, gap) >= gap
 
 
 def test_a_multi_with_several_variants_is_placed_at_its_largest(

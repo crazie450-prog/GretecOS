@@ -296,6 +296,41 @@ class Footprint:
             "caveats": list(self.caveats),
         }
 
+    @classmethod
+    def from_json(cls, d: Mapping[str, Any]) -> Footprint:
+        """The inverse of :meth:`to_json` (a site build's ``program.json``, D422). The machine
+        id isn't in the JSON, so it comes back None."""
+        registry, _, meta = str(d["controller"]).rpartition("@")
+        choices: dict[str, tuple[Tier, ...]] = {}
+        for ch, tiers in d.get("choices", {}).items():
+            got = []
+            for t in tiers:
+                block, _, m = str(t["block"]).rpartition("@")
+                got.append(Tier(ch, int(t["value"]), block, int(m)))
+            choices[ch] = tuple(got)
+        return cls(
+            registry_name=registry,
+            meta=int(meta),
+            name=d.get("name"),
+            class_name=d.get("class_name"),
+            source=str(d["source"]),
+            variant=str(d["variant"]),
+            tiers=tuple(sorted((str(k), int(v)) for k, v in d["tiers"].items())),
+            facing=parse_facing(str(d["facing"])),
+            cells=_sorted(
+                Cell(
+                    (c["d"][0], c["d"][1], c["d"][2]),
+                    c.get("block"),
+                    c.get("meta"),
+                    tuple(c.get("hatches", ())),
+                    c.get("placed"),
+                )
+                for c in d["cells"]
+            ),
+            choices=choices,
+            caveats=tuple(d.get("caveats", ())),
+        )
+
 
 def _corner(cells: Sequence[Cell], pick: Callable[[Iterable[int]], int]) -> Offset:
     if not cells:
