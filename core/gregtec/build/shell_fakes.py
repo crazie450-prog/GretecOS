@@ -21,7 +21,7 @@ NEED (walls, roof and the ornament on the hall's own volume, a door three wide i
 wall), and GOS fits the machines into it. Two more show the fit's refusals:
 
 - ``fake-cramped``: its first hall holds only :data:`CRAMPED_ROOM` of NEED (the fit refuses
-  it for volume); the repair is the plain hall (refused, repaired, accepted).
+  it for floor or volume); the repair is the plain hall (refused, repaired, accepted).
 - ``fake-tower``: enough air, but on floor three blocks wide (a spine with three-wide wings,
   a comb): no machine wider than that fits, so it ends refused, every round.
 
@@ -117,12 +117,14 @@ def site(facts: Mapping[str, Any]) -> bool:
 
 def hall(facts: Mapping[str, Any], room: float = ROOM) -> tuple[list[int], list[int]]:
     """A site hall's walls (lo, hi; y 0 up to the eaves, the roof one above): in SITE's west
-    corner, its air ``room`` times NEED.required up to cap_height, at least the widest keep-out
-    across, centred in z."""
+    corner, its air ``room`` times NEED.required up to cap_height and its floor ``room`` times
+    NEED.floor_required (a tall cap would otherwise make a floor the keep-outs don't fit on), at
+    least the widest keep-out across, centred in z."""
     lo, hi, need = facts["site"]["lo"], facts["site"]["hi"], facts["need"]
     cap = int(need["cap_height"])
     sx, sz = hi[0] - lo[0] + 1, hi[2] - lo[2] + 1
-    area = math.ceil(room * need["required"] / cap)  # inner floor, cap high
+    # inner floor, cap high
+    area = math.ceil(room * max(need["required"] / cap, need.get("floor_required", 0)))
     wide = max(need["widest"][0], need["widest"][2])
     ix = min(max(math.ceil(math.sqrt(area)), wide), sx - 2)
     iz = min(max(math.ceil(area / ix), wide), sz - 2)

@@ -1178,7 +1178,7 @@ def test_build_request_a_site_design_is_fitted_and_says_how(
     zoned = ask(reg, design=ops, zones=out)
     assert zoned.is_error and "not inside the site" in zoned.text
     cramped = ask(reg, design=shell_fakes.site_plain(facts, shell_fakes.CRAMPED_ROOM))
-    assert cramped.is_error and "the roofed floor holds" in cramped.text
+    assert cramped.is_error and "the roofed floor has" in cramped.text
     for args, why in [
         ({"design": json.dumps(ops), "entrance": "{"}, "entrance is not JSON"),
         ({"design": json.dumps(ops), "zones": "{}"}, "zones is a JSON list"),

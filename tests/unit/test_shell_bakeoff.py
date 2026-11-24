@@ -3306,7 +3306,7 @@ def test_a_site_run_sends_v6_and_scores_the_fit(
     }
     assert plain["design"]["fit"]["spare_pct"] > 40 and plain["revise"]["ok"]
     assert cramped["design"]["ok"] and cramped["design"]["repair_rounds"] == 1
-    assert "the roofed floor holds" in cramped["design"]["refusals"][0]
+    assert "the roofed floor has" in cramped["design"]["refusals"][0]
     assert cramped["design"]["fit"]["rounds_to_fit"] == 1
     assert not tower["design"]["ok"] and tower["design"]["calls"] == 3
     assert all("needs 5x5 free floor" in r for r in tower["design"]["refusals"])
@@ -3399,3 +3399,23 @@ def test_a_site_design_that_never_reaches_the_fit_counts_in_the_fit_columns(
     got = bo.report(home, run["id"], reveal_unrated=True)
     row = dict(zip(got.card["columns"], got.card["rows"][0], strict=True))
     assert row["fit ok"] == "1 of 2" and row["placed"] == "8 of 16"
+
+
+def test_a_fake_site_hall_has_the_floor_for_tall_machines() -> None:
+    # a tall cap (real catalogs: a 9-high keep-out) makes NEED.required / cap a floor smaller
+    # than the keep-outs themselves; the fakes size the floor from NEED.floor_required too
+    from gregtec.build import shell_fakes
+
+    need = {
+        "required": 2680,
+        "floor_required": 268,
+        "cap_height": 12,
+        "widest": [9, 10, 9],
+        "door_height": 3,
+    }
+    facts = {"site": {"lo": [0, 0, 0], "hi": [25, 30, 25]}, "need": need}
+    lo, hi = shell_fakes.hall(facts)
+    inner = (hi[0] - lo[0] - 1) * (hi[2] - lo[2] - 1)
+    assert inner >= shell_fakes.ROOM * need["floor_required"]
+    lo, hi = shell_fakes.hall(facts, shell_fakes.CRAMPED_ROOM)
+    assert (hi[0] - lo[0] - 1) * (hi[2] - lo[2] - 1) < need["floor_required"]
