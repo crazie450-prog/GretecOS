@@ -433,12 +433,74 @@ def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
         len(text) < 8_000
     )  # the per-call estimate in the runbook assumes about this size
     assert shell_brief.SCHEMA["required"] == ["script", "ops"]
+    # layout mode keeps v5's text; site mode (D422) is v6, and a run records each it sent
     rec = shell_bakeoff.prompt_record()
-    assert (
-        rec["version"] == shell_brief.PROMPT_VERSION == 5 and len(rec["sha256"]) == 12
-    )
+    assert rec["version"] == shell_brief.PROMPT_VERSIONS["layout"] == 5
+    assert len(rec["sha256"]) == 12 and rec["mode"] == "layout"
     assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v5 (sha ")
     assert shell_bakeoff.prompt_label({}).startswith("v1")
+    site = shell_bakeoff.prompt_record("site")
+    assert site["version"] == shell_brief.PROMPT_VERSION == 6
+    assert site["sha256"] != rec["sha256"]
+    both = {"prompt": site, "prompts": {"site": site, "layout": rec}}
+    assert shell_bakeoff.prompt_label(both) == (
+        f"v6 site (sha {site['sha256']}); v5 layout (sha {rec['sha256']})"
+    )
+
+
+def test_the_site_prompt_states_the_site_rules_and_its_hall_fragment_fits(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """v6 (D422): the same ambition and API, the site's rules in place of the layout's, the
+    answer's entrance and zones; its growing-hall fragment runs, sizes itself with covered()
+    and the machines fit into it."""
+    from gregtec.build import shell_store
+    from gregtec.vault.io import VaultIO
+
+    text = shell_brief.system_prompt("site")
+    layout_text = shell_brief.system_prompt()
+    assert text == shell_brief.site_prompt() and text != layout_text
+    assert text.startswith(layout_text[: layout_text.index("The space")])
+    assert shell_brief.SCRIPT_API in text and shell_brief.SITE_API in text
+    for name in (
+        "SITE",
+        "NEED",
+        "PROGRAM",
+        "FLOOR_Y",
+        "covered()",
+        "entrance",
+        "zones",
+    ):
+        assert name in text, name
+    for rule in (
+        "y 0 is the machine floor",
+        "door_height",
+        "aisle_height",
+        "cap_height",
+    ):
+        assert rule in text, rule
+    assert "you never place or avoid machines" in text
+    assert "KEEP_CLEAR lists" not in text and "for d in DOORWAYS" not in text
+    assert f"{shell_brief.ROOM} times NEED.required" in text
+    assert len(text) < 10_000
+    with pytest.raises(ValueError):
+        shell_brief.system_prompt("rows")
+    start = text.index('top, x1, z1 = NEED["cap_height"]')
+    script = text[start : text.index("\n\nThe code refuses", start)]
+    made = shell_store.make(
+        conn,
+        home,
+        VaultIO(home / "vault"),
+        ["pl-steel"],
+        theme_id="th-foundry",
+        ops=[{"op": "script", "script": script}],
+        mode="site",
+        save_it=False,
+    )
+    assert made.outcome.ok, made.outcome.reasons
+    st = made.fit["fit"]  # type: ignore[index]
+    assert st["placed"] == st["of"] > 0 and st["entrance_from"] == "auto"
+    assert st["volume"] >= shell_brief.ROOM * st["need"]["required"]
 
 
 # --- the vocabulary's volumes and roofs --------------------------------------------------------

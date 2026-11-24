@@ -508,10 +508,14 @@ TOOLS = (
         "plans' layout, from a theme or a prompt: without design GOS draws its procedural shell, "
         "with design your operations in the building vocabulary are turned into blocks by code "
         "(one of them may be a script: a Python build script GOS runs in its sandbox). "
-        "Code checks every design: blocks in a machine's keep-out, a corridor, a chase or the "
-        "doorway are removed and said; a tile-entity block, GT's machine block, a block outside "
-        "the palette or more than max_blocks is refused and nothing is saved. Returns the build "
-        "id, its geometry, the palette manifest and the operations used.",
+        "A design is a site design by default (D422): your building first, inside the SITE "
+        "the result states, and GOS fits the machines into it afterwards (an optional "
+        "entrance and zones steer it); a building they don't fit in is refused with what to "
+        "change. In layout mode (GOS's procedural shell, or mode layout) blocks in a machine's "
+        "keep-out, a corridor, a chase or the doorway are removed and said. A tile-entity "
+        "block, GT's machine block, a block outside the palette or more than max_blocks is "
+        "refused and nothing is saved. Returns the build id, its geometry (and a site design's "
+        "SITE, NEED, PROGRAM and fit line), the palette manifest and the operations used.",
         shells.BUILD_REQUEST_SCHEMA,
         shells.build_request,
         read_only=False,
@@ -528,7 +532,8 @@ TOOLS = (
         "asked changed), or leave them out for GOS's own reviser. save false shows the current "
         "operations and the reviser's attempt and saves nothing. The same gate checks it; a "
         "refused revision writes nothing and the current version stays current. Every version "
-        "is kept; undo makes the previous one current again.",
+        "is kept; undo makes the previous one current again. A site build's result carries "
+        "its fit line.",
         shells.BUILD_REVISE_SCHEMA,
         shells.build_revise,
         read_only=False,

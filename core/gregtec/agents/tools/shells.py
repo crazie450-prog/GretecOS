@@ -1,8 +1,8 @@
 """The shell tool (WO-10.7; plan 7.0 ``build_request(spec)``, 7.10 "Shell designer", D316-D318).
 
 ``build_request(plans, theme?, prompt?, line_type?, palette?, exclude?, max_blocks?, headroom?,
-design?, save?, site?)``, deep lane only (the architect's and the orchestrator's): designs a decorative
-shell around the saved plans' layout. Without ``design`` GOS's procedural generator draws it from
+design?, save?, site?, mode?, entrance?, zones?)``, deep lane only (the architect's and the
+orchestrator's): designs a decorative shell around the saved plans' layout. Without ``design`` GOS's procedural generator draws it from
 the theme; with ``design`` (a list of operations in the building vocabulary,
 :data:`gregtec.build.shell.OPS`) the model's own design is compiled to blocks by code. Either way
 code validates it (:func:`gregtec.build.shell.design`): a small breach of a keep-out, corridor,
@@ -18,6 +18,14 @@ build script that GOS runs in its own sandbox (:mod:`gregtec.build.sandbox`: a c
 no files, network, environment or world, under time, memory and cell limits; WO-10.12, Clayton's
 option B): it can only hand back cells, and every cell then goes through the same gate. Every
 number in a design is a coordinate the code checks.
+
+**Site mode** (WO-10.16, D422; every new design of the architect's, Clayton 2026-11-24): the
+building comes first, inside a SITE sized from the plans' machines, and GOS fits every machine
+into it afterwards (:func:`gregtec.build.fit.fit`), deterministically: the model never places
+one. Its answer may name the main door (``entrance``) and steering boxes (``zones``). A building
+the machines don't fit in is refused with the fit's reasons (no doorway, too little roofed air,
+no floor for a machine, no packing, no chase), and nothing of it is removed. GOS's procedural
+shell (no ``design``) stays layout-first unless ``mode`` site is asked.
 """
 
 from __future__ import annotations
@@ -34,7 +42,8 @@ from gregtec.packupdate.plans import PLAN_ID
 GATE = (
     "the shell gate (gregtec.build.shell.design: the palette rule on the catalog, nothing in a "
     "keep-out, corridor, chase, doorway or the layout's interior, inside the bounding volume, at "
-    "most max_blocks; "
+    "most max_blocks; in site mode the machines are fitted into the building by "
+    "gregtec.build.fit and nothing may stand in what they need; "
     "refused designs write nothing) and the build folder (GOS_HOME/data/build/shells/ only)"
 )
 COLUMNS = ("role", "block", "name", "count")
@@ -49,9 +58,12 @@ VOCABULARY = (
     shell_brief.OPERATIONS
     + " A script operation's script has this building API: "
     + shell_brief.SCRIPT_API
+    + " "
+    + shell_brief.SITE_API
     + " Leave design out for GOS's procedural shell: its operations come back in the "
     "result's ops note to start from (with save false, nothing is saved)."
 )
+MAX_HINT_TEXT = 4000  # characters of the entrance or the zones as JSON
 BUILD_REQUEST_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -120,6 +132,29 @@ BUILD_REQUEST_SCHEMA: dict[str, Any] = {
             "description": "where the build stands: {dim, x, z} (dimension, block x and z), "
             "for blank mode's themes used nearby",
         },
+        "mode": {
+            "type": "string",
+            "enum": list(shell_brief.MODES),
+            "description": "site (the default with a design): your building first, inside "
+            "the SITE the result states, and GOS fits the machines into it afterwards; layout: "
+            "the shell round the planner's rows of machines (the default without a design: "
+            "GOS's procedural shell)",
+        },
+        "entrance": {
+            "type": "string",
+            "maxLength": MAX_HINT_TEXT,
+            "description": 'site mode: your main door as JSON, {"side": "west", "at": [x, '
+            "z]}: a ground column of its opening (roofed, on the building's outer edge on "
+            "that side); leave out "
+            "for GOS to take the widest doorway",
+        },
+        "zones": {
+            "type": "string",
+            "maxLength": MAX_HINT_TEXT,
+            "description": 'site mode: at most 12 steering boxes as a JSON list, {"kind": '
+            '"open" or "machines", "lo": [x, y, z], "hi": [x, y, z]}: no machine in an open '
+            "zone (a foyer, a nave); with machines zones, the machines only inside them",
+        },
     },
     "required": ["plans"],
     "additionalProperties": False,
@@ -137,6 +172,47 @@ def _palette_lines(text: str) -> list[tuple[str, str]]:
                 f"a palette line is <role> <registry name>@<meta>, not {line!r}"
             )
         out.append((parts[0], parts[1]))
+    return out
+
+
+def _json_arg(args: dict[str, Any], key: str, kind: type, shape: str) -> Any:  # noqa: ANN401
+    """An argument given as JSON text (``entrance``, ``zones``), parsed; None when left out."""
+    if key not in args:
+        return None
+    try:
+        got = json.loads(args[key])
+    except ValueError as exc:
+        raise ToolError(f"{key} is not JSON: {exc}") from None
+    if not isinstance(got, kind):
+        raise ToolError(f"{key} is {shape}")
+    return got
+
+
+def _site_head(made: Any) -> list[tuple[str, object]]:  # noqa: ANN401 - shell_store.Made
+    """A site design's head lines (D422): the build mode, its SITE and NEED, how its machines
+    fit (the fit line) and the PROGRAM a design is sized for."""
+    from gregtec.build import shell_store
+
+    fit = made.fit
+    if not fit:
+        return []
+    lo, hi = fit["site"]["lo"], fit["site"]["hi"]
+    need = fit["need"]
+    out: list[tuple[str, object]] = [
+        ("build mode", "site: the building first, the machines fitted into it"),
+        ("site", f"lo {lo} hi {hi}"),
+        (
+            "need",
+            (
+                f"roofed air {need['required']} up to {need['cap_height']} high; a doorway "
+                f"{need['door_height']} high; a ceiling {need['aisle_height']} high over "
+                "open floor"
+            ),
+        ),
+    ]
+    if (line := shell_store.fit_line(fit)) is not None:
+        out.append(("fit", line))
+    out.append(("program", json.dumps(list(made.spec.program), separators=(",", ":"))))
     return out
 
 
@@ -158,6 +234,11 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
             raise ToolError(f"design is not JSON: {exc}") from None
         if not isinstance(design, list):
             raise ToolError("design is a JSON list of operations")
+    mode = args.get("mode") or ("site" if design is not None else "layout")
+    entrance = _json_arg(args, "entrance", dict, "a JSON object {side, at}")
+    zones = _json_arg(args, "zones", list, "a JSON list of {kind, lo, hi}")
+    if mode != "site" and (entrance is not None or zones):
+        raise ToolError("entrance and zones are for a site design (mode site)")
     site = None
     if "site" in args:
         got = args["site"]
@@ -183,6 +264,9 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
             ops=design,
             site=site,
             save_it=args.get("save", True),
+            mode=mode,
+            entrance=entrance,
+            zones=zones or (),
         )
     except (shell.ShellError, palette.CatalogError) as exc:
         raise ToolError(f"no shell: {exc}") from None
@@ -213,6 +297,7 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
         ("source", out.source),
         ("theme", rec.get("theme") or "none"),
         ("mode", rec["mode"]),
+        *_site_head(made),
         ("layout", rec["layout"]),
         ("bounds", f"lo {b['lo']} hi {b['hi']} ({sx} x {sz}, {sy} high)"),
         ("wall_top", rec["wall_top"]),
@@ -402,6 +487,10 @@ def build_revise(call: Call, args: dict[str, Any], offset: int) -> Result:
         ("blocks", f"{rec['blocks']} of max {rec['max_blocks']}"),
         ("headroom", rec["headroom"]),
     ]
+    if isinstance(rec.get("fit"), dict) and (
+        line := shell_store.fit_line(rec["fit"])
+    ):  # a site build's (D422): how its machines fit the revised building
+        head.append(("fit", line))
     head += [("repaired", r) for r in got.outcome.repairs]
     rows = [(c,) for c in got.changes]
     say = (

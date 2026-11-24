@@ -1085,7 +1085,8 @@ def test_build_request_designs_validates_and_refuses(reg: Any, home: Path) -> No
     assert ops[0]["op"] == "walls"
     # the architect's own design, built from the baseline: accepted
     mine = [*ops[:-1], {"op": "pillars", "role": "pillar", "every": 4}, ops[-1]]
-    got = ask(reg, design=mine)
+    # mode layout: the layout-first gate (a design is a site design by default, D422)
+    got = ask(reg, design=mine, mode="layout")
     assert (
         not got.is_error
         and "source: architect" in got.text
@@ -1094,7 +1095,7 @@ def test_build_request_designs_validates_and_refuses(reg: Any, home: Path) -> No
     # a tile-entity block: refused, nothing written
     before = sorted(p.name for p in (home / shell_store.ROOT).iterdir())
     te = [*ops, {"op": "fill", "block": CHEST, "lo": [-1, 0, -1], "hi": [-1, 0, -1]}]
-    bad = ask(reg, design=te)
+    bad = ask(reg, design=te, mode="layout")
     assert bad.is_error and "refused" in bad.text and "has a tile entity" in bad.text
     assert sorted(p.name for p in (home / shell_store.ROOT).iterdir()) == before
     # a breach: repaired and said
@@ -1111,11 +1112,11 @@ def test_build_request_designs_validates_and_refuses(reg: Any, home: Path) -> No
             "hi": [k["lo"][0], 1, k["lo"][2]],
         },
     ]
-    fixed = ask(reg, design=breach)
+    fixed = ask(reg, design=breach, mode="layout")
     assert not fixed.is_error and "status: repaired" in fixed.text
     assert "inside keepout" in fixed.text
     # too many blocks: refused
-    small = ask(reg, design=ops, max_blocks=10)
+    small = ask(reg, design=ops, max_blocks=10, mode="layout")
     assert small.is_error and "more than max_blocks" in small.text
     for args, why in [
         ({"design": "not json"}, "design is not JSON"),
@@ -1125,6 +1126,67 @@ def test_build_request_designs_validates_and_refuses(reg: Any, home: Path) -> No
         out = reg.call("build_request", {"plans": "pl-steel", **args}, lane=DEEP)
         assert out.is_error and why in out.text, out.text
     assert reg.call("build_request", {"plans": "pl-steel"}, lane=FAST).is_error
+
+
+def site_facts(conn: sqlite3.Connection) -> dict[str, Any]:
+    """The facts a site brief gives for pl-steel (what the fakes build from)."""
+    from gregtec.build import fit
+
+    prog = layout.program(conn, [lay_tests.production()])
+    box = shell.site_of(prog)
+    roles = ("wall", "roof", "window", "pillar")
+    return {
+        "mode": "site",
+        "site": box.to_json(),
+        "need": fit.need(prog, layout.Options()),
+        "palette": [{"role": r, "block": "x"} for r in roles],
+    }
+
+
+def test_build_request_a_site_design_is_fitted_and_says_how(
+    reg: Any,  # noqa: ANN401
+    home: Path,
+) -> None:
+    """D422: a design is a site design by default; the machines are fitted into it, the head
+    carries SITE, NEED, PROGRAM and the fit line; entrance and zones steer it."""
+    from gregtec.build import shell_fakes
+
+    look = ask(reg, save=False, mode="site")  # the procedural building, a look
+    assert not look.is_error, look.text
+    assert "build mode: site" in look.text and "program: [" in look.text
+    assert "fit: 8 machines fitted in the building" in look.text
+    assert not (home / shell_store.ROOT).exists()
+    c = access.connect(access.db_path(home), readonly=True)
+    try:
+        facts = site_facts(c)
+    finally:
+        c.close()
+    ops = shell_fakes.site_plain(facts)
+    got = ask(reg, design=ops)
+    assert not got.is_error and "status: accepted" in got.text, got.text
+    assert "entrance auto" in got.text and "source: architect" in got.text
+    build = next(x for x in got.text.splitlines() if x.startswith("build: "))[7:]
+    assert shell_store.site_mode(shell_store.load(home, build))
+    door = ops[-1]  # the clear in the hall's west wall
+    at = [door["lo"][0], door["lo"][2] + 1]
+    hinted = ask(reg, design=ops, entrance=json.dumps({"side": "west", "at": at}))
+    assert not hinted.is_error and "entrance answer" in hinted.text, hinted.text
+    wrong = ask(reg, design=ops, entrance=json.dumps({"side": "east", "at": at}))
+    assert wrong.is_error and "not on the building's east edge" in wrong.text
+    assert "nothing was written" in wrong.text
+    out = json.dumps([{"kind": "open", "lo": [-5, 0, 0], "hi": [2, 2, 2]}])
+    zoned = ask(reg, design=ops, zones=out)
+    assert zoned.is_error and "not inside the site" in zoned.text
+    cramped = ask(reg, design=shell_fakes.site_plain(facts, shell_fakes.CRAMPED_ROOM))
+    assert cramped.is_error and "the roofed floor holds" in cramped.text
+    for args, why in [
+        ({"design": json.dumps(ops), "entrance": "{"}, "entrance is not JSON"),
+        ({"design": json.dumps(ops), "zones": "{}"}, "zones is a JSON list"),
+        ({"entrance": json.dumps({"side": "west", "at": at})}, "for a site design"),
+        ({"zones": out, "mode": "layout"}, "for a site design"),
+    ]:
+        bad = reg.call("build_request", {"plans": "pl-steel", **args}, lane=DEEP)
+        assert bad.is_error and why in bad.text, (why, bad.text)
 
 
 # --- the API --------------------------------------------------------------------------------

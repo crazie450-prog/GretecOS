@@ -16,6 +16,12 @@ records: passed on the first try, repair rounds, why refused, blocks, palette en
 follow-up's deterministic checks (:func:`gregtec.build.shell_eval.check` and ``kept``), seconds,
 tokens and cost.
 
+**Site mode** (WO-10.16, D422): a case of the table is a site case unless its ``mode`` column
+says layout (a run saved before has no mode and reads as layout). Its brief and answer are
+v6's (:mod:`gregtec.build.shell_brief`), its design goes through ``make(mode="site")``, and the
+report adds the fit's columns: fit ok, rounds to fit, placed of all, spare air, who chose the
+door, and the service runs' length.
+
 **Where it is kept.** ``GOS_HOME/data/bakeoff/<run-id>/``: ``run.json`` (everything above, the
 seed, the ratings) and, per case and per **blind label**, a small GOS_HOME of its own
 (``entries/<case>/<A|B|...>/data/build/...``) holding that answer's shell builds and its design
@@ -64,7 +70,7 @@ import time
 import tomllib
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -107,9 +113,12 @@ COLUMNS = (
 )
 # optional last columns, in this order: the case's headroom and relief ("default" or a number;
 # WO-10.13, D386) and its own palette ("role registry@meta, ..." for a case without a theme, or
-# extra entries for one with a theme; WO-10.14, D387)
+# extra entries for one with a theme; WO-10.14, D387), the layout planner's options (D389) and
+# the case's mode (site, the default, or layout; D422)
 HEADROOM_COLUMN = "headroom"
-OPTIONAL = ("headroom", "relief", "palette", "layout")
+OPTIONAL = ("headroom", "relief", "palette", "layout", "mode")
+MODES = shell_brief.MODES
+NEW_MODE = "site"  # a case table's default (D422: every new AI design is a site design)
 LINES = ("small", "large")
 RUN_ID = re.compile(r"bo-\d{8}-\d{6}-[0-9a-f]{4}")
 CASE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
@@ -214,7 +223,7 @@ class ModelSpec:
         )
 
 
-FAKES = {n: ModelSpec(n, shell_fakes.PROVIDER, n) for n in shell_fakes.NAMES}
+FAKES = {n: ModelSpec(n, shell_fakes.PROVIDER, n) for n in shell_fakes.ALL}
 _MODEL_KEYS = frozenset(
     {
         "label",
@@ -409,9 +418,25 @@ class Case:
     # the layout planner's options for this case ("max_run=24 spacing=2 band_gap=4", D389): how
     # the machines are arranged, so the cases don't all wrap the same rows
     layout: tuple[str, ...] = ()
+    # site: the building first, the machines fitted into it (D422; a case table's default);
+    # layout: the shell round the planner's layout (every run saved before D422)
+    mode: str = "layout"
 
     def layout_options(self) -> layout_lib.Options:
-        return layout_lib.Options.parse(self.layout)
+        return case_options(self.layout, self.mode)
+
+
+# The layout options that arrange the planner's rows (D389): a site case's building arranges
+# its machines itself, so they stay at their defaults there (D422)
+ARRANGEMENT = ("max_run", "spacing", "band_gap")
+
+
+def case_options(layout: Sequence[str], mode: str) -> layout_lib.Options:
+    """A case's layout options (its ``layout`` column) for its mode."""
+    opts = layout_lib.Options.parse(layout)
+    if mode != "site":
+        return opts
+    return replace(opts, **{k: layout_lib.LIMITS[k][0] for k in ARRANGEMENT})
 
 
 def load_cases(path: Path = CASES) -> list[Case]:
@@ -453,6 +478,9 @@ def load_cases(path: Path = CASES) -> list[Case]:
             layout_lib.Options.parse(arrangement)
         except layout_lib.LayoutError as exc:
             raise BakeoffError(f"{where}: layout: {exc}") from None
+        mode = r.get("mode") or NEW_MODE
+        if mode not in MODES:
+            raise BakeoffError(f"{where}: mode is {' or '.join(MODES)}")
         if not CASE_ID.fullmatch(r["id"]):
             raise BakeoffError(f"{where}: {r['id']!r} is not a case id (a-z, 0-9, -)")
         if r["line"] not in LINES:
@@ -491,6 +519,7 @@ def load_cases(path: Path = CASES) -> list[Case]:
                 sizes["relief"],
                 tuple(own),
                 arrangement,
+                mode,
             )
         )
     if not out or len(out) > MAX_CASES:
@@ -520,7 +549,8 @@ def _preview(
     max_blocks: int | None,
 ) -> shell_store.Made:
     """GOS's own procedural shell for the case, never saved: its record gives the sizes, the
-    palette and the doorways every model's brief states."""
+    palette and the doorways every model's brief states (a site case's: the procedural building
+    with the machines fitted, whose SITE and NEED the brief states)."""
     return shell_store.make(
         conn,
         home,
@@ -535,7 +565,13 @@ def _preview(
         extra=case.palette,
         layout_options=case.layout_options(),
         save_it=False,
+        mode=case.mode,
     )
+
+
+def _fit_refused(made: shell_store.Made) -> bool:
+    """A site design refused by the fit itself (its palette and size passed)."""
+    return made.spec.mode == "site" and "fit" in (made.fit or {})
 
 
 def prepare(
@@ -554,12 +590,22 @@ def prepare(
             raise BakeoffError(f"case {case.id} needs the {case.line} line's plans")
         try:
             loaded = [plan_store.load(home, pid) for pid in ids]
-            lay = layout_lib.plan_layout(conn, loaded, case.layout_options())
+            opts = case.layout_options()
+            if case.mode == "site":  # the brief states the program, never a layout
+                lay = layout_lib.program(conn, loaded).to_json(opts)
+            else:
+                lay = layout_lib.plan_layout(conn, loaded, opts)
 
             made = _preview(conn, home, vault, case, ids, None)
-            if not made.outcome.ok:
+            if made.outcome.ok:
+                baseline = len(made.outcome.cells)
+            elif _fit_refused(made):
+                # a site case's procedural building whose machines didn't pack: its SITE,
+                # NEED and palette are still what the brief states, and its blocks the
+                # baseline (the fitter's limits are the models' to work round, D422)
+                baseline = len(shell.compile_ops(made.spec, made.ops).cells)
+            else:
                 raise BakeoffError(" | ".join(made.outcome.reasons))
-            baseline = len(made.outcome.cells)
             if case.max_blocks != "default":
                 # the record's sizes are what the brief states; the gate judges each answer
                 limit = (
@@ -598,12 +644,15 @@ def _bound(text: str) -> int:
 # What a request holds beside the two texts, as a bound in tokens: the schema (both vendors
 # hand it to the model as input) and the messages' framing.
 OVERHEAD = _bound(json.dumps(shell_brief.SCHEMA)) + 1_000
+OVERHEADS = {m: _bound(json.dumps(shell_brief.schema(m))) + 1_000 for m in MODES}
 
 
-def _most(system: str, model: ModelSpec, user: str) -> tuple[float, int]:
+def _most(
+    system: str, model: ModelSpec, user: str, mode: str = "layout"
+) -> tuple[float, int]:
     """The most one try of a call can cost: (USD, tokens). Its input counted as one token a
-    byte plus :data:`OVERHEAD`, the whole output limit, the dearest input rate."""
-    tokens_in = _bound(system) + _bound(user) + OVERHEAD
+    byte plus the mode's :data:`OVERHEADS`, the whole output limit, the dearest input rate."""
+    tokens_in = _bound(system) + _bound(user) + OVERHEADS[mode]
     tokens_out = shell_brief.MAX_OUTPUT_TOKENS
     p = model.price
     if p is None:
@@ -618,12 +667,13 @@ def first_call(
     """What the caps must at least allow for the run to get an answer from every model: the
     most the first case's design can cost for the dearest priced model (USD) and the most
     tokens it can take for a model without a price. A run with less would stop at once."""
-    system = shell_brief.system_prompt()
+    first = prepared[0]
+    system = shell_brief.system_prompt(first.case.mode)
     usd, tokens = 0.0, 0
     for m in models:
         if m.fake:
             continue
-        one_usd, one_tokens = _most(system, m, prepared[0].brief)
+        one_usd, one_tokens = _most(system, m, first.brief, first.case.mode)
         if m.price is None:
             tokens = max(tokens, one_tokens)
         else:
@@ -650,16 +700,24 @@ def estimate(
     the prices. "Likely" assumes every answer passes first time and uses a quarter of the
     output limit; "worst case" every repair round and the whole limit. ``lowered`` (why the
     cap is less than he asked for) is said just before the cap it explains."""
-    system = shell_brief.system_prompt()
+    systems = {
+        m: shell_brief.system_prompt(m)
+        for m in dict.fromkeys(p.case.mode for p in prepared)
+    }
     steps = 2 * len(prepared)
     most = steps * (1 + REPAIR_ROUNDS)
     in_typical = sum(
-        2 * (len(system) + len(p.brief)) // 3 for p in prepared
+        2 * (len(systems[p.case.mode]) + len(p.brief)) // 3 for p in prepared
     )  # characters / 3: a generous count of tokens
     in_worst = sum(
         2
         * (1 + REPAIR_ROUNDS)
-        * (_bound(system) + _bound(p.brief) + shell_brief.MAX_ECHO + OVERHEAD)
+        * (
+            _bound(systems[p.case.mode])
+            + _bound(p.brief)
+            + shell_brief.MAX_ECHO
+            + OVERHEADS[p.case.mode]
+        )
         for p in prepared
     )
     out_limit = shell_brief.MAX_OUTPUT_TOKENS
@@ -673,9 +731,11 @@ def estimate(
             f"Each call: at most {out_limit} output tokens (thinking included); the briefs are "
             f"about {in_typical // max(1, steps)} tokens each."
         ),
-        (
-            f"Designer prompt v{shell_brief.PROMPT_VERSION}: {len(system):,} characters, sent "
-            "with every call."
+        *(
+            f"Designer prompt v{shell_brief.PROMPT_VERSIONS[m]}"
+            + (f" ({m} mode)" if m != "layout" else "")
+            + f": {len(text):,} characters, sent with every call."
+            for m, text in systems.items()
         ),
     ]
     worst = 0.0
@@ -894,7 +954,11 @@ def create(
         "repair_rounds": REPAIR_ROUNDS,
         "max_output_tokens": shell_brief.MAX_OUTPUT_TOKENS,
         # the designer's instructions this run sent (WO-10.12): a run without it used version 1
-        "prompt": prompt_record(),
+        "prompt": prompt_record(prepared[0].case.mode if prepared else "layout"),
+        # every mode's (D422: a run's cases may be site or layout designs)
+        "prompts": {
+            m: prompt_record(m) for m in dict.fromkeys(p.case.mode for p in prepared)
+        },
         "caps": {"usd": cap_usd, "tokens": cap_tokens},
         "spent": {"usd": 0.0, "unpriced_tokens": 0, "calls": 0},
         # calls that broke off after they were sent: no usage reported, maybe billed
@@ -911,6 +975,7 @@ def create(
                 "relief": p.case.relief,
                 "palette": [list(e) for e in p.case.palette],
                 "layout": list(p.case.layout),
+                "mode": p.case.mode,
                 "baseline_blocks": p.baseline,
                 "brief": p.case.brief,
                 "followup": p.case.followup,
@@ -985,6 +1050,9 @@ class _Step:
     types: int | None = None
     tokens: Usage | None = None
     reasoning: int = 0
+    # a site design's fit (D422), as its last answer left it: fit_ok, placed, of, spare_pct,
+    # entrance_from, service_len (None for a layout design)
+    fit: dict[str, Any] | None = None
 
     def add(self, usage: Usage, usd: float | None, reasoning: int) -> None:
         if self.tokens is None:
@@ -1020,7 +1088,57 @@ class _Step:
                 "reasoning": self.reasoning,
             },
             "usd": None if self.usd is None else round(self.usd, 6),
+            **(
+                {}
+                if self.fit is None
+                else {
+                    "fit": {
+                        **self.fit,
+                        "rounds_to_fit": self.rounds
+                        if self.build is not None
+                        else None,
+                    }
+                }
+            ),
         }
+
+
+def fit_score(made: shell_store.Made) -> dict[str, Any]:
+    """A site design's score columns (D422 §2.8) from what the gate made of it: whether its
+    machines fit, how many of them, the spare air, who chose the door and the service runs'
+    length (the Manhattan sum of every service's ends; informational only)."""
+    st = (made.fit or {}).get("fit") or {}
+    service_len = None
+    if made.saved is not None:
+        lay = json.loads((made.saved / "layout.json").read_text(encoding="utf-8"))
+        service_len = service_length(lay)
+    return {
+        "fit_ok": made.outcome.ok,
+        "placed": st.get("placed"),
+        "of": st.get("of"),
+        "spare_pct": st.get("spare_pct"),
+        "entrance_from": st.get("entrance_from"),
+        "service_len": service_len,
+    }
+
+
+def service_length(lay: Mapping[str, Any]) -> int:
+    """The Manhattan length (x and z) of a layout's services: for every service, every pair of
+    its ends (machines, the entrance), between their boxes' centres."""
+    at: dict[str, tuple[int, int]] = {}
+    for key in ("placements", "entrances"):
+        for v in lay.get(key, []):
+            at[str(v["id"])] = (
+                (v["lo"][0] + v["hi"][0]) // 2,
+                (v["lo"][2] + v["hi"][2]) // 2,
+            )
+    total = 0
+    for svc in lay.get("services", []):
+        for a in svc.get("from", []):
+            for b in svc.get("to", []):
+                if a in at and b in at:
+                    total += abs(at[a][0] - at[b][0]) + abs(at[a][1] - at[b][1])
+    return total
 
 
 Say = Callable[[str], None]
@@ -1079,6 +1197,7 @@ class Runner:
 
     def __post_init__(self) -> None:
         self.models = {m["label"]: ModelSpec.from_json(m) for m in self.run["models"]}
+        self.mode = "layout"  # the case in hand's (D422; set per case by _one)
         self.system = shell_brief.system_prompt()
         self.beside = False  # said once: the record is being kept beside run.json
 
@@ -1109,7 +1228,7 @@ class Runner:
     # -- one call, inside the caps ------------------------------------------------------------
 
     def _most(self, model: ModelSpec, user: str) -> tuple[float, int]:
-        return _most(self.system, model, user)
+        return _most(self.system, model, user, self.mode)
 
     def _guard(self, model: ModelSpec, user: str) -> None:
         """Asked before every try, a retry too: Cancel, the record (saved, so the run is seen
@@ -1163,7 +1282,7 @@ class Runner:
                 _Capped(self, model, self.designers[model.label]),
                 self.system,
                 user,
-                shell_brief.SCHEMA,
+                shell_brief.schema(self.mode),
                 shell_brief.MAX_OUTPUT_TOKENS,
                 sleep=self.sleep,
             )
@@ -1213,11 +1332,12 @@ class Runner:
         self,
         model: ModelSpec,
         brief: str,
-        gate: Callable[[list[dict[str, Any]]], str | None],
+        gate: Callable[[shell_brief.Answer], str | None],
         step: _Step,
     ) -> None:
-        """The first answer and at most REPAIR_ROUNDS more, each through ``gate`` (which saves
-        an accepted design and returns None, or says why it refused)."""
+        """The first answer and at most REPAIR_ROUNDS more, each read for the case's mode and
+        through ``gate`` (which saves an accepted design and returns None, or says why it
+        refused)."""
         user = brief
         for attempt in range(REPAIR_ROUNDS + 1):
             step.rounds = attempt
@@ -1235,11 +1355,11 @@ class Runner:
                 )
             else:
                 try:
-                    ops = shell_brief.parse(got.text)
+                    said = shell_brief.read(got.text, self.mode)
                 except shell_brief.BriefError as exc:
                     why = str(exc)
                 else:
-                    refused = gate(ops)
+                    refused = gate(said)
                     if refused is None:
                         return
                     why = refused
@@ -1254,7 +1374,7 @@ class Runner:
         step = _Step()
         design: list[str] = []
 
-        def gate(ops: list[dict[str, Any]]) -> str | None:
+        def gate(said: shell_brief.Answer) -> str | None:
             try:
                 made = shell_store.make(
                     self.conn,
@@ -1268,11 +1388,16 @@ class Runner:
                     headroom=case.get("headroom"),
                     relief=case.get("relief"),
                     extra=[tuple(e) for e in case.get("palette") or ()],
-                    layout_options=layout_lib.Options.parse(case.get("layout") or ()),
-                    ops=ops,
+                    layout_options=case_options(case.get("layout") or (), self.mode),
+                    ops=said.ops,
+                    mode=self.mode,
+                    entrance=said.entrance,
+                    zones=said.zones,
                 )
             except (shell.ShellError, palette.CatalogError) as exc:
                 return f"no shell: {exc}"
+            if self.mode == "site":
+                step.fit = fit_score(made)
             if not made.outcome.ok:
                 return " | ".join(made.outcome.reasons)
             d = versions.start(
@@ -1301,13 +1426,19 @@ class Runner:
         step = _Step()
         first = versions.get(where, ds)["current"]
         old = shell_store.load(where, first)
-        lay = versions._layout_of(where, first)
+        lay = (
+            json.loads(
+                (shell_store.folder(where, first) / "program.json").read_text("utf-8")
+            )
+            if shell_store.site_mode(old)
+            else versions._layout_of(where, first)
+        )
         brief = shell_brief.revise_brief(
             old, lay, shell_brief.names_of(self.conn, old), case["followup"]
         )
         checks = {"asked": "-", "kept": "-", "why": ""}
 
-        def gate(ops: list[dict[str, Any]]) -> str | None:
+        def gate(said: shell_brief.Answer) -> str | None:
             try:
                 got = versions.revise(
                     self.conn,
@@ -1315,7 +1446,7 @@ class Runner:
                     self.vault,
                     ds,
                     case["followup"],
-                    ops=ops,
+                    ops=said.ops,
                     by="architect",
                     asked=case["followup"],
                 )
@@ -1349,6 +1480,8 @@ class Runner:
         self, case: Mapping[str, Any], spec: Prepared, label: str, letter: str
     ) -> None:
         model = self.models[label]
+        self.mode = case.get("mode") or "layout"  # a run saved before D422: layout
+        self.system = shell_brief.system_prompt(self.mode)
         where = entry_home(self.home, self.run["id"], case["id"], letter)
         result: dict[str, Any] = {
             "case": case["id"],
@@ -1539,23 +1672,33 @@ def summary(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def prompt_record() -> dict[str, Any]:
-    """Which designer instructions a run sends: their version and a hash of the system text
-    (so a change that forgot to bump the version still shows)."""
-    text = shell_brief.system_prompt()
+def prompt_record(mode: str = "layout") -> dict[str, Any]:
+    """Which designer instructions a run sends for a mode's cases: their version and a hash of
+    the system text (so a change that forgot to bump the version still shows)."""
+    text = shell_brief.system_prompt(mode)
     return {
-        "version": shell_brief.PROMPT_VERSION,
+        "version": shell_brief.PROMPT_VERSIONS[mode],
         "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:12],
         "chars": len(text),
+        "mode": mode,
     }
 
 
 def prompt_label(run: Mapping[str, Any]) -> str:
-    """``v2 (sha 1a2b3c4d5e6f)``; a run from before the version was recorded is v1."""
+    """``v2 (sha 1a2b3c4d5e6f)``; a run from before the version was recorded is v1. A run with
+    site and layout cases (D422) names both."""
     p = run.get("prompt")
     if not isinstance(p, Mapping):
         return "v1 (recorded before WO-10.12: the op vocabulary only)"
-    return f"v{p.get('version')} (sha {p.get('sha256')})"
+    out = [f"v{p.get('version')} (sha {p.get('sha256')})"]
+    others = run.get("prompts")
+    if isinstance(others, Mapping) and len(others) > 1:
+        out = [
+            f"v{r.get('version')} {m} (sha {r.get('sha256')})"
+            for m, r in others.items()
+            if isinstance(r, Mapping)
+        ]
+    return "; ".join(out)
 
 
 def blind(run: Mapping[str, Any]) -> dict[str, Any]:
@@ -1718,6 +1861,26 @@ COLS = (
     "cost",
     "seconds",
 )
+# A run with site cases (D422 §2.8) adds the fit's columns: designs whose machines fit, the
+# mean repair rounds it took them, machines placed of all asked, the mean spare air, who
+# chose the door, and the mean length of the service runs (informational only).
+SITE_COLS = (
+    "fit ok",
+    "rounds to fit",
+    "placed",
+    "spare %",
+    "entrance",
+    "service len",
+)
+
+
+def site_run(run: Mapping[str, Any]) -> bool:
+    """Whether a run has a site case (D422; a case saved without a mode is layout)."""
+    return any(c.get("mode") == "site" for c in run["cases"])
+
+
+def columns(run: Mapping[str, Any]) -> tuple[str, ...]:
+    return COLS + SITE_COLS if site_run(run) else COLS
 
 
 def _mean(values: Sequence[float]) -> str:
@@ -1752,6 +1915,7 @@ def _stats(run: Mapping[str, Any]) -> list[dict[str, Any]]:
         for s in steps:
             usd = None if usd is None or s["usd"] is None else usd + s["usd"]
         checks = [r["checks"] for r in mine if r["checks"]]
+        fits = [r["design"]["fit"] for r in mine if r["design"].get("fit")]
         rows.append(
             {
                 "label": label,
@@ -1782,6 +1946,7 @@ def _stats(run: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "usd": usd,
                 "fake": m["provider"] == shell_fakes.PROVIDER,
                 "seconds": sum(s["seconds"] for s in steps),
+                "fits": fits,
             }
         )
     rows.sort(
@@ -1803,7 +1968,27 @@ def _cost_text(s: Mapping[str, Any]) -> str:
     return "unknown (no price)" if s["usd"] is None else f"${s['usd']:.2f}"
 
 
-def _table(stats: Sequence[Mapping[str, Any]]) -> list[list[str]]:
+def _fit_cells(fits: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The SITE_COLS of one model's site designs."""
+    done = [f for f in fits if f.get("fit_ok")]
+    doors: dict[str, int] = {}
+    for f in done:
+        doors[str(f.get("entrance_from"))] = (
+            doors.get(str(f.get("entrance_from")), 0) + 1
+        )
+    return [
+        f"{len(done)} of {len(fits)}",
+        _mean([float(f["rounds_to_fit"]) for f in done]),
+        f"{sum(f.get('placed') or 0 for f in fits)} of {sum(f.get('of') or 0 for f in fits)}",
+        _mean([float(f["spare_pct"]) for f in done if f.get("spare_pct") is not None]),
+        ", ".join(f"{k} {n}" for k, n in sorted(doors.items())) or "-",
+        _mean(
+            [float(f["service_len"]) for f in done if f.get("service_len") is not None]
+        ),
+    ]
+
+
+def _table(stats: Sequence[Mapping[str, Any]], site: bool = False) -> list[list[str]]:
     return [
         [
             s["label"],
@@ -1821,6 +2006,7 @@ def _table(stats: Sequence[Mapping[str, Any]]) -> list[list[str]]:
             f"{s['in']:,} / {s['out']:,}",
             _cost_text(s),
             f"{s['seconds']:.0f}",
+            *(_fit_cells(s["fits"]) if site else []),
         ]
         for s in stats
     ]
@@ -1852,7 +2038,8 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
         run["revealed"] = round(time.time(), 3)
         run["reveal_unrated"] = bool(left)
     stats = _stats(run)
-    rows = _table(stats)
+    rows = _table(stats, site_run(run))
+    cols = columns(run)
     notes = [f"Order: {ORDER}.", FEW]
     if run["status"] != DONE:
         notes.append(
@@ -1888,7 +2075,7 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
             "error": None,
             "title": f"Shell bake-off {run['id']}: the models, named",
             "head": [{"key": k, "value": v} for k, v in head],
-            "columns": list(COLS),
+            "columns": list(cols),
             "rows": rows[:50],
             "span": None,
             "total": len(rows),
@@ -1897,7 +2084,7 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
     )
     lines = [f"# Shell bake-off {run['id']}", ""]
     lines += [f"- {k}: {v}" for k, v in head]
-    lines += ["", "| " + " | ".join(COLS) + " |", "|" + "---|" * len(COLS)]
+    lines += ["", "| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     lines += ["| " + " | ".join(r) + " |" for r in rows]
     lines += ["", *[f"- {n}" for n in notes], "", "## Per case", ""]
     lines += [
@@ -1970,9 +2157,14 @@ def broken_off(run: Mapping[str, Any]) -> str:
 def _step_text(step: Mapping[str, Any] | None) -> str:
     if not step:
         return "-"
+    fit = step.get("fit") or {}
+    placed = f", fit {fit['placed']} of {fit['of']}" if fit.get("of") else ""
     if not step["ok"]:
-        return "no design" if step["calls"] else "not asked"
-    return f"{step['blocks']} blocks, {step['repair_rounds']} repair round(s)"
+        return ("no design" if step["calls"] else "not asked") + placed
+    spare = f", {fit['spare_pct']}% spare" if fit.get("spare_pct") is not None else ""
+    return f"{step['blocks']} blocks, {step['repair_rounds']} repair round(s)" + (
+        placed + spare
+    )
 
 
 def card_of(home: Path, run: Mapping[str, Any]) -> dict[str, Any] | None:

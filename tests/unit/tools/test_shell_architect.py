@@ -89,6 +89,7 @@ class Architect:
                 "theme": "th-foundry",
                 "line_type": "smelting",
                 "design": json.dumps(self.cases[case]),
+                "mode": "layout",  # these designs are the layout-first gate's (D422)
             }
             if case == "too-many":
                 args["max_blocks"] = 50

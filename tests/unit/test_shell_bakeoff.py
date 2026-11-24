@@ -3132,3 +3132,206 @@ def test_no_test_here_can_reach_another_host(outside: list[str]) -> None:
         )
     assert got.value.kind == llm.NETWORK and len(outside) >= before + 2
     assert all(host not in LOCAL for host in outside)
+
+
+# --- site mode (WO-10.16, D422): the v6 seam, the fakes, the run ----------------------------
+
+
+def site_case(**changes: Any) -> bo.Case:  # noqa: ANN401
+    return one_case(mode="site", **changes)
+
+
+def test_the_site_schema_keeps_both_vendors_strict_rules() -> None:
+    site = shell_brief.schema("site")
+    assert shell_brief.schema("layout") is shell_brief.SCHEMA  # layout: unchanged
+    assert site is shell_brief.SITE_SCHEMA and site["type"] == "object"
+    found = list(_objects(site))
+    assert len(found) == 4  # the answer, an op, the entrance, a zone
+    for obj in found:  # every object: no extra keys, every property required
+        assert obj["additionalProperties"] is False
+        assert set(obj["required"]) == set(obj["properties"])
+    text = json.dumps(site)
+    for word in ("minimum", "maximum", "minItems", "maxItems", "$ref", "pattern"):
+        assert word not in text
+    assert site["required"] == ["script", "ops", "entrance", "zones"]
+    assert site["properties"]["ops"] == shell_brief.SCHEMA["properties"]["ops"]
+    # the entrance is the one more union; zones is a list that may be empty
+    assert _unions({"properties": {"root": site}}) == (
+        _unions({"properties": {"root": shell_brief.SCHEMA}}) + 1
+    )
+    assert _unions({"properties": {"root": site}}) <= shell_brief.MAX_UNIONS
+    assert "anyOf" not in site["properties"]["zones"]
+    with pytest.raises(ValueError):
+        shell_brief.schema("rows")
+
+
+def test_a_site_answer_is_read_with_its_entrance_and_zones() -> None:
+    zone = {"kind": "open", "lo": [1, 0, 1], "hi": [4, 5, 4]}
+    door = {"side": "west", "at": [0, 7]}
+    text = json.dumps({"script": "", "ops": [], "entrance": door, "zones": [zone]})
+    got = shell_brief.read(text, "site")
+    assert got == shell_brief.Answer([], door, (zone,))
+    # the schema's own "none": null and []; and both may be left out
+    none = shell_brief.read('{"ops": [], "entrance": null, "zones": []}', "site")
+    assert none.entrance is None and none.zones == ()
+    assert shell_brief.read('{"ops": []}', "site") == shell_brief.Answer([])
+    # a layout answer takes neither, as before (and parse is the layout read)
+    with pytest.raises(shell_brief.BriefError, match="one JSON object"):
+        shell_brief.read(text, "layout")
+    with pytest.raises(shell_brief.BriefError, match="one JSON object"):
+        shell_brief.parse(text)
+    for bad, why in [
+        ('{"ops": [], "note": 1}', "one JSON object"),
+        ('{"ops": [], "entrance": "west"}', "entrance is null or"),
+        ('{"ops": [], "entrance": {"side": "west"}}', "entrance is null or"),
+        ('{"ops": [], "zones": {}}', "zones is a list"),
+        ('{"ops": [], "zones": [{"kind": "open"}]}', "zones is a list"),
+    ]:
+        with pytest.raises(shell_brief.BriefError, match=why):
+            shell_brief.read(bad, "site")
+    # what the fakes answer: the schema's shape
+    said = json.loads(
+        shell_brief.answer([{"op": "clear", "lo": [0] * 3, "hi": [0] * 3}], None, [])
+    )
+    assert said == {
+        "script": "",
+        "ops": [{"op": "clear", "lo": [0] * 3, "hi": [0] * 3}],
+        "entrance": None,
+        "zones": [],
+    }
+    assert set(json.loads(shell_brief.answer([]))) == {"script", "ops"}
+
+
+def test_the_site_brief_states_site_need_program_and_services_never_a_machine_box(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    vault = VaultIO(home / "vault")
+    small, large = bo.prepare(
+        conn, home, vault, [site_case(), site_case(id="c2", line="large")], PLANS
+    )
+    text = small.brief
+    assert text.startswith("Design the shell for this request.\n<request>")
+    facts = shell_fakes._line(text, "facts: ")
+    assert facts["mode"] == "site" and facts["doorways"] == []
+    assert facts["site"]["lo"] == [0, 0, 0] and facts["buffer"] == 25
+    need = facts["need"]
+    assert f"NEED: roofed air of at least {need['required']} blocks" in text
+    assert f"counted up to {need['cap_height']} high" in text
+    assert "SITE: lo [0, 0, 0] hi " in text
+    assert "PROGRAM (each machine's keep-out" in text
+    assert "- 5x5 floor, 5 high: 1 of them (Machine 9003): m1" in text
+    assert "Services (what GOS runs" in text and " -> " in text
+    for layout_only in ("Keep-outs", "Corridors", "Chases", "Doorways", "Entrances"):
+        assert layout_only not in text, layout_only
+    # no machine's coordinates: no "lo [..] hi [..]" but SITE's and the bounding volume's
+    assert text.count(" hi [") == 2
+    assert "- wall 0 gregtech:gt.blockconcretes@3" in text  # the palette, as ever
+    # the brief grows with the plan only by its services and PROGRAM rows, never per box
+    rows = [
+        x for x in large.brief.splitlines() if x.startswith("- ") and "floor, " in x
+    ]
+    assert len(rows) == len({tuple(r["keepout"]) for r in large_rows(conn)})
+    # its repair repeats NEED after the refusal; a layout brief's has none to repeat
+    need_line = next(x for x in text.splitlines() if x.startswith("NEED: "))
+    again = shell_brief.repair_brief(text, "{}", "too small")
+    assert again.endswith("send the whole design again.\n" + need_line)
+    layout_brief = bo.prepare(conn, home, vault, [one_case()], PLANS)[0].brief
+    assert shell_brief.repair_brief(layout_brief, "{}", "no").endswith("design again.")
+
+
+def large_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    from gregtec.build import layout
+
+    prog = layout.program(conn, [ts.lay_tests.production(), ts.lay_tests.power()])
+    return shell.program_rows(prog, layout.Options())
+
+
+def test_case_tables_default_to_site_and_saved_runs_load_as_layout(
+    conn: sqlite3.Connection, home: Path, tmp_path: Path
+) -> None:
+    shipped = bo.load_cases()
+    assert {c.mode for c in shipped} == {"site"}  # every new AI design (D422)
+    # a site case's arrangement options stay at their defaults: the building arranges
+    gothic = next(c for c in shipped if c.id == "gothic-cathedral")
+    assert gothic.layout and gothic.layout_options().spacing == 0
+    assert bo.case_options(gothic.layout, "layout").spacing == 1
+    head = "\t".join([*bo.COLUMNS, *bo.OPTIONAL])
+    row = "c1\tsmall\tth-foundry\tsmelting\tdefault\ta\tb\tchanged\troof\t\t\t\t\t"
+    path = tmp_path / "cases.tsv"
+    for mode, want in (("layout", "layout"), ("", "site")):
+        path.write_text(f"{head}\n{row}{mode}\n", encoding="utf-8")
+        assert bo.load_cases(path)[0].mode == want
+    path.write_text(f"{head}\n{row}rows\n", encoding="utf-8")
+    with pytest.raises(bo.BakeoffError, match="mode is layout or site"):
+        bo.load_cases(path)
+    # a run saved before D422 has no mode in its cases: it runs as the layout run it was
+    a = Scripted()
+    runner, prepared = started(conn, home, [ZEBRA], {"zebra": a})
+    for c in runner.run["cases"]:
+        del c["mode"]
+    runner.execute(prepared)
+    assert a.seen[0][0] == shell_brief.system_prompt("layout")
+    assert a.schemas[0][0] is shell_brief.SCHEMA
+
+
+def test_a_site_run_sends_v6_and_scores_the_fit(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    """fake-cramped is refused for volume, then repaired in round 2; fake-tower ends refused
+    and is scored; fake-sloppy's chest is refused first, then its hall fits."""
+    names = [
+        shell_fakes.PLAIN,
+        shell_fakes.CRAMPED,
+        shell_fakes.TOWER,
+        shell_fakes.SLOPPY,
+    ]
+    fakes = {n: shell_fakes.FakeDesigner(n) for n in names}
+    run = ran(conn, home, [bo.FAKES[n] for n in names], fakes, [site_case()])
+    assert run["status"] == bo.DONE
+    assert run["prompt"]["version"] == 6 and run["prompt"]["mode"] == "site"
+    assert set(run["prompts"]) == {"site"} and run["cases"][0]["mode"] == "site"
+    plain, cramped, tower, sloppy = (result(run, n) for n in names)
+    assert plain["design"]["first_try"] and plain["design"]["fit"] == {
+        "fit_ok": True,
+        "placed": 8,
+        "of": 8,
+        "spare_pct": plain["design"]["fit"]["spare_pct"],
+        "entrance_from": "auto",
+        "service_len": plain["design"]["fit"]["service_len"],
+        "rounds_to_fit": 0,
+    }
+    assert plain["design"]["fit"]["spare_pct"] > 40 and plain["revise"]["ok"]
+    assert cramped["design"]["ok"] and cramped["design"]["repair_rounds"] == 1
+    assert "the roofed floor holds" in cramped["design"]["refusals"][0]
+    assert cramped["design"]["fit"]["rounds_to_fit"] == 1
+    assert not tower["design"]["ok"] and tower["design"]["calls"] == 3
+    assert all("needs 5x5 free floor" in r for r in tower["design"]["refusals"])
+    assert tower["design"]["fit"]["fit_ok"] is False
+    assert tower["design"]["fit"]["rounds_to_fit"] is None and tower["revise"] is None
+    assert sloppy["design"]["repair_rounds"] == 1 and sloppy["design"]["ok"]
+    assert "tile entity" in sloppy["design"]["refusals"][0]
+    # the report adds the fit's columns to a site run
+    for c in run["cases"]:
+        bo.rate(home, run["id"], c["id"], bo.TIE)
+    got = bo.report(home, run["id"])
+    assert got.card["columns"] == [*bo.COLS, *bo.SITE_COLS]
+    by = {
+        r[0]: dict(zip(got.card["columns"], r, strict=True)) for r in got.card["rows"]
+    }
+    assert (
+        by["fake-tower"]["fit ok"] == "0 of 1"
+        and by["fake-tower"]["placed"] == "0 of 8"
+    )
+    assert by["fake-cramped"]["fit ok"] == "1 of 1"
+    assert by["fake-cramped"]["rounds to fit"] == "1.0"
+    assert by["fake-plain"]["entrance"] == "auto 1"
+    assert "fit 8 of 8" in got.text and "fit 0 of 8" in got.text
+
+
+def test_a_layout_run_reports_without_the_fit_columns(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    run = ran(conn, home, [ZEBRA], {"zebra": Scripted()})
+    assert "fit" not in result(run, "zebra")["design"]
+    got = bo.report(home, run["id"], reveal_unrated=True)
+    assert got.card["columns"] == list(bo.COLS) and "fit " not in got.text
