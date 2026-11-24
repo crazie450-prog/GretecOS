@@ -32,7 +32,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gregtec.build import layout as layout_lib
 from gregtec.build import palette, sandbox, schematic, shell
@@ -43,10 +43,16 @@ from gregtec.planner import progress
 from gregtec.planner.outputs import store as plan_store
 from gregtec.vault.io import VaultIO
 
+if TYPE_CHECKING:
+    from gregtec.build import fit as fit_lib
+
 ROOT = Path("data", "build", "shells")
 SCHEMATICS = Path("data", "schematics", "shells")
 BUILD_ID = re.compile(r"sh-[0-9a-f]{12}")
 FILES = ("design.json", "layout.json", "palette.tsv", "preview.json", "notes.txt")
+# a site build (D422) also keeps its machine program, so it is fitted again without the plans
+SITE_FILES = (*FILES, "program.json")
+MODES = ("layout", "site")
 MAX_PLANS = shell.MAX_PLANS
 MAX_CARD_FACES = 6000  # the shell card's limit (core/gregtec/cards/schema.json)
 MAX_CARD_PALETTE = 64
@@ -75,10 +81,20 @@ class Made:
     brief: theme_lib.Brief
     build: str  # the id it has (or would have, refused)
     saved: Path | None  # its folder; None when refused
+    # a site build (D422): its site, need, entrance, zones and the fit's stats
+    fit: dict[str, Any] | None = None
 
     @property
     def record(self) -> dict[str, Any]:
-        return record(self.spec, self.ops, self.outcome, self.brief, self.build)
+        return record(
+            self.spec, self.ops, self.outcome, self.brief, self.build, self.fit
+        )
+
+
+def site_mode(rec: Mapping[str, Any]) -> bool:
+    """Whether a saved build is a site build (D422; a build without ``fit`` is layout-first)."""
+    got = rec.get("fit")
+    return isinstance(got, Mapping) and got.get("mode") == "site"
 
 
 def _theme_store(vault: VaultIO | None) -> theme_lib.Themes | None:
@@ -103,10 +119,21 @@ def make(
     layout_options: layout_lib.Options | None = None,
     site: Site | None = None,
     save_it: bool = True,
+    mode: str = "layout",
+    entrance: Mapping[str, Any] | None = None,
+    zones: Sequence[Mapping[str, Any]] = (),
 ) -> Made:
     """Design a shell around the plans' layout and save it unless refused (see the module).
-    Under a shell job (WO-10.10) each step is a stage and a cancel point, all before saving."""
+    Under a shell job (WO-10.10) each step is a stage and a cancel point, all before saving.
+
+    ``mode="site"`` (D422) designs the building first inside a SITE sized from the plans'
+    machines and fits the machines into it afterwards (:func:`_make_site`); ``entrance`` and
+    ``zones`` are the answer's optional door hint and steering boxes."""
     progress.stage("layout")
+    if mode not in MODES:
+        raise shell.ShellError(f"mode {mode!r} is not one of {', '.join(MODES)}")
+    if mode == "layout" and (entrance is not None or zones):
+        raise shell.ShellError("an entrance or zones are for a site build")
     if not plan_ids or len(plan_ids) > MAX_PLANS:
         raise shell.ShellError(f"name 1 to {MAX_PLANS} saved plans")
     plans = []
@@ -115,11 +142,16 @@ def make(
             plans.append(plan_store.load(home, pid))
         except (OSError, ValueError) as exc:
             raise shell.ShellError(f"plan {pid} isn't saved: {exc}") from None
+    prog: layout_lib.Program | None = None
+    lay: dict[str, Any] = {}
     try:
-        lay = layout_lib.plan_layout(conn, plans, layout_options)
+        if mode == "site":
+            prog = layout_lib.program(conn, plans)
+        else:
+            lay = layout_lib.plan_layout(conn, plans, layout_options)
     except layout_lib.LayoutError as exc:
         raise shell.ShellError(f"no layout: {exc}") from None
-    if not lay["placements"]:
+    if (not prog.instances) if prog is not None else not lay["placements"]:
         raise shell.ShellError("the layout places no machine: nothing to house")
     store = _theme_store(vault)
     found: list[theme_lib.Theme] = []
@@ -151,6 +183,23 @@ def make(
         shell.check_palette(conn, swatches)
     except palette.CatalogError as exc:
         raise shell.ShellError(str(exc)) from None
+    if prog is not None:
+        return _make_site(
+            conn,
+            home,
+            prog,
+            swatches,
+            brief,
+            max_blocks=max_blocks,
+            headroom=headroom,
+            ops=ops,
+            relief=relief,
+            opts=layout_options or layout_lib.Options(),
+            site=site,
+            save_it=save_it,
+            entrance=entrance,
+            zones=zones,
+        )
     spec = shell.spec_from_layout(
         lay,
         swatches,
@@ -188,8 +237,112 @@ def make(
     return Made(spec, design_ops, outcome, brief, build, path)
 
 
+def _make_site(
+    conn: sqlite3.Connection,
+    home: Path,
+    prog: layout_lib.Program,
+    swatches: Sequence[shell.Swatch],
+    brief: theme_lib.Brief,
+    *,
+    max_blocks: int | None,
+    headroom: int | None,
+    ops: Sequence[Mapping[str, Any]] | None,
+    relief: int | None,
+    opts: layout_lib.Options,
+    site: Site | None,
+    save_it: bool,
+    entrance: Mapping[str, Any] | None,
+    zones: Sequence[Mapping[str, Any]],
+) -> Made:
+    """:func:`make`'s site branch (D422, design §2.6): the SITE and its spec, the design
+    compiled once, the palette and size gate, the fit, then the gate on the fitted volumes."""
+    from gregtec.build import fit as fit_lib
+
+    box = shell.site_of(prog, opts, headroom)
+    spec = shell.spec_for_site(
+        prog,
+        box,
+        swatches,
+        opts,
+        theme=brief.theme,
+        prompt=brief.prompt,
+        line_type=brief.line_type,
+        max_blocks=max_blocks,
+        headroom=headroom,
+        relief=relief,
+    )
+    source = "procedural" if ops is None else "architect"
+    progress.stage("compose")
+    design_ops = tuple(
+        dict(o)
+        for o in (shell.procedural(spec, fit=True) if ops is None else ops)
+        if isinstance(o, Mapping)
+    )
+    program = prog.to_json(opts)
+    hint = None if entrance is None else dict(entrance)
+    zone_list = [dict(z) for z in zones]
+    build = shell.build_id(spec, design_ops, program, hint, zone_list)
+    info: dict[str, Any] = {
+        "mode": "site",
+        "site": box.to_json(),
+        "need": dict(spec.need or {}),
+        "entrance": hint,
+        "zones": zone_list,
+        "buffer": opts.buffer,
+    }
+
+    def refused(*why: str) -> Made:
+        out = shell.Outcome("refused", source, {}, {}, tuple(why))
+        return Made(spec, design_ops, out, brief, build, None, info)
+
+    if ops is not None and len(design_ops) != len(ops):
+        return refused("every operation is an object")
+    progress.stage("gate")
+    try:
+        got = shell.compile_ops(spec, design_ops)
+    except shell.ShellError as exc:
+        return refused(str(exc))
+    # the palette, the share outside the site and max_blocks first, as for any design
+    first = shell.design(conn, spec, design_ops, source, compiled=got)
+    if not first.ok:
+        return Made(spec, design_ops, first, brief, build, None, info)
+    progress.stage("fit")
+    res = fit_lib.fit(prog, first.cells, box, opts, hint, zone_list)
+    info["fit"] = res.stats
+    if not res.ok or res.layout is None:
+        return refused(*res.reasons)
+    lay = res.layout
+    fitted = shell.fitted_spec(spec, lay)
+    outcome = shell.design(conn, fitted, design_ops, source, compiled=got)
+    made = Made(fitted, design_ops, outcome, brief, build, None, info)
+    if not outcome.ok or not save_it:
+        return made
+    progress.stage("saving")
+    path = save(home, made, lay, program)
+    if site is not None and brief.theme is not None:
+        theme_lib.record_use(
+            home, theme_lib.Use(build, brief.theme.id, site.dim, site.x, site.z)
+        )
+    return replace(made, saved=path)
+
+
+def fit_line(fit: Mapping[str, Any]) -> str | None:
+    """The accepted site build's note: how its machines fit (None before the fit)."""
+    st = fit.get("fit") or {}
+    if "spare_pct" not in st:
+        return None
+    return (
+        f"{st['placed']} machines fitted in the building (pass {st['pass']}), interior "
+        f"{st['volume']} of {st['need']['required']} needed (+{fit.get('buffer')}%), "
+        f"{st['spare_pct']}% spare, entrance {st['entrance_from']}"
+    )
+
+
 def notes(
-    spec: shell.Spec, outcome: shell.Outcome, brief: theme_lib.Brief
+    spec: shell.Spec,
+    outcome: shell.Outcome,
+    brief: theme_lib.Brief,
+    fit: Mapping[str, Any] | None = None,
 ) -> list[str]:
     out = []
     if brief.theme is not None:
@@ -212,6 +365,13 @@ def notes(
             for v in outcome.report.verdicts
             for w in v.warnings
         ]
+    if fit is not None and (line := fit_line(fit)) is not None:
+        out.append(line)
+        out.append(
+            "no tile entity, no GT machine block, nothing in a fitted keep-out, corridor, "
+            f"chase or doorway (checked: {len(spec.clear)} volumes)"
+        )
+        return out
     out.append(
         "no tile entity, no GT machine block, nothing in a keep-out, corridor, chase, doorway or "
         f"the layout's interior below the roof (checked: {len(spec.clear)} volumes)"
@@ -225,8 +385,10 @@ def record(
     outcome: shell.Outcome,
     brief: theme_lib.Brief,
     build: str,
+    fit: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     mats = shell.manifest(outcome)
+    extra = {} if fit is None else {"fit": dict(fit)}
     return {
         "schema": shell.SCHEMA,
         "v": shell.VERSION,
@@ -246,7 +408,8 @@ def record(
             {"role": m.role, "block": m.entry.key, "name": m.name, "count": m.count}
             for m in mats
         ],
-        "notes": notes(spec, outcome, brief),
+        "notes": notes(spec, outcome, brief, fit),
+        **extra,
     }
 
 
@@ -269,12 +432,20 @@ def _json(data: object) -> bytes:
     return (json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def save(home: Path, made: Made, lay: Mapping[str, Any]) -> Path:
-    """Write the build's files (atomically, each); a refused outcome is never saved."""
+def save(
+    home: Path,
+    made: Made,
+    lay: Mapping[str, Any],
+    program: Mapping[str, Any] | None = None,
+) -> Path:
+    """Write the build's files (atomically, each); a refused outcome is never saved. A site
+    build (D422) also writes its ``program.json``."""
     if not made.outcome.ok:
         raise shell.ShellError("a refused design is never written")
     rec = made.record
     where = folder(home, made.build)
+    if program is not None:
+        atomic_write(where / "program.json", _json(program))
     rows = ["role\tblock\tname\tcount"] + [
         f"{m['role']}\t{m['block']}\t{m['name'] or ''}\t{m['count']}"
         for m in rec["materials"]
@@ -354,11 +525,14 @@ def rebuild(
         raise shell.ShellError(
             f"build {build}'s layout.json can't be read: {exc}"
         ) from None
-    swatches = [
-        shell.Swatch(r["role"], palette.parse_entry(r["block"]), r.get("note", ""))
-        for r in rec["palette"]
-    ]
+    swatches = _swatches(rec)
     shell.check_palette(conn, swatches)
+    if site_mode(rec):
+        spec, got = _site_cells(home, build, rec, lay, swatches)
+        outcome = shell.design(
+            conn, spec, rec["ops"], rec["source"], sandbox.REPLAY_TIMEOUT_S, got
+        )
+        return _same_blocks(build, rec, spec, outcome)
     spec = shell.spec_from_layout(
         lay,
         swatches,
@@ -373,6 +547,12 @@ def rebuild(
     outcome = shell.design(
         conn, spec, rec["ops"], rec["source"], sandbox.REPLAY_TIMEOUT_S
     )
+    return _same_blocks(build, rec, spec, outcome)
+
+
+def _same_blocks(
+    build: str, rec: Mapping[str, Any], spec: shell.Spec, outcome: shell.Outcome
+) -> tuple[shell.Spec, shell.Outcome]:
     if not outcome.ok:
         raise shell.ShellError(
             f"build {build} no longer passes: " + " | ".join(outcome.reasons)
@@ -401,21 +581,21 @@ def cells_of(
         raise shell.ShellError(
             f"build {build}'s layout.json can't be read: {exc}"
         ) from None
-    swatches = [
-        shell.Swatch(r["role"], palette.parse_entry(r["block"]), r.get("note", ""))
-        for r in rec["palette"]
-    ]
-    spec = shell.spec_from_layout(
-        lay,
-        swatches,
-        prompt=rec.get("prompt", ""),
-        line_type=rec.get("line_type", theme_lib.GENERAL),
-        max_blocks=rec["max_blocks"],
-        headroom=rec["headroom"],
-        relief=rec.get("relief", 0),  # a build from before D386 had none
-        interior_open=rec.get("interior_open", False),  # nor before D389
-    )
-    got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
+    swatches = _swatches(rec)
+    if site_mode(rec):
+        spec, got = _site_cells(home, build, rec, lay, swatches)
+    else:
+        spec = shell.spec_from_layout(
+            lay,
+            swatches,
+            prompt=rec.get("prompt", ""),
+            line_type=rec.get("line_type", theme_lib.GENERAL),
+            max_blocks=rec["max_blocks"],
+            headroom=rec["headroom"],
+            relief=rec.get("relief", 0),  # a build from before D386 had none
+            interior_open=rec.get("interior_open", False),  # nor before D389
+        )
+        got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
     vols = shell._index(spec)
     cells = {
         c: e
@@ -427,6 +607,106 @@ def cells_of(
             f"build {build} gives {len(cells)} blocks, not the {rec['blocks']} saved"
         )
     return spec, cells
+
+
+def _swatches(rec: Mapping[str, Any]) -> list[shell.Swatch]:
+    return [
+        shell.Swatch(r["role"], palette.parse_entry(r["block"]), r.get("note", ""))
+        for r in rec["palette"]
+    ]
+
+
+def _program(
+    home: Path, build: str
+) -> tuple[dict[str, Any], layout_lib.Program, layout_lib.Options]:
+    """A site build's saved program.json, as saved and read back (D422)."""
+    try:
+        saved = json.loads(
+            (folder(home, build) / "program.json").read_text(encoding="utf-8")
+        )
+        prog, opts = layout_lib.Program.from_json(saved)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise shell.ShellError(
+            f"build {build}'s program.json can't be read: {exc}"
+        ) from None
+    return saved, prog, opts
+
+
+def _site_spec(
+    home: Path, build: str, rec: Mapping[str, Any], swatches: Sequence[shell.Swatch]
+) -> tuple[shell.Spec, layout_lib.Program, layout_lib.Options]:
+    """A site build's design-time spec from its own files (KEEP_CLEAR [] and its NEED: the
+    facts its script was run with), never the fitted one (design §2.7)."""
+    _, prog, opts = _program(home, build)
+    spec = shell.spec_for_site(
+        prog,
+        layout_lib.box_of(rec["fit"]["site"]),
+        swatches,
+        opts,
+        prompt=rec.get("prompt", ""),
+        line_type=rec.get("line_type", theme_lib.GENERAL),
+        max_blocks=rec["max_blocks"],
+        headroom=rec["headroom"],
+        relief=rec.get("relief", 0),
+    )
+    return (
+        replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name")),
+        prog,
+        opts,
+    )
+
+
+def _site_cells(
+    home: Path,
+    build: str,
+    rec: Mapping[str, Any],
+    lay: Mapping[str, Any],
+    swatches: Sequence[shell.Swatch],
+) -> tuple[shell.Spec, shell.Compiled]:
+    """A site build's operations compiled once with its design-time spec, its machines fitted
+    again from its saved program and the saved layout required back; the fitted spec (the
+    saved layout's volumes) and the compiled cells to gate against it. The fit runs as it did
+    at design time (no prior: a prior pass names itself in the layout's ``fit``, so its id
+    would never be the saved one); fit is deterministic, so the same files give the same id."""
+    spec, prog, opts = _site_spec(home, build, rec, swatches)
+    try:
+        got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
+    except shell.ShellError as exc:
+        raise shell.ShellError(f"build {build} no longer passes: {exc}") from None
+    res = _refit(prog, opts, spec, got, rec, None)
+    if res.layout is None:
+        raise shell.ShellError(
+            f"build {build} no longer fits its machines: " + " | ".join(res.reasons)
+        )
+    if res.layout["id"] != lay.get("id"):
+        raise shell.ShellError(
+            f"build {build} fits its machines as {res.layout['id']} now, not as the saved "
+            f"{lay.get('id')}"
+        )
+    return shell.fitted_spec(spec, lay), got
+
+
+def _refit(
+    prog: layout_lib.Program,
+    opts: layout_lib.Options,
+    spec: shell.Spec,
+    got: shell.Compiled,
+    rec: Mapping[str, Any],
+    prior: Mapping[str, Any] | None,
+) -> fit_lib.FitResult:
+    from gregtec.build import fit as fit_lib  # late: layout's import chain reaches here
+
+    assert spec.site is not None
+    info = rec["fit"]
+    return fit_lib.fit(
+        prog,
+        got.cells,
+        spec.site,
+        opts,
+        info.get("entrance"),
+        info.get("zones") or (),
+        prior=prior,
+    )
 
 
 def _saved_options(home: Path, rec: Mapping[str, Any]) -> dict[str, int]:
@@ -452,6 +732,9 @@ def check_layout(conn: sqlite3.Connection, home: Path, rec: Mapping[str, Any]) -
             plans.append(plan_store.load(home, pid))
         except (OSError, ValueError):
             raise shell.ShellError(f"plan {pid} isn't saved any more: {redo}") from None
+    if site_mode(rec):
+        _check_site(conn, home, rec, plans)
+        return
     try:
         # laid out with the options it was saved with (D389: spacing, band_gap, max_run)
         opts = layout_lib.Options(**_saved_options(home, rec))
@@ -465,6 +748,52 @@ def check_layout(conn: sqlite3.Connection, home: Path, rec: Mapping[str, Any]) -
             f"the layout changed since this shell was designed (it was {rec.get('layout')}, "
             f"now {now}): {redo}"
         )
+
+
+def _check_site(
+    conn: sqlite3.Connection,
+    home: Path,
+    rec: Mapping[str, Any],
+    plans: Sequence[Mapping[str, Any]],
+) -> None:
+    """:func:`check_layout` for a site build (D422, design §2.7): today's machines (the plans'
+    footprints now) fitted again into the saved building as at design time. The same layout:
+    export. Otherwise refused (export never changes a build): with the refit message when
+    they still fit (from scratch, or with the saved layout as the prior: a prior pass can
+    fail where a fresh one fits), else with the fit's reasons."""
+    build = str(rec["id"])
+    try:
+        lay = json.loads(
+            (folder(home, build) / "layout.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise shell.ShellError(
+            f"build {build}'s layout.json can't be read: {exc}"
+        ) from None
+    try:
+        now = layout_lib.program(conn, plans)
+    except layout_lib.LayoutError as exc:
+        raise shell.ShellError(
+            f"the plans' machines can't be read now ({exc}): revise the building"
+        ) from None
+    spec, _, opts = _site_spec(home, build, rec, _swatches(rec))
+    try:
+        got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
+    except shell.ShellError as exc:
+        raise shell.ShellError(f"build {build} no longer passes: {exc}") from None
+    res = _refit(now, opts, spec, got, rec, None)
+    if res.layout == lay:
+        return
+    # changed: do they still fit, from scratch or the machines that can staying put?
+    if res.layout is None and _refit(now, opts, spec, got, rec, lay).layout is None:
+        raise shell.ShellError(
+            "the machines changed since this shell was designed and no longer fit the "
+            "building: " + " | ".join(res.reasons) + ": revise the building"
+        )
+    raise shell.ShellError(
+        "the machines changed since this shell was designed; the building still holds "
+        f"them: `gos shell refit {build}` makes a version with them fitted again"
+    )
 
 
 @dataclass(frozen=True)

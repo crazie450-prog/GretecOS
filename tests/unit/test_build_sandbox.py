@@ -857,3 +857,88 @@ def test_the_runner_says_it_is_still_waiting_and_what_it_spent() -> None:
         "c1", "B", "design", {"ok": False, "seconds": 3, "refused": "no answer: credit"}
     )
     assert line == "c1 B design: no design in 3s (no answer: credit)"
+
+
+# --- site mode (WO-10.16, D422): covered() ------------------------------------------------------
+
+
+def _need(door: int = 3, cap: int = 6, required: int = 100) -> dict[str, int]:
+    return {"door_height": door, "cap_height": cap, "required": required}
+
+
+def test_covered_keeps_the_floor_rule() -> None:
+    """The child can't import gregtec (``-S``): its copy of floor.measure must agree with it on
+    any building, cells outside the site, solid floors and overhangs included."""
+    import random
+
+    from gregtec.build import floor, sandbox_child
+
+    site = layout.Box((0, 0, 0), (11, 9, 11))
+    rng = random.Random(422)
+    for _ in range(200):
+        cells = {
+            (rng.randint(-2, 13), rng.randint(0, 11), rng.randint(-2, 13)): "wall"
+            for _ in range(rng.randint(0, 300))
+        }
+        need = _need(rng.randint(2, 4), rng.randint(3, 9), rng.randint(0, 400))
+        assert sandbox_child.measure(cells, site.to_json(), need) == floor.measure(
+            cells, site, need
+        )
+
+
+ROOFED = """
+fill((0, 5, 0), (7, 5, 7), 'roof')
+ring((0, 0, 0), (7, 4, 7), 'wall')
+set_block(3, 0, 3, 'wall')
+fill((20, 9, 20), (21, 9, 21), 'roof')
+a = covered()
+fill((2, 3, 2), (2, 3, 2), 'roof')
+b = covered()
+print(a['volume'], a['floor'], a['need_volume'], a['short_by'])
+print(b['volume'], b['floor'])
+"""
+
+
+def test_covered_measures_the_blocks_placed_so_far() -> None:
+    from gregtec.build import floor
+
+    site = layout.Box((0, 0, 0), (15, 9, 15))
+    facts = {**FACTS, "site": site.to_json(), "need": _need(3, 4, 200)}
+    ran = sandbox.run(ROOFED, facts, 5000)
+    # 6x6 roofed floor 5 high, less the solid column at [3,3]: 35 columns, capped at 4
+    # (the slab far outside the site is not the building's); then one column 3 high
+    assert ran.log == ("140 35 200 60", "139 35")
+    got = floor.measure(ran.cells, site, facts["need"])
+    assert got == {"volume": 139, "floor": 35, "need_volume": 200, "short_by": 61}
+
+
+def test_covered_is_a_site_builds_only() -> None:
+    with pytest.raises(sandbox.ScriptError, match="NameError: name 'covered'"):
+        sandbox.run("covered()", FACTS, 100)
+    # it is geometry only: no argument, and the cell cap still holds
+    facts = {**FACTS, "site": {"lo": [0, 0, 0], "hi": [9, 9, 9]}, "need": _need()}
+    with pytest.raises(sandbox.ScriptError, match="TypeError"):
+        sandbox.run("covered(1)", facts, 100)
+    with pytest.raises(sandbox.ScriptError, match="more than 100"):
+        sandbox.run(
+            "while covered()['short_by'] > 0:\n    fill((0, 0, 0), (9, 9, 9), 'wall')",
+            facts,
+            100,
+        )
+
+
+def test_a_site_spec_gives_the_script_its_site_facts(conn: sqlite3.Connection) -> None:
+    prog = layout.program(conn, [ts.lay_tests.production()])
+    sw = shell.swatches_of(ts.foundry())
+    spec = shell.spec_for_site(prog, shell.site_of(prog), sw)
+    script = (
+        "print(KEEP_CLEAR, DOORWAYS, FLOOR_Y, SITE['lo'], NEED['door_height'])\n"
+        "print(sum(r['count'] for r in PROGRAM), covered()['volume'])\n"
+        "fill((0, 0, 0), (0, 0, 0), 'wall')\n"
+    )
+    ran = sandbox.run(script, shell.script_facts(spec), 100)
+    need = dict(spec.need or {})
+    assert ran.log == (
+        f"() () 0 (0, 0, 0) {need['door_height']}",
+        f"{len(prog.instances)} 0",
+    )

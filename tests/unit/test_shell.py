@@ -1284,3 +1284,369 @@ def test_an_open_interior_is_the_shells_but_the_machines_space_is_not(
     out = shell.design(conn, spec, [*good_design(spec), into], "architect")
     assert out.status == "repaired" and keep.lo not in out.cells
     assert shell.spec_json(spec)["interior_open"] is True
+
+
+# --- site mode (WO-10.16, D422): the building first, the machines fitted into it -------------
+
+# the procedural layout-first shells of the fixture plans (th-foundry): their build ids, layout
+# ids and a digest of their cells, from before site mode; they must never change
+LAYOUT_GOLDEN = {
+    ("pl-steel",): ("sh-f433c48699e8", "lo-020a7e7f7c83", "8b7b5c09aeba"),
+    ("pl-power",): ("sh-2c90d0b9f010", "lo-d6b4bcf30885", "0162ad6aa361"),
+    ("pl-steel", "pl-power"): ("sh-7fcb7b654815", "lo-bd81ad638e02", "a2897ab94f9b"),
+}
+
+
+def _digest(cells: Mapping[Cell, Entry]) -> str:
+    import hashlib
+
+    rows = sorted((list(c), e.key) for c, e in cells.items())
+    return hashlib.sha256(json.dumps(rows).encode()).hexdigest()[:12]
+
+
+def test_layout_first_builds_keep_their_ids_and_cells(
+    home: Path, conn: sqlite3.Connection
+) -> None:
+    vault = VaultIO(home / "vault")
+    for plans, (build, lay_id, cells) in LAYOUT_GOLDEN.items():
+        made = shell_store.make(
+            conn, home, vault, list(plans), theme_id="th-foundry", save_it=False
+        )
+        assert made.spec.mode == "layout" and made.fit is None
+        assert (made.build, made.spec.layout, _digest(made.outcome.cells)) == (
+            build,
+            lay_id,
+            cells,
+        )
+        assert "fit" not in made.record and "site" not in made.record
+
+
+def _site_air(cells: Mapping[Cell, Entry], site: layout.Box) -> set[Cell]:
+    """The site's air with a block somewhere above it: the building's inside."""
+    tops: dict[tuple[int, int], int] = {}
+    for x, y, z in cells:
+        if site.contains((x, y, z)):
+            tops[(x, z)] = max(tops.get((x, z), -1), y)
+    return {
+        c for c in site.cells() if c not in cells and tops.get((c[0], c[2]), -1) > c[1]
+    }
+
+
+def site_rules_hold(made: shell_store.Made, lay: Mapping[str, Any]) -> None:
+    """A fitted site build, from the layout JSON and the cells alone: a valid layout whose
+    machines reach the door through the building's air; every keep-out, corridor, chase and
+    entrance is roofed air; the doorway to the site's edge is open; the gate saw no breach."""
+    spec, cells = made.spec, made.outcome.cells
+    site = layout.box_of(lay["fit"]["site"])
+    assert spec.mode == "site" and spec.site == site
+    assert lay["bounds"] == {**site.to_json(), "size": list(site.size)}
+    r = spec.relief
+    assert spec.bounds == layout.Box(
+        (-r, 0, -r), (site.hi[0] + r, site.hi[1], site.hi[2] + r)
+    )
+    assert spec.walls == site
+    air = _site_air(cells, site)
+    bodies = {c for p in lay["placements"] for c in lay_tests._cells(p)}
+    lay_tests.check_common(lay, frozenset(air - bodies))
+    for d in [*lay["keepouts"], *lay["corridors"], *lay["chases"], *lay["entrances"]]:
+        assert all(c in air for c in lay_tests._cells(d)), d["id"]
+    (e,) = lay["entrances"]
+    lo, hi = _b(site.to_json())
+    d = door_box(e, (lo, hi))
+    assert not any(_in(c, d) for c in cells)
+    assert spec.origin == tuple(e["lo"]) and spec.origin_entrance == "e1"
+    assert shell.inspect(spec, cells).clean
+    assert not made.outcome.repairs
+
+
+def test_a_site_build_with_the_procedural_generator(
+    home: Path, conn: sqlite3.Connection
+) -> None:
+    vault = VaultIO(home / "vault")
+    for plans in LAYOUT_GOLDEN:
+        made = shell_store.make(
+            conn, home, vault, list(plans), theme_id="th-foundry", mode="site"
+        )
+        assert made.outcome.status == "accepted", made.outcome.reasons
+        assert made.saved is not None
+        assert sorted(p.name for p in made.saved.iterdir()) == sorted(
+            shell_store.SITE_FILES
+        )
+        lay = json.loads((made.saved / "layout.json").read_text(encoding="utf-8"))
+        site_rules_hold(made, lay)
+        assert lay["fit"]["placed"] == lay["fit"]["of"] == len(lay["placements"])
+        assert lay["id"] == made.spec.layout
+        rec = shell_store.load(home, made.build)
+        assert shell_store.site_mode(rec) and rec["layout"] == lay["id"]
+        assert (
+            rec["fit"]["site"] == lay["fit"]["site"] and rec["fit"]["entrance"] is None
+        )
+        assert rec["fit"]["fit"]["pass"] == lay["fit"]["pass"]
+        assert rec["site"] == lay["fit"]["site"] and rec["need"]["required"] > 0
+        notes = (made.saved / "notes.txt").read_text(encoding="utf-8")
+        n = len(lay["placements"])
+        assert f"{n} machines fitted in the building (pass " in notes
+        assert "needed (+25%)" in notes and "entrance auto" in notes
+        # program.json reads back as the program the plans give
+        saved = json.loads((made.saved / "program.json").read_text(encoding="utf-8"))
+        by_id = {"pl-steel": lay_tests.production, "pl-power": lay_tests.power}
+        prog = layout.program(conn, [by_id[p]() for p in plans])
+        assert saved == prog.to_json(layout.Options())
+        # rebuilt and viewed from its own files: the same cells, the same layout id
+        spec, out = shell_store.rebuild(conn, home, made.build)
+        assert out.cells == made.outcome.cells and spec.layout == lay["id"]
+        _, cells = shell_store.cells_of(home, made.build)
+        assert cells == dict(made.outcome.cells)
+        # the layout-first build of the same plans has another id
+        assert made.build != LAYOUT_GOLDEN[plans][0]
+    assert shell_store.builds(home)[0]["layout"].startswith("lo-")
+
+
+def test_a_site_build_exports_and_refuses_when_its_machines_change(
+    home: Path, conn: sqlite3.Connection
+) -> None:
+    vault = VaultIO(home / "vault")
+    made = shell_store.make(
+        conn, home, vault, ["pl-steel"], mode="site", theme_id="th-foundry"
+    )
+    assert made.outcome.ok and made.saved is not None
+    rec = shell_store.load(home, made.build)
+    names = {m["block"].split("@")[0] for m in rec["materials"]}
+    world = WorldRegistry("lab", frozenset(names), frozenset(), "level.dat")
+    ex = shell_store.export(conn, home, made.build, world)
+    got = schematic.read(ex.written.parts[0].data)
+    assert sum(got.schematic.used().values()) == rec["blocks"]
+    # WEOffset is from e1's lo, the cell Clayton stands in (D318)
+    o = made.spec.origin
+    assert got.schematic.offset == tuple(
+        made.spec.bounds.lo[i] - o[i] for i in range(3)
+    )
+    plan_file = home / "data" / "plans" / "pl-steel.json"
+    saved_plan = plan_file.read_text(encoding="utf-8")
+    # one more machine: the building still holds it, refit is offered
+    more = json.loads(saved_plan)
+    more["nodes"][0]["count"] += 1
+    plan_file.write_text(json.dumps(more), encoding="utf-8")
+    with pytest.raises(shell.ShellError, match="gos shell refit " + made.build):
+        shell_store.export(conn, home, made.build, world)
+    # far more: it doesn't fit any more
+    more["nodes"][0]["count"] += 40
+    plan_file.write_text(json.dumps(more), encoding="utf-8")
+    with pytest.raises(shell.ShellError, match="no longer fit the building: .*revise"):
+        shell_store.export(conn, home, made.build, world)
+    plan_file.write_text(saved_plan, encoding="utf-8")
+    assert shell_store.export(conn, home, made.build, world).paths == ex.paths
+    # export never changed the build
+    assert shell_store.load(home, made.build) == rec
+    # a tampered design is refused at export, never written
+    rec["ops"].append(
+        {"op": "fill", "block": CHEST, "lo": [-1, 0, -1], "hi": [-1, 0, -1]}
+    )
+    (made.saved / "design.json").write_text(json.dumps(rec), encoding="utf-8")
+    with pytest.raises(shell.ShellError, match="no longer passes"):
+        shell_store.export(conn, home, made.build, world)
+
+
+HALL = """
+lo, hi = SITE['lo'], SITE['hi']
+top = NEED['cap_height']
+side = 5
+while True:
+    clear((lo[0], 0, lo[2]), (hi[0], hi[1], hi[2]))
+    ring((lo[0], 0, lo[2]), (lo[0] + side - 1, top, lo[2] + side - 1), 'wall')
+    fill((lo[0], top + 1, lo[2]), (lo[0] + side - 1, top + 1, lo[2] + side - 1), 'roof')
+    got = covered()
+    if got['volume'] >= 1.6 * got['need_volume'] or lo[0] + side > hi[0]:
+        break
+    side += 1
+mid = lo[2] + side // 2
+clear((lo[0], 0, mid - 1), (lo[0], NEED['door_height'] - 1, mid + 1))
+print(side, got['short_by'] < 0, KEEP_CLEAR, DOORWAYS, FLOOR_Y)
+"""
+
+
+def test_a_site_script_is_compiled_once_and_sized_by_covered(
+    home: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gregtec.build import sandbox
+
+    calls: list[Mapping[str, Any]] = []
+    real = sandbox.run
+
+    def counted(script: str, facts: Mapping[str, Any], *a: Any) -> Any:  # noqa: ANN401
+        calls.append(facts)
+        return real(script, facts, *a)
+
+    monkeypatch.setattr(sandbox, "run", counted)
+    vault = VaultIO(home / "vault")
+    ops = [{"op": "script", "script": HALL}]
+    made = shell_store.make(
+        conn, home, vault, ["pl-steel"], theme_id="th-foundry", mode="site", ops=ops
+    )
+    assert made.outcome.status == "accepted", made.outcome.reasons
+    assert len(calls) == 1  # compiled once: fitted and gated on the same cells
+    facts = calls[0]
+    assert facts["keep_clear"] == [] and facts["doorways"] == []
+    assert facts["site"] == made.spec.site.to_json() and facts["floor_y"] == 0
+    assert facts["need"] == dict(made.spec.need or {})
+    assert sum(r["count"] for r in facts["program"]) == made.fit["fit"]["of"]
+    assert made.record["source"] == "architect"
+    assert made.saved is not None
+    lay = json.loads((made.saved / "layout.json").read_text(encoding="utf-8"))
+    site_rules_hold(made, lay)
+
+
+def test_fit_refusals_reach_the_outcome_and_nothing_is_written(
+    home: Path, conn: sqlite3.Connection
+) -> None:
+    vault = VaultIO(home / "vault")
+
+    def make(ops: list[dict[str, Any]]) -> shell_store.Made:
+        return shell_store.make(
+            conn, home, vault, ["pl-steel"], theme_id="th-foundry", mode="site", ops=ops
+        )
+
+    box = {"op": "fill", "role": "wall", "lo": [0, 0, 0], "hi": [5, 4, 5]}
+    made = make([box])  # a solid block: no door
+    assert made.outcome.status == "refused" and made.saved is None
+    assert made.outcome.reasons[0].startswith("no doorway: no ground opening")
+    hollow = [
+        box,
+        {"op": "clear", "lo": [1, 0, 1], "hi": [4, 3, 4]},
+        {"op": "clear", "lo": [0, 0, 2], "hi": [0, 2, 4]},
+    ]
+    made = make(hollow)  # a hut: too small
+    assert made.outcome.status == "refused"
+    (why,) = made.outcome.reasons
+    need = made.fit["need"]["required"] if made.fit else 0
+    assert why.startswith("the roofed floor holds ") and f"need {need} " in why
+    # the palette is still the gate's first: a chest is refused before any fit
+    made = make([{"op": "fill", "block": CHEST, "lo": [1, 0, 1], "hi": [1, 0, 1]}])
+    assert "states outside the palette" in made.outcome.reasons[0]
+    assert made.fit is not None and "fit" not in made.fit
+    assert not (home / shell_store.ROOT).exists()
+    # the same answer, the same id, refused or not
+    assert make(hollow).build == make(hollow).build
+
+
+def test_site_build_ids_name_the_site_program_entrance_and_zones(
+    conn: sqlite3.Connection,
+) -> None:
+    sw = shell.swatches_of(foundry())
+    prog = layout.program(conn, [lay_tests.production()])
+    opts = layout.Options()
+    site = shell.site_of(prog, opts)
+    spec = shell.spec_for_site(prog, site, sw, opts)
+    ops = shell.procedural(spec, fit=True)
+    pj = prog.to_json(opts)
+    a = shell.build_id(spec, ops, pj)
+    assert a == shell.build_id(
+        spec, json.loads(json.dumps(ops)), json.loads(json.dumps(pj))
+    )
+    hint = {"side": "west", "at": [0, 8]}
+    zone = {"kind": "open", "lo": [1, 0, 1], "hi": [3, 3, 3]}
+    others = {
+        shell.build_id(spec, ops, pj, hint),
+        shell.build_id(spec, ops, pj, None, [zone]),
+        shell.build_id(spec, ops, {**pj, "v": 2}),
+        shell.build_id(shell.spec_for_site(prog, site, sw, opts, relief=2), ops, pj),
+    }
+    assert len(others) == 4 and a not in others
+    # the layout doesn't name it (it is derived): the fitted spec gives the same id
+    lay = layout.plan_layout(conn, [lay_tests.production()])
+    assert shell.build_id(spec, ops, pj) == shell.build_id(
+        shell.replace(spec, layout=lay["id"]), ops, pj
+    )
+    # a layout spec ignores them
+    lspec = spec_for(conn, lay)
+    lops = shell.procedural(lspec)
+    assert shell.build_id(lspec, lops) == shell.build_id(lspec, lops, pj, hint, [zone])
+
+
+def test_the_site_spec_and_its_script_facts(conn: sqlite3.Connection) -> None:
+    from gregtec.build import fit
+
+    sw = shell.swatches_of(foundry())
+    prog = layout.program(conn, [lay_tests.production()])
+    opts = layout.Options()
+    need = fit.need(prog, opts)
+    site = shell.site_of(prog, opts)
+    sizes = [fit.keep_size(i.footprint, opts) for i in prog.instances]
+    area = sum(x * z for x, _, z in sizes)
+    import math
+
+    side = max(
+        math.ceil(math.sqrt(2.0 * 1.25 * area)), max(max(x, z) for x, _, z in sizes) + 2
+    )
+    hr = shell.LIMITS["headroom"][0]
+    assert site == layout.Box(
+        (0, 0, 0), (side - 1, max(need["cap_height"], 12) + hr - 1, side - 1)
+    )
+    assert shell.site_of(prog, opts, factor=6.0).size[0] > site.size[0]
+    with pytest.raises(shell.ShellError, match="site factor"):
+        shell.site_of(prog, opts, factor=1.0)
+    spec = shell.spec_for_site(prog, site, sw, opts)
+    assert spec.mode == "site" and spec.clear == () and spec.layout == ""
+    assert spec.walls == site and spec.interior.hi[1] == site.hi[1] - hr
+    assert spec.roof_y == max(need["cap_height"], 12)
+    facts = shell.script_facts(spec)
+    assert facts["keep_clear"] == [] and facts["doorways"] == []
+    assert facts["walls"] == site.to_json() and facts["site"] == site.to_json()
+    assert facts["need"] == need and facts["floor_y"] == 0
+    rows = facts["program"]
+    assert sum(r["count"] for r in rows) == len(prog.instances)
+    assert {tuple(r["keepout"]) for r in rows} == set(sizes)
+    assert sorted(i for r in rows for i in r["ids"]) == sorted(
+        f"m{n}" for n in range(1, len(prog.instances) + 1)
+    )
+    # a layout spec's facts are as before
+    lspec = spec_for(conn, layout.plan_layout(conn, [lay_tests.production()]))
+    assert lspec.mode == "layout"
+    assert not {"site", "need", "program", "floor_y"} & set(shell.script_facts(lspec))
+    with pytest.raises(shell.ShellError, match="starts at"):
+        shell.spec_for_site(prog, layout.Box((1, 0, 0), site.hi), sw, opts)
+    with pytest.raises(shell.ShellError, match="only there"):
+        shell.procedural(spec)
+    with pytest.raises(shell.ShellError, match="only there"):
+        shell.procedural(lspec, fit=True)
+
+
+def test_a_breach_of_a_fitted_volume_is_a_fitter_bug(
+    home: Path, conn: sqlite3.Connection
+) -> None:
+    vault = VaultIO(home / "vault")
+    made = shell_store.make(
+        conn,
+        home,
+        vault,
+        ["pl-steel"],
+        theme_id="th-foundry",
+        mode="site",
+        save_it=False,
+    )
+    spec = made.spec
+    keep = next(v.box for v in spec.clear if v.kind == "keepout")
+    wall = spec.roles()["wall"][0]
+    bad = shell.Compiled({**made.outcome.cells, keep.lo: wall}, {}, 0)
+    with pytest.raises(AssertionError, match="fitted volumes"):
+        shell.design(conn, spec, made.ops, "architect", compiled=bad)
+    with pytest.raises(shell.ShellError, match="its site"):
+        shell.spec_from_layout(
+            json.loads(json.dumps({**_fitted_layout(conn, made)})),
+            list(spec.swatches),
+            bounds=layout.Box((0, 0, 0), (1, 1, 1)),
+        )
+    with pytest.raises(shell.ShellError, match="for a site build"):
+        shell_store.make(conn, home, vault, ["pl-steel"], entrance={"side": "west"})
+    with pytest.raises(shell.ShellError, match="mode"):
+        shell_store.make(conn, home, vault, ["pl-steel"], mode="tower")
+
+
+def _fitted_layout(conn: sqlite3.Connection, made: shell_store.Made) -> dict[str, Any]:
+    from gregtec.build import fit
+
+    prog = layout.program(conn, [lay_tests.production()])
+    assert made.spec.site is not None
+    got = fit.fit(prog, made.outcome.cells, made.spec.site)
+    assert got.layout is not None and got.layout["id"] == made.spec.layout
+    return got.layout

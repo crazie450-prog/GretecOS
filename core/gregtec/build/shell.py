@@ -58,11 +58,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Literal
 
 from gregtec.build import palette, schematic
 from gregtec.build import themes as theme_lib
@@ -104,6 +105,12 @@ STATUSES = ("accepted", "repaired")
 SOURCES = ("architect", "procedural")
 BUILD_ID_PREFIX = "sh-"
 INTERIOR = "interior"  # the clear volume id of the layout's own bounds (D316)
+# Site mode (D422): the SITE box's side is about this many times the floor the machines'
+# keep-outs (and their buffer) need, at least 1.25 and at most 6 times; its height is at least
+# SITE_HEIGHT under the headroom.
+SITE_FACTOR = 2.0
+SITE_FACTORS = (1.25, 6.0)
+SITE_HEIGHT = 12
 # Which end of an entrance its lo cell is, by the edge it is on (lo is the min x and z).
 _LO_END = {"west": "north", "east": "north", "north": "west", "south": "west"}
 
@@ -144,7 +151,7 @@ type Cell = tuple[int, int, int]
 # gregtec.build.layout is imported where it's used: layout -> planner -> agents.tools ->
 # the shell tool -> this module would otherwise be a cycle.
 if TYPE_CHECKING:
-    from gregtec.build.layout import Box
+    from gregtec.build.layout import Box, Options, Program
 
 
 class ShellError(ValueError):
@@ -190,6 +197,14 @@ class Spec:
     origin: Cell = (0, 0, 0)
     origin_entrance: str = ""
     origin_side: str = "west"
+    # site mode (D422): the building comes first inside ``site`` (the wall line; bounds = it
+    # grown by the relief) and GOS fits the machines afterwards (gregtec.build.fit). ``need``
+    # is what the building must hold (fit.need) and ``program`` the machines' keep-outs, one
+    # row per distinct size (the script's NEED and PROGRAM)
+    mode: Literal["layout", "site"] = "layout"
+    site: Box | None = None
+    need: Mapping[str, Any] | None = None
+    program: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def wall_top(self) -> int:
@@ -321,6 +336,14 @@ def _box(d: Mapping[str, Any]) -> Box:
 
 def doorway(entrance: Mapping[str, Any], bounds: Box) -> Box:
     """The cells of the wall ring in front of an entrance: from its face out to the bounds."""
+    got = _doorway(entrance, bounds)
+    if got is None:
+        raise ShellError(f"entrance {entrance.get('id')} is not on the layout's edge")
+    return got
+
+
+def _doorway(entrance: Mapping[str, Any], bounds: Box) -> Box | None:
+    """:func:`doorway`, or None when the entrance's face is on the bounds' edge."""
     from gregtec.build import layout as layout_lib
 
     e = _box(entrance)
@@ -339,8 +362,61 @@ def doorway(entrance: Mapping[str, Any], bounds: Box) -> Box:
             f"an entrance's side {side!r} is not one of {', '.join(SIDES)}"
         )
     if any(lo[i] > hi[i] for i in range(3)):
-        raise ShellError(f"entrance {entrance.get('id')} is not on the layout's edge")
+        return None
     return layout_lib.Box((lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2]))
+
+
+def _inputs(
+    max_blocks: int | None,
+    headroom: int | None,
+    relief: int | None,
+    line_type: str,
+    prompt: str,
+) -> tuple[int, int, int]:
+    """The checked max_blocks, headroom and relief of a spec."""
+    mb, hr = options(max_blocks, headroom)
+    rf = LIMITS["relief"][0] if relief is None else relief
+    _int(rf, "relief", LIMITS["relief"][1], LIMITS["relief"][2])
+    if line_type not in theme_lib.LINE_TYPES:
+        raise ShellError(
+            f"line type {line_type!r} is not one of {', '.join(theme_lib.LINE_TYPES)}"
+        )
+    if len(prompt) > theme_lib.MAX_TEXT * 5:
+        raise ShellError(
+            f"the prompt is longer than {theme_lib.MAX_TEXT * 5} characters"
+        )
+    return mb, hr, rf
+
+
+def _rules(theme: theme_lib.Theme | None, line_type: str) -> dict[str, tuple[str, ...]]:
+    rules: dict[str, tuple[str, ...]] = {}
+    if theme is not None:
+        rules = {k: tuple(getattr(theme, k)) for k in theme_lib.RULE_KEYS}
+        if (a := theme.adaptation(line_type)) is not None:
+            rules["adapt"] = (a,)
+    return rules
+
+
+def _site_bounds(site: Box, relief: int) -> Box:
+    """A site build's bounding volume: the site (its wall line) and the relief zone round it."""
+    from gregtec.build import layout as layout_lib
+
+    return layout_lib.Box(
+        (site.lo[0] - relief, site.lo[1], site.lo[2] - relief),
+        (site.hi[0] + relief, site.hi[1], site.hi[2] + relief),
+    )
+
+
+def _site_interior(site: Box, headroom: int) -> Box:
+    """A site build's interior: the site below its headroom (WALL_TOP is its top)."""
+    from gregtec.build import layout as layout_lib
+
+    top = site.hi[1] - headroom
+    if top < site.lo[1]:
+        raise ShellError(
+            f"the site is {site.size[1]} high: not above its headroom ({headroom})"
+        )
+    return layout_lib.Box(site.lo, (site.hi[0], top, site.hi[2]))
 
 
 def spec_from_layout(
@@ -354,10 +430,17 @@ def spec_from_layout(
     headroom: int | None = None,
     relief: int | None = None,
     interior_open: bool = True,
+    bounds: Box | None = None,
 ) -> Spec:
     """The shell's input from a WO-10.5 layout JSON (gos-layout v1). The palette must already
     have passed :func:`check_palette`. ``relief`` defaults to :data:`LIMITS`' (a saved build
-    from before D386 passes 0)."""
+    from before D386 passes 0).
+
+    ``bounds`` is a site build's site (D422; the fitted layout's own bounds): the bounding
+    volume is then the site grown by the relief only (no second MARGIN: the walls stand in the
+    site), the interior the site below its headroom, and each doorway runs from its entrance's
+    face to the site's edge only (the path :func:`gregtec.build.fit.fit` checked is air; none
+    when the door is in the site's edge)."""
     from gregtec.build import layout as layout_lib
 
     if lay.get("schema") != layout_lib.SCHEMA or lay.get("v") != layout_lib.VERSION:
@@ -365,22 +448,18 @@ def spec_from_layout(
             f"not a {layout_lib.SCHEMA} v{layout_lib.VERSION} layout: "
             f"{lay.get('schema')!r} v{lay.get('v')!r}"
         )
-    mb, hr = options(max_blocks, headroom)
-    rf = LIMITS["relief"][0] if relief is None else relief
-    _int(rf, "relief", LIMITS["relief"][1], LIMITS["relief"][2])
-    if line_type not in theme_lib.LINE_TYPES:
-        raise ShellError(
-            f"line type {line_type!r} is not one of {', '.join(theme_lib.LINE_TYPES)}"
+    mb, hr, rf = _inputs(max_blocks, headroom, relief, line_type, prompt)
+    if bounds is None:
+        inner = _box(lay["bounds"])
+        outer = layout_lib.Box(
+            (inner.lo[0] - MARGIN - rf, inner.lo[1], inner.lo[2] - MARGIN - rf),
+            (inner.hi[0] + MARGIN + rf, inner.hi[1] + hr, inner.hi[2] + MARGIN + rf),
         )
-    if len(prompt) > theme_lib.MAX_TEXT * 5:
-        raise ShellError(
-            f"the prompt is longer than {theme_lib.MAX_TEXT * 5} characters"
-        )
-    inner = _box(lay["bounds"])
-    bounds = layout_lib.Box(
-        (inner.lo[0] - MARGIN - rf, inner.lo[1], inner.lo[2] - MARGIN - rf),
-        (inner.hi[0] + MARGIN + rf, inner.hi[1] + hr, inner.hi[2] + MARGIN + rf),
-    )
+    else:
+        if _box(lay["bounds"]) != bounds:
+            raise ShellError("a fitted layout's bounds are its site")
+        inner = _site_interior(bounds, hr)
+        outer = _site_bounds(bounds, rf)
     clear: list[Volume] = []
     for key, kind in (
         ("keepouts", "keepout"),
@@ -393,23 +472,21 @@ def spec_from_layout(
     if not entrances:
         raise ShellError("the layout has no entrance: a shell needs a doorway")
     for e in entrances:
-        clear.append(Volume(f"door-{e['id']}", "doorway", doorway(e, bounds)))
+        if bounds is None:
+            clear.append(Volume(f"door-{e['id']}", "doorway", doorway(e, outer)))
+        elif (way := _doorway(e, bounds)) is not None:
+            clear.append(Volume(f"door-{e['id']}", "doorway", way))
     # Last, so a cell in a keep-out, corridor or chase is reported as that. Before D389 the rest
     # of the layout's interior below the roof was kept empty too (walls stood in the margin ring
     # only); an open interior leaves it to the shell: the machines' service space is their
     # keep-out rings and the corridors, and their runs go through the chases (WO-10.5).
-    if not interior_open:
+    if not interior_open and bounds is None:
         clear.append(Volume(INTERIOR, "interior", inner))
     first = entrances[0]
-    rules: dict[str, tuple[str, ...]] = {}
-    if theme is not None:
-        rules = {k: tuple(getattr(theme, k)) for k in theme_lib.RULE_KEYS}
-        if (a := theme.adaptation(line_type)) is not None:
-            rules["adapt"] = (a,)
     return Spec(
         layout=str(lay["id"]),
         plans=tuple(str(p["id"]) for p in lay.get("plans", [])),
-        bounds=bounds,
+        bounds=outer,
         interior=inner,
         clear=tuple(clear),
         swatches=tuple(swatches),
@@ -420,11 +497,142 @@ def spec_from_layout(
         max_blocks=mb,
         headroom=hr,
         relief=rf,
-        interior_open=interior_open,
-        theme_rules=rules,
+        interior_open=interior_open or bounds is not None,
+        theme_rules=_rules(theme, line_type),
         origin=_box(first).lo,
         origin_entrance=str(first["id"]),
         origin_side=str(first.get("side")),
+        mode="layout" if bounds is None else "site",
+        site=bounds,
+    )
+
+
+# --- site mode (D422) ----------------------------------------------------------------------
+
+
+def program_rows(program: Program, opts: Options) -> list[dict[str, Any]]:
+    """The script's PROGRAM: one row per distinct keep-out size (as the footprint faces) with
+    how many machines have it, their ids and names; the largest first."""
+    from gregtec.build import fit
+
+    rows: dict[tuple[int, int, int], list[tuple[str, str]]] = {}
+    for n, inst in enumerate(program.instances, 1):
+        name = inst.name or inst.footprint.name or f"mte:{inst.mte}"
+        rows.setdefault(fit.keep_size(inst.footprint, opts), []).append((f"m{n}", name))
+    return [
+        {
+            "keepout": list(k),
+            "count": len(got),
+            "ids": [i for i, _ in got],
+            "names": sorted({name for _, name in got}),
+        }
+        for k, got in sorted(
+            rows.items(), key=lambda r: (-r[0][0] * r[0][1] * r[0][2], r[0])
+        )
+    ]
+
+
+def site_of(
+    program: Program,
+    opts: Options | None = None,
+    headroom: int | None = None,
+    factor: float = SITE_FACTOR,
+) -> Box:
+    """The SITE a building for ``program`` stands in (D422): a square of side
+    ``max(ceil(sqrt(factor * (1 + buffer) * the keep-outs' floor)), widest keep-out + 2)``,
+    ``max(cap_height, SITE_HEIGHT) + headroom`` high, from [0, 0, 0]."""
+    from gregtec.build import fit
+    from gregtec.build import layout as layout_lib
+
+    opts = opts or layout_lib.Options()
+    _, hr = options(None, headroom)
+    if not SITE_FACTORS[0] <= factor <= SITE_FACTORS[1]:
+        raise ShellError(
+            f"the site factor must be from {SITE_FACTORS[0]} to {SITE_FACTORS[1]}"
+        )
+    sizes = [fit.keep_size(i.footprint, opts) for i in program.instances]
+    if not sizes:
+        raise ShellError("no placements: none of the plans' machines has a footprint")
+    area = sum(x * z for x, _, z in sizes)
+    side = max(
+        math.ceil(math.sqrt(factor * (100 + opts.buffer) / 100 * area)),
+        max(max(x, z) for x, _, z in sizes) + 2,
+    )
+    height = max(fit.need(program, opts)["cap_height"], SITE_HEIGHT) + hr
+    return layout_lib.Box((0, 0, 0), (side - 1, height - 1, side - 1))
+
+
+def spec_for_site(
+    program: Program,
+    site: Box,
+    swatches: Sequence[Swatch],
+    opts: Options | None = None,
+    *,
+    theme: theme_lib.Theme | None = None,
+    prompt: str = "",
+    line_type: str = theme_lib.GENERAL,
+    max_blocks: int | None = None,
+    headroom: int | None = None,
+    relief: int | None = None,
+) -> Spec:
+    """A site build's design-time spec (D422): nothing is kept clear yet (the machines are
+    fitted into the building afterwards), the bounding volume is ``site`` grown by the relief,
+    the interior the site below its headroom; NEED and PROGRAM are the program's. The palette
+    must already have passed :func:`check_palette`."""
+    from gregtec.build import fit
+    from gregtec.build import layout as layout_lib
+
+    opts = opts or layout_lib.Options()
+    mb, hr, rf = _inputs(max_blocks, headroom, relief, line_type, prompt)
+    if site.lo != (0, 0, 0):
+        raise ShellError("a site starts at [0, 0, 0]")
+    return Spec(
+        layout="",
+        plans=tuple(str(p["id"]) for p in program.plans),
+        bounds=_site_bounds(site, rf),
+        interior=_site_interior(site, hr),
+        clear=(),
+        swatches=tuple(swatches),
+        theme=None if theme is None else f"{theme.id}@v{theme.v}",
+        theme_name=None if theme is None else theme.name,
+        prompt=prompt,
+        line_type=line_type,
+        max_blocks=mb,
+        headroom=hr,
+        relief=rf,
+        interior_open=True,
+        theme_rules=_rules(theme, line_type),
+        origin=site.lo,
+        mode="site",
+        site=site,
+        need=fit.need(program, opts),
+        program=tuple(program_rows(program, opts)),
+    )
+
+
+def fitted_spec(site_spec: Spec, lay: Mapping[str, Any]) -> Spec:
+    """The gate's spec of a site build once its machines are fitted (``lay``, the fitted
+    layout): every keep-out, corridor, chase and doorway kept clear, the same bounding volume,
+    palette, theme and options as ``site_spec``."""
+    if site_spec.mode != "site" or site_spec.site is None:
+        raise ShellError("not a site spec")
+    got = spec_from_layout(
+        lay,
+        site_spec.swatches,
+        prompt=site_spec.prompt,
+        line_type=site_spec.line_type,
+        max_blocks=site_spec.max_blocks,
+        headroom=site_spec.headroom,
+        relief=site_spec.relief,
+        bounds=site_spec.site,
+    )
+    return replace(
+        got,
+        theme=site_spec.theme,
+        theme_name=site_spec.theme_name,
+        theme_rules=site_spec.theme_rules,
+        need=site_spec.need,
+        program=site_spec.program,
     )
 
 
@@ -742,7 +950,7 @@ def script_facts(spec: Spec) -> dict[str, Any]:
         k = count.get(s.role, 0)
         count[s.role] = k + 1
         pal.append({"role": s.role, "n": k, "block": s.entry.key, "note": s.note})
-    return {
+    facts: dict[str, Any] = {
         "bounds": spec.bounds.to_json(),
         "walls": spec.walls.to_json(),
         "relief": spec.relief,
@@ -759,6 +967,16 @@ def script_facts(spec: Spec) -> dict[str, Any]:
             {"id": v.id, "kind": v.kind, **v.box.to_json()} for v in spec.clear
         ],
     }
+    if spec.mode == "site" and spec.site is not None:
+        # site mode (D422): nothing is kept clear while the building is designed (KEEP_CLEAR
+        # and DOORWAYS are []); the script sizes the building with covered() against NEED
+        facts |= {
+            "site": spec.site.to_json(),
+            "need": dict(spec.need or {}),
+            "program": [dict(r) for r in spec.program],
+            "floor_y": spec.site.lo[1],
+        }
+    return facts
 
 
 def _script(b: _Builder, op: Mapping[str, Any], n: int) -> None:
@@ -1079,20 +1297,33 @@ def design(
     ops: Sequence[Mapping[str, Any]],
     source: str = "architect",
     script_timeout: float | None = None,
+    compiled: Compiled | None = None,
 ) -> Outcome:
     """Compile, inspect, repair or refuse (D317). An accepted or repaired outcome's cells are
-    clean by :func:`inspect` and pass the palette rule; a refused one has none."""
+    clean by :func:`inspect` and pass the palette rule; a refused one has none.
+
+    ``compiled`` is ``ops`` already compiled (against a spec with the same bounding volume): a
+    site build's are compiled once, fitted, then gated (D422). In site mode a block in a volume
+    kept clear is never repaired away: the fitter put the volumes in the building's air, so a
+    breach is a fitter bug and raises."""
     if source not in SOURCES:
         raise ValueError(source)
 
     def refuse(*why: str, f: Findings | None = None) -> Outcome:
         return Outcome("refused", source, {}, {}, tuple(why), findings=f)
 
-    try:
-        got = compile_ops(spec, ops, script_timeout)
-    except ShellError as exc:
-        return refuse(str(exc))
+    if compiled is not None:
+        got = compiled
+    else:
+        try:
+            got = compile_ops(spec, ops, script_timeout)
+        except ShellError as exc:
+            return refuse(str(exc))
     f = inspect(spec, got.cells, got.outside)
+    if spec.mode == "site" and f.breaches:
+        raise AssertionError(
+            f"the fitted volumes hold the building's blocks: {dict(sorted(f.breaches.items()))}"
+        )
     if f.foreign:
         return refuse(
             "states outside the palette (shells hold the palette's plain blocks only): "
@@ -1153,9 +1384,15 @@ def _words(spec: Spec, key: str) -> str:
     return " ".join(spec.theme_rules.get(key, ())).lower()
 
 
-def procedural(spec: Spec) -> list[dict[str, Any]]:
+def procedural(spec: Spec, fit: bool = False) -> list[dict[str, Any]]:
     """The fallback and test baseline: walls, pillars, plinth, eaves band, windows, roof and
-    lights from the theme's rules and the palette's roles. Always clean by :func:`inspect`."""
+    lights from the theme's rules and the palette's roles. Always clean by :func:`inspect`.
+
+    ``fit=True`` composes on a site spec (:func:`spec_for_site`; D422, the CI path of site
+    mode): the same building round the whole site, with a doorway ``door_height`` high and
+    three wide in the middle of its west wall for the fitter to find."""
+    if fit != (spec.mode == "site"):
+        raise ShellError("procedural(fit=True) composes on a site spec, and only there")
     roles = spec.roles()
     top = spec.wall_top
     ops: list[dict[str, Any]] = [{"op": "walls", "role": "wall", "y": [0, top]}]
@@ -1224,15 +1461,31 @@ def procedural(spec: Spec) -> list[dict[str, Any]]:
         ops.append({"op": "lights", "role": "light", "every": 6})
     for v in spec.doorways():
         ops.append({"op": "clear", "lo": list(v.box.lo), "hi": list(v.box.hi)})
+    if fit:
+        mid = (b.lo[2] + b.hi[2]) // 2
+        top = int((spec.need or {}).get("door_height", 3)) - 1
+        ops.append(
+            {"op": "clear", "lo": [b.lo[0], 0, mid - 1], "hi": [b.lo[0], top, mid + 1]}
+        )
     return ops
 
 
 # --- outputs -------------------------------------------------------------------------------
 
 
-def build_id(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> str:
-    """``sh-`` + 12 hex: the same layout, palette, options and operations give the same id."""
-    payload = {
+def build_id(
+    spec: Spec,
+    ops: Sequence[Mapping[str, Any]],
+    program: Mapping[str, Any] | None = None,
+    entrance: Mapping[str, Any] | None = None,
+    zones: Sequence[Mapping[str, Any]] = (),
+) -> str:
+    """``sh-`` + 12 hex: the same layout, palette, options and operations give the same id.
+
+    A site build (D422) is named by its site, its program (``program.json``, hashed), the
+    answer's entrance and zones instead of the layout, which is derived from them; a layout
+    build's payload is unchanged."""
+    payload: dict[str, Any] = {
         "layout": spec.layout,
         "theme": spec.theme,
         "palette": [[s.role, s.entry.key] for s in spec.swatches],
@@ -1246,6 +1499,18 @@ def build_id(spec: Spec, ops: Sequence[Mapping[str, Any]]) -> str:
         payload["relief"] = spec.relief
     if spec.interior_open:  # and from before D389
         payload["interior_open"] = True
+    if spec.mode == "site" and spec.site is not None:
+        del payload["layout"]
+        prog = json.dumps(
+            program, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        payload |= {
+            "mode": "site",
+            "site": spec.site.to_json(),
+            "program": hashlib.sha256(prog.encode("utf-8")).hexdigest()[:12],
+            "entrance": None if entrance is None else dict(entrance),
+            "zones": [dict(z) for z in zones] or None,
+        }
     text = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
@@ -1370,4 +1635,9 @@ def spec_json(spec: Spec) -> dict[str, Any]:
             {"role": s.role, "block": s.entry.key, "note": s.note}
             for s in spec.swatches
         ],
+        **(
+            {"site": spec.site.to_json(), "need": dict(spec.need or {})}
+            if spec.mode == "site" and spec.site is not None
+            else {}
+        ),
     }
