@@ -971,7 +971,13 @@ def test_covered_measures_the_blocks_placed_so_far() -> None:
     # (the slab far outside the site is not the building's); then one column 3 high
     assert ran.log == ("140 35 200 60", "139 35")
     got = floor.measure(ran.cells, site, facts["need"])
-    assert got == {"volume": 139, "floor": 35, "need_volume": 200, "short_by": 61}
+    assert got == {
+        "volume": 139,
+        "floor": 35,
+        "need_volume": 200,
+        "short_by": 61,
+        "need_floor": 0,
+    }
 
 
 def test_covered_is_a_site_builds_only() -> None:

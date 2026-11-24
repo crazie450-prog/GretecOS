@@ -767,8 +767,10 @@ def refit(
     saved, _, opts = shell_store._program(home, build)
     if json.loads(json.dumps(prog.to_json(opts))) == saved:
         same = (
-            f"the plans' machines are the ones {build} was fitted for: nothing changes "
-            "(nothing was written)",
+            (
+                f"the plans' machines are the ones {build} was fitted for: nothing changes "
+                "(nothing was written)"
+            ),
         )
         out = shell.Outcome("refused", rec["source"], {}, {}, same)
         return Revised(ds, build, build, out, (), (), same, False, None, None)

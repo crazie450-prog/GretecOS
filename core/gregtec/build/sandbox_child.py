@@ -257,8 +257,8 @@ def _main() -> None:
 
     def covered() -> dict[str, int]:
         """Site mode (D422): the sheltered volume of the blocks placed so far against NEED,
-        {"volume", "floor", "need_volume", "short_by"}; the building is big enough for the
-        fitter to try once short_by <= 0."""
+        {"volume", "floor", "need_volume", "short_by", "need_floor"}; the building is big
+        enough for the fitter to try once short_by <= 0 and floor >= need_floor."""
         return measure(cells, facts["site"], facts["need"])
 
     def _print(*args: object, sep: object = " ", end: object = "") -> None:
@@ -450,6 +450,7 @@ def measure(
         "floor": floor,
         "need_volume": want,
         "short_by": want - volume,
+        "need_floor": int(need.get("floor_required", 0)),
     }
 
 

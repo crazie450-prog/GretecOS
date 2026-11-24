@@ -77,4 +77,5 @@ def measure(
         "floor": len(cols),
         "need_volume": want,
         "short_by": want - volume,
+        "need_floor": int(need.get("floor_required", 0)),
     }

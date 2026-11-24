@@ -204,7 +204,8 @@ def _site_head(made: Any) -> list[tuple[str, object]]:  # noqa: ANN401 - shell_s
         (
             "need",
             (
-                f"roofed air {need['required']} up to {need['cap_height']} high; a doorway "
+                f"roofed air {need['required']} up to {need['cap_height']} high on "
+                f"{need.get('floor_required', 0)} columns of floor; a doorway "
                 f"{need['door_height']} high; a ceiling {need['aisle_height']} high over "
                 "open floor"
             ),

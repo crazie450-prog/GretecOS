@@ -59,6 +59,11 @@ _STEPS: tuple[Column, ...] = ((1, 0), (-1, 0), (0, 1), (0, -1))
 _FAR = 1 << 30
 # the area pass's fallbacks: corner-first from each corner of the site (signs of z and x)
 _CORNERS: tuple[tuple[int, int], ...] = ((1, 1), (1, -1), (-1, 1), (-1, -1))
+# the area pass's fallbacks, in order: from each corner, then hugging walls and machines
+# (the most blocked columns round the keep-out; ties from each corner)
+_FALLBACKS: tuple[tuple[str, int, int], ...] = tuple(
+    (how, sz, sx) for how in ("corner", "contact") for sz, sx in _CORNERS
+)
 
 type Size = tuple[int, int, int]
 
@@ -90,7 +95,10 @@ def need(program: Program, opts: Options) -> dict[str, Any]:
     return {
         "keepout_volume": k,
         "required": -(-k * (100 + opts.buffer) // 100),
-        "floor_area": sum(x * z for x, _, z in sizes),
+        "floor_area": (fa := sum(x * z for x, _, z in sizes)),
+        # the same buffer on the floor: air counted up to cap_height can make up for a
+        # floor smaller than the keep-outs themselves, and the machines stand on the floor
+        "floor_required": -(-fa * (100 + opts.buffer) // 100),
         "tallest": list(tallest),
         "widest": list(widest),
         "door_height": ch,
@@ -367,6 +375,15 @@ class _Sat:
         )
         return total == kx * kz
 
+    def count(self, x: int, z: int, kx: int, kz: int) -> int:
+        """The free columns in the rectangle, clipped to the site."""
+        i0, j0 = max(x - self.x0, 0), max(z - self.z0, 0)
+        i1, j1 = min(x - self.x0 + kx, self.w), min(z - self.z0 + kz, self.d)
+        if i0 >= i1 or j0 >= j1:
+            return 0
+        w1, s = self.w + 1, self.s
+        return s[j1 * w1 + i1] - s[j0 * w1 + i1] - s[j1 * w1 + i0] + s[j0 * w1 + i0]
+
 
 def _rects(cols: set[Column]) -> list[tuple[Column, Column]]:
     """``cols`` cut into rectangles greedily: row by row (z, then x), each as long along x and
@@ -484,11 +501,12 @@ def _best(
     dist: Mapping[Column, int],
     opts: Options,
     turns: dict[tuple[str, str], fp.Footprint],
-    corner: tuple[int, int] | None = None,
+    corner: tuple[str, int, int] | None = None,
 ) -> _Spot | None:
     """The free spot for ``inst`` whose front is nearest by ``dist`` (ties: z, x, facing); with
-    ``corner`` (the signs of z and x), the one nearest that corner of the site instead (by z,
-    then x, then facing; ``dist`` unused)."""
+    ``corner`` ("corner" and the signs of z and x), the one nearest that corner of the site
+    instead (by z, then x, then facing; ``dist`` unused); with ("contact", z sign, x sign) the
+    one with the most blocked columns round its keep-out, ties as for that corner."""
     site, c = packer.site, opts.clearance
     best: tuple[tuple[int, ...], fp.Footprint, int, int] | None = None
     for fi, facing in enumerate(fp.FACINGS):
@@ -505,12 +523,16 @@ def _best(
                 if corner is None:
                     key: tuple[int, ...] = (dist.get((x + fx, z + fz), _FAR), z, x, fi)
                 else:
-                    sz, sx = corner
+                    how, sz, sx = corner
                     key = (
                         z if sz > 0 else -(z + kz - 1),
                         x if sx > 0 else -(x + kx - 1),
                         fi,
                     )
+                    if how == "contact":
+                        ring = (kx + 2) * (kz + 2) - kx * kz
+                        free = sat.count(x - 1, z - 1, kx + 2, kz + 2) - kx * kz
+                        key = (free - ring, *key)
                 if best is None or key < best[0]:
                     best = (key, turned, x, z)
     if best is None:
@@ -575,7 +597,7 @@ def _pack(
     turns: dict[tuple[str, str], fp.Footprint],
     *,
     flow: bool,
-    corner: tuple[int, int] | None = None,
+    corner: tuple[str, int, int] | None = None,
 ) -> list[int]:
     """Place the instances ``order`` into ``placed`` (one already there stays, and in the flow
     pass leads its plan's next machine); the ones that didn't fit. ``corner``: each goes
@@ -687,6 +709,13 @@ def fit(
                 f"[{x},0,{z}]: the machine floor is y 0; leave it air"
             )
         return refuse(msg)
+    fa, fm = want["floor_area"], want["floor_required"]
+    if len(region) < fm:
+        return refuse(
+            f"the roofed floor has {len(region)} columns at least {ch} high joined to the "
+            f"door; the machines' keep-outs cover {fa} columns and need {fm} with "
+            f"{opts.buffer}% more: add at least {fm - len(region)} columns of roofed floor"
+        )
 
     # --- the tallest and widest machines must each have a spot
     turns: dict[tuple[str, str], fp.Footprint] = {}
@@ -751,7 +780,7 @@ def fit(
                 kx, _, kz = sizes[program.instances[n].footprint.key]
                 return (-kx * kz, n)
 
-            def area_pass(corner: tuple[int, int] | None) -> list[int]:
+            def area_pass(corner: tuple[str, int, int] | None) -> list[int]:
                 return _pack(
                     program,
                     sorted(todo, key=area),
@@ -769,7 +798,7 @@ def fit(
             # nearest the lobby can split a hall in two; corner-first packs it from a corner
             if failed:
                 first = (dict(placed), list(failed), set(packer.taken))
-                for corner in _CORNERS:
+                for corner in _FALLBACKS:
                     placed = dict(kept)
                     packer.taken = set(taken)
                     packer._rebuild()

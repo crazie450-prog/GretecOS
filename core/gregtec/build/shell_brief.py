@@ -338,10 +338,11 @@ def system_prompt(mode: str = "layout") -> str:
 SITE_API = (
     "In this mode the script also reads SITE (the box your building stands in, "
     '{"lo", "hi"}; WALLS is the same box), NEED (what the fit needs: required, cap_height, '
-    "door_height, aisle_height, keepout_volume, floor_area, tallest and widest [x, y, z]), "
+    "door_height, aisle_height, keepout_volume, floor_area, floor_required, tallest and "
+    "widest [x, y, z]), "
     "PROGRAM (the machines' keep-outs: rows of keepout [x, y, z], count, ids, names), FLOOR_Y "
-    '(0) and covered(): {"volume", "floor", "need_volume", "short_by"} of the blocks the '
-    "script placed so far, counted as the fit counts them (each roofed column whose y 0 is "
+    '(0) and covered(): {"volume", "floor", "need_volume", "short_by", "need_floor"} of the '
+    "blocks the script placed so far, counted as the fit counts them (each roofed column whose y 0 is "
     "air and at least door_height high, its air up to cap_height). DOORWAYS and KEEP_CLEAR "
     "are empty: nothing is kept clear while you build."
 )
@@ -359,7 +360,8 @@ def site_prompt() -> str:
         "- y 0 is the machine floor: keep it air under your roof (a block at y 0 is not floor).\n"
         "- The roofed floor must hold NEED.required blocks of air, counted up to "
         "NEED.cap_height above y 0 in each column that has a block somewhere above it and at "
-        "least NEED.door_height of air, joined to the door.\n"
+        "least NEED.door_height of air, joined to the door, on at least NEED.floor_required "
+        "such columns.\n"
         "- At least one ground doorway at least NEED.door_height high and 3 wide, with a "
         "straight way out at y 0 to the edge of SITE.\n"
         "- Some ceilings over open floor at least NEED.aisle_height high (the cable chase runs "
@@ -397,7 +399,8 @@ def site_prompt() -> str:
         '    ring((0, 0, 0), (x1, top - 1, z1), "wall")\n'
         '    fill((0, top, 0), (x1, top, z1), "roof")\n'
         "    got = covered()\n"
-        f'    if got["volume"] >= {ROOM} * got["need_volume"] or x1 >= SITE["hi"][0]:\n'
+        f'    big = got["volume"] >= {ROOM} * got["need_volume"]\n'
+        f'    if big and got["floor"] >= {ROOM} * got["need_floor"] or x1 >= SITE["hi"][0]:\n'
         "        break\n"
         "    clear((0, 0, 0), (x1, top, z1))\n"
         '    x1, z1 = x1 + 2, min(z1 + 2, SITE["hi"][2])\n'
@@ -640,7 +643,9 @@ def _site_body(
             f"NEED: roofed air of at least {need['required']} blocks, counted up to "
             f"{need['cap_height']} high (the keep-outs' {need['keepout_volume']} and "
             f"{fit.get('buffer')}% more; about {math.ceil(need['required'] * ROOM)} leaves the "
-            f"fit room); a ground doorway at least {need['door_height']} high and 3 wide with "
+            f"fit room), on at least {need['floor_required']} columns of roofed floor (the "
+            f"keep-outs cover {need['floor_area']}; about "
+            f"{math.ceil(need['floor_required'] * ROOM)} leaves room); a ground doorway at least {need['door_height']} high and 3 wide with "
             "a straight way out of SITE; a ceiling at least "
             f"{need['aisle_height']} high over some open floor; the tallest keep-out "
             f"{tall[0]}x{tall[2]} floor, {tall[1]} high; the widest {wide[0]}x{wide[2]} "

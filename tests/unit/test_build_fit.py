@@ -348,6 +348,17 @@ def test_two_machines_in_a_square_hall_with_a_middle_door() -> None:
     assert lay["fit"]["pass"] == "area"
 
 
+def test_hugging_walls_and_machines_packs_what_corners_do_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fs = [CUBE, LONG, TALL, WIDE]
+    cells = door(building(rect(0, 0, 15, 13), 7), "west", 0, 1)
+    assert fitted(fs, cells)["fit"]["pass"] == "area"
+    corners = tuple(f for f in fit._FALLBACKS if f[0] == "corner")
+    monkeypatch.setattr(fit, "_FALLBACKS", corners)
+    assert not run(fs, cells).ok
+
+
 def test_a_porch_in_the_way_closes_a_doorway() -> None:
     cells = building(rect(3, 0, 15, 12), 5)
     cells = door(door(cells, "west", 3, 5), "east", 15, 5)
@@ -386,31 +397,53 @@ def volume_hall(h: int) -> set[Cell]:
     return door(building(rect(0, 0, 14, 6), h), "west", 0, 2)
 
 
+def low_hall() -> set[Cell]:
+    """volume_hall(5) with its ceiling one lower (4 high) but over three lobby columns, which
+    keep the chase's 5: the floor stays 68 columns, the air drops to 3 x 5 + 62 x 4 + 9."""
+    return volume_hall(5) | {
+        (x, 4, z) for x in range(1, 14) for z in range(1, 6) if not (x <= 3 and z == 3)
+    }
+
+
 def test_exactly_the_volume_needed_passes() -> None:
-    # two 3 x 3 x 3 machines: keep-outs 5 x 4 x 5 = 100 each; +67% = 334 needed. The hall
-    # holds 13 x 5 columns x 5 high (the cap: corridor 3 + chase 2) + 3 door columns x 3
-    opts = layout.Options(buffer=67)
-    cells = volume_hall(5)
+    # two 3 x 3 x 3 machines: keep-outs 5 x 4 x 5 = 100 each; +36% = 272 needed (and 68
+    # columns of floor). The hall holds 272: air counted up to the cap (corridor 3 + chase 2)
+    opts = layout.Options(buffer=36)
+    cells = low_hall()
     lay = fitted([CUBE, CUBE], cells, opts=opts)
-    assert lay["fit"]["need"] == {"keepout_volume": 200, "required": 334}
-    assert lay["fit"]["have"] == {"volume": 334, "volume_raw": 334, "floor": 68}
+    assert lay["fit"]["need"] == {"keepout_volume": 200, "required": 272}
+    assert lay["fit"]["have"] == {"volume": 272, "volume_raw": 272, "floor": 68}
     assert lay["fit"]["spare_pct"] == 0
-    assert lay["options"]["buffer"] == 67
+    assert lay["options"]["buffer"] == 36
     # one block less of roofed air
-    r = run([CUBE, CUBE], cells | {(13, 4, 5)}, opts=opts)
+    r = run([CUBE, CUBE], cells | {(13, 3, 5)}, opts=opts)
     assert r.reasons == [
         (
-            "the roofed floor holds 333 usable blocks (air up to 5 high under your roof; 333 "
-            "counting all headroom); the machines need 334 (keep-outs 200 + 67%): add at least 1"
+            "the roofed floor holds 271 usable blocks (air up to 5 high under your roof; 271 "
+            "counting all headroom); the machines need 272 (keep-outs 200 + 36%): add at least 1"
         )
     ]
-    assert r.stats["volume"] == 333 and r.stats["need"]["required"] == 334
+    assert r.stats["volume"] == 271 and r.stats["need"]["required"] == 272
+
+
+def test_the_floor_needs_the_buffer_too() -> None:
+    # three keep-outs of 5 x 5 cover 75 columns; the hall has 13 x 5 + 3 door columns
+    r = run([CUBE] * 3, volume_hall(5), opts=layout.Options(buffer=0))
+    assert r.reasons == [
+        (
+            "the roofed floor has 68 columns at least 3 high joined to the door; the "
+            "machines' keep-outs cover 75 columns and need 75 with 0% more: add at least 7 "
+            "columns of roofed floor"
+        )
+    ]
+    # the default buffer: 25% more floor than the keep-outs
+    assert fit.need(program_of(CUBE, CUBE), OPTS)["floor_required"] == 63
 
 
 def test_headroom_over_the_cap_is_not_counted() -> None:
-    lay = fitted([CUBE, CUBE], volume_hall(9), opts=layout.Options(buffer=67))
+    lay = fitted([CUBE, CUBE], volume_hall(9), opts=layout.Options(buffer=36))
     assert lay["fit"]["have"] == {
-        "volume": 334,
+        "volume": 13 * 5 * 5 + 9,
         "volume_raw": 13 * 5 * 9 + 9,
         "floor": 68,
     }
@@ -520,11 +553,12 @@ def test_spacing_is_kept_between_keep_outs() -> None:
 
 
 def test_a_packing_refusal_names_what_did_not_fit() -> None:
-    r = run([CUBE] * 3, volume_hall(5), opts=layout.Options(buffer=0))
+    hall = door(building(rect(0, 0, 16, 6), 5), "west", 0, 2)
+    r = run([CUBE] * 3, hall, opts=layout.Options(buffer=0))
     assert r.reasons == [
         (
             "placed 2 of 3: m3 did not fit (keep-outs m3 5x5 floor 4 high); largest free floor "
-            "left is 1x5 (h 5) at [13,1]; widen a hall or add one at least 5x5, 4 high, joined "
+            "left is 3x5 (h 5) at [13,1]; widen a hall or add one at least 5x5, 4 high, joined "
             "to the door"
         )
     ]
@@ -685,6 +719,7 @@ def test_need() -> None:
         "keepout_volume": 100 + 175 + 220 + 18,
         "required": -(-(513 * 125) // 100),
         "floor_area": 25 + 25 + 55 + 9,
+        "floor_required": -(-(114 * 125) // 100),
         "tallest": [5, 7, 5],
         "widest": [11, 4, 5],
         "door_height": 3,
