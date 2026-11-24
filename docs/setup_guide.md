@@ -1552,7 +1552,9 @@ More detail: [shells.md](runbooks/shells.md), and [shell_bakeoff.md](runbooks/sh
 
 ## Part 9. The free bake-off
 
-A bake-off gives the same seven building requests to several designers and lets you pick the better building without knowing who drew it. The program's own messages call a request a **case**. In this part the designers are three small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it.
+A bake-off gives the same seven building requests to several designers and lets you pick the better building without knowing who drew it. The program's own messages call a request a **case**. In this part the designers are small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. This part uses three of them. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it. Two more, `fake-cramped` and `fake-tower`, show the refusals of a hall too small for the machines and of floors too narrow for them; [shell_bakeoff.md](runbooks/shell_bakeoff.md) says more. You do not need them here.
+
+Each designer builds first, on an empty plot sized for your machines, and GOS then fits the machines inside the building (since D422; the "site mode" in [`runbooks/shells.md`](runbooks/shells.md)). Your own shells from Part 8 are built the other way round, around the machines' floor plan, and stay that way. The fake halls have no lights, so in the marble temple request the follow-up "no lights" changes nothing: GOS refuses it as "nothing changes". That is expected.
 
 **Paste this first in every new window:**
 
@@ -1602,6 +1604,8 @@ label	provider	model	effort	price	key
 fake-plain	fake	fake-plain	default	free	none needed
 fake-ornate	fake	fake-ornate	default	free	none needed
 fake-sloppy	fake	fake-sloppy	default	free	none needed
+fake-cramped	fake	fake-cramped	default	free	none needed
+fake-tower	fake	fake-tower	default	free	none needed
 # run cap: $10.00, and 1,000,000 tokens for models without a price ([bakeoff] cap_usd, cap_tokens)
 ```
 
@@ -1624,7 +1628,7 @@ Contacts: nothing. Fake models only: free.
 Then a line `Run bo-<date>-<time>-<4 letters or digits> (Ctrl+C stops it cleanly):`. Then, for every building, a line when it is asked (`... asking`) and one when it is done, with how long it took (42 buildings), and after each request a line with what the run has spent so far. Each names a request and a letter A, B or C, never a model. Then:
 
 ```text
-Run bo-...: done. 56 calls, $0.00.
+Run bo-...: done. 61 calls, $0.00.
 Next: look at it in the Build view's Bake-off panel, rate it there or with `gos shell bakeoff rate bo-...`, then `gos shell bakeoff report bo-...`. To remove it: `gos shell bakeoff delete bo-...`.
 ```
 
@@ -1674,7 +1678,7 @@ Click **Name the models and show the report**. Or, from PowerShell:
 & $gos shell bakeoff report $run
 ```
 
-You should see: a table with one line per model. Its columns: your picks, how many answers passed GOS's check at the first try, how many passed in the end, the repair rounds, blocks and cost (free here). The sign that everything worked is the `fake-sloppy` line: `0 of 14` in the column "first try" and `14 of 14` in the column "passed". The command also prints `Written:` and the path of the report file, which ends in `.md` and sits in `%USERPROFILE%\GregtecOS\data\reports`. In that file's second table, the column "why refused" says for `fake-sloppy` why its first try was sent back (a chest, which a shell may not hold).
+You should see: a table with one line per model. Its columns: your picks, how many answers passed GOS's check at the first try, how many passed in the end, the repair rounds, blocks and cost (free here). The sign that everything worked is the `fake-sloppy` line: `0 of 14` in the column "first try" and `13 of 14` in the column "passed" (the one left is the marble temple's "no lights" follow-up, which changes nothing on a hall without lights). The last columns say how the machines fitted: `7 of 7` under "fit ok" for every fake model. The command also prints `Written:` and the path of the report file, which ends in `.md` and sits in `%USERPROFILE%\GregtecOS\data\reports`. In that file's second table, the column "why refused" says for `fake-sloppy` why its first try was sent back (a chest, which a shell may not hold).
 
 After this the picks for this run cannot be changed.
 
@@ -1941,7 +1945,7 @@ Click **Name the models and show the report**, or:
 
 You should see: one line per model, now with its real name. Its columns: your picks, how many answers passed at the first try and in the end, the repair rounds, tokens, cost and seconds. Your usual **Costs** view in the dashboard (key `8`) counts these runs too, under the name `bakeoff`. (GOS calls each kind of AI work a lane. The bake-off is one of them.)
 
-How to read it: **picked** is the only number about looks. **first try**, **passed** and **repair rounds** say how well a model followed the rules. Six requests are a first look, not proof: 4 to 2 can be chance.
+How to read it: **picked** is the only number about looks. **first try**, **passed** and **repair rounds** say how well a model followed the rules. **fit ok**, **rounds to fit**, **placed** and **spare %** say whether its buildings had room for all your machines (GOS places them, the model only builds); **entrance** says whether the model named the main door or GOS picked it. Six requests are a first look, not proof: 4 to 2 can be chance.
 
 If not: `... case(s) are not rated yet`: go back to step 81. `no bake-off run ...`, or an error that says an argument is required: `$run2` is not set in this window. Set it with the two lines at the end of step 80.
 

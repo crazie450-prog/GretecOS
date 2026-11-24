@@ -12,16 +12,26 @@ The shell workbench is the separate window you asked for: the dashboard's **Buil
 - **Compare**: tick two versions: both are drawn side by side, with the materials (each `registry@meta`, the count in each and the change), the block counts and what changed in the operations.
 - **The viewer**: the build guide's 3D drawing. Drag to turn and tilt, the wheel or buttons to zoom, the layer slider with that layer's materials, the whole shell's materials, and the floor plan's machines (solid outline) and keep-outs (dashed) inside the shell as ghosts, so you see the building around the line.
 
+## Two kinds of shell: around the machines, or the building first (D422)
+
+- **Layout-first** (the free **Design new**, `gos shell design`, and every shell saved before WO-10.16): GOS lays the machines out in rows first, then the shell is built around that floor plan. Its keep-outs and corridors are fixed before the building is drawn.
+- **Site mode** (every new AI design: the architect's `build_request` and `build_revise`, and the bake-off): the building comes first. GOS gives the designer a square plot (the SITE) sized from the machines, and how much roofed floor they need (NEED: each machine's keep-out, the body plus a 1-block ring and 1 above, plus 25%, in roofed floor as well as in air). The designer builds anything it likes there: halls, wings, columns, inner walls. Then GOS fits every machine onto the ground floor (y 0) under the roof, around whatever it built, adds the walkways, the cable chase and the door, and checks it with the same gate. Where the machines go is still GOS's choice, never the model's.
+- A site design that is too small, has no door to the outside, has no floor tall enough for the tallest machine or can't be packed is refused with the exact numbers (for example "the roofed floor holds 410 usable blocks ... the machines need 519 ... add at least 109"). The architect gets the reason and tries again.
+- The notes and the result say how the machines fit: "8 machines fitted in the building (pass flow), interior 1289 of 519 needed (+25%), 148% spare, entrance auto".
+- To try a site shell for free yourself: `& $gos shell design <plan-id> --theme th-foundry --mode site` (GOS's own building for the site).
+
 ## How to iterate
 
 1. **Design.** Pick the plan and a theme (or leave it blank: the theme used nearby, else one that fits the line type), set Max blocks or Headroom if you like, press **Design new**. Or say it: "design a foundry shell around my steel line".
 2. **Change it in words.** Type or say what to change: "make the roof steeper", "taller, and no windows on the north wall", "no lights", "fewer pillars", "more windows", "bigger windows", "a parapet", "no plinth". After a shell exists, Chat and voice revise the current shell instead of starting over (the router decides, in code, D369); "design another shell", "start over", or a request to make one ("design a shell around my EBF plan with no windows", "make a gothic theme with no lights") makes a new one, and words about something else ("add more lights to my base", "remove the walls in plan x") are not a revision. In Chat a change needs a part of the building to change ("the roof", "the windows", "the building taller"); in the workbench, Ask the architect takes any words.
-   - **GOS's own reviser** (Revise, or any change while the AI is off) understands the roof (steeper, flatter, flat, a parapet), the height (taller, shorter, `by N`), windows, lights and pillars (none, more, fewer, on or off a side), the plinth and the eaves band. Anything else it says it can't do and writes nothing: ask the architect.
+   - **GOS's own reviser** (Revise, or any change while the AI is off) understands the roof (steeper, flatter, flat, a parapet), the height (taller, shorter, `by N`), windows, lights and pillars (none, more, fewer, on or off a side), the plinth and the eaves band. Anything else it says it can't do and writes nothing: ask the architect. A layout-first shell never goes lower than the machines' height; a site shell may, until the machines no longer fit (then the gate refuses it, naming the machine).
+   - **A site shell's machines are fitted again** into each revised building. Machines whose places still fit stay where they were; only the ones the change displaced move.
    - **The architect** takes any words and changes only what you asked.
    - Either way the gate checks the result like any other design: a refused revision writes nothing and the current version stays.
 3. **Undo.** Say "undo" (or "go back to the previous version"), or press **Make current** on any version.
 4. **Compare** two versions, pick one, make it current.
 5. **Export it**: `& $gos shell export <sh-id>` with the id of the version you chose (the viewer's title and `gos shell versions` show it), then paste it in the Lab ([`shells_lab.md`](shells_lab.md) D).
+   - If the plan or its machines' footprints changed since the shell was designed, export refuses. A layout-first shell must be designed again. A site shell says whether its building still holds the new machines: if it does, `& $gos shell refit <sh-id>` makes a new version with the same building and the machines fitted again (free, no AI), and you export that one; if not, revise the building (make it bigger).
 
 ## Known limits
 
@@ -37,9 +47,11 @@ Some phrasings in Chat or voice neither design a shell nor revise the current on
 & $gos shell undo                          # the current version's parent is current again
 & $gos shell current <ds-id> <sh-id>       # any version current
 & $gos shell compare <sh-id> <sh-id>       # materials and block counts side by side
+& $gos shell refit <sh-id>                 # a site shell: today's machines fitted into the same building
+& $gos shell design <plan-id> --theme th-foundry --mode site   # GOS's own site building (free)
 ```
 
-`revise` exits 0 saved, 1 refused (nothing written), 2 bad input.
+`revise` and `refit` exit 0 saved, 1 refused (nothing written), 2 bad input. `refit` works on the current version of its design only.
 
 ## The revise eval
 
@@ -47,6 +59,6 @@ Some phrasings in Chat or voice neither design a shell nor revise the current on
 
 ## Where things are
 
-- Builds (versions): `GOS_HOME\data\build\shells\<sh-id>\` (written once, never changed).
+- Builds (versions): `GOS_HOME\data\build\shells\<sh-id>\` (written once, never changed). A site shell's folder also has `program.json` (the machines it was fitted with) and, when it kept an earlier version's places, `prior.json` (that version's floor plan).
 - Designs (the chains): `GOS_HOME\data\build\designs\<ds-id>.json`, and `current.json` (the design you work on).
 - A shell made before WO-10.10 shows as a one-version design and gets its file the first time you revise it or make a version current.

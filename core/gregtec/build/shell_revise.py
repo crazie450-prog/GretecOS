@@ -11,7 +11,9 @@ changes only what the words name; everything else is copied as it was. What it u
   ``parapet`` / ``no parapet``;
 - the height: ``taller`` / ``higher`` and ``shorter`` / ``lower`` (by 2 blocks, or ``by N``):
   the walls' top, the roof and the lights move together, the headroom with them; never lower
-  than the machines' space (the layout's top: the walls must close it);
+  than the machines' space (the layout's top: the walls must close it). A site build (D422)
+  has no layout top: it may go lower, and the fit refuses a building too low for its machines
+  (its HEIGHT or VOLUME reason);
 - windows, lights, pillars: ``no ...`` / ``without ...`` / ``remove ...`` (optionally ``on the
   north (and east) wall(s)`` for windows), ``add ...`` / ``... on the north wall``, ``more`` /
   ``fewer``, and for windows ``bigger`` / ``wider`` / ``smaller`` / ``narrower`` / ``taller``;
@@ -174,6 +176,8 @@ class _Ops:
         self.short = min(hi[0] - lo[0], hi[2] - lo[2]) + 1
         self.span_x, self.span_z = hi[0] - lo[0] + 1, hi[2] - lo[2] + 1
         self.roles = {str(p["role"]) for p in rec["palette"]}
+        fit = rec.get("fit")
+        self.site = isinstance(fit, Mapping) and fit.get("mode") == "site"  # D422
 
     def of(self, kind: str, role: str | None = None) -> list[dict[str, Any]]:
         return [
@@ -370,7 +374,8 @@ def _parapet(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None
 
 
 def _height(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
-    whole = [w for w in (*o.of("walls"), *o.of("roof")) if "lo" not in w]
+    # a site build's (D422) walls and roof stand in volumes of their own: still the building's
+    whole = [w for w in (*o.of("walls"), *o.of("roof")) if "lo" not in w or o.site]
     if o.of("script") and not whole:
         impossible.append(
             f"{c!r}: this version's walls and roof are drawn by its build script, which sets "
@@ -379,7 +384,15 @@ def _height(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
         )
         return
     k = _by(c)
-    if _SHORTER.search(c):
+    dh = k  # the headroom's change
+    if _SHORTER.search(c) and o.site:
+        # D422: no layout top to close; the fit refuses a building too low for its machines.
+        # The headroom gives up only what the roof stood above the machines' space.
+        if o.roof_at() - k <= o.floor:
+            impossible.append(f"{c!r}: {k} lower puts the roof on the floor")
+            return
+        k, dh = -k, -min(k, max(o.raise_by(), 0))
+    elif _SHORTER.search(c):
         up = o.raise_by()
         if up <= 0:
             impossible.append(
@@ -387,11 +400,11 @@ def _height(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
                 "lower would leave the line open"
             )
             return
-        k = -min(k, up)
+        k = dh = -min(k, up)
     _, _, top = shell.LIMITS["headroom"]
-    if o.headroom + k > top:
+    if o.headroom + dh > top:
         impossible.append(
-            f"{c!r}: {k} higher needs headroom {o.headroom + k}, more than {top}"
+            f"{c!r}: {k} higher needs headroom {o.headroom + dh}, more than {top}"
         )
         return
     old_top = o.wall_top + o.raise_by()
@@ -405,26 +418,42 @@ def _height(o: _Ops, c: str, changes: list[str], impossible: list[str]) -> None:
                     int(y) + k if isinstance(y, int) else [int(y[0]) + k, int(y[1]) + k]
                 )
     for w in o.of("walls"):
-        if "lo" in w:
+        if "lo" in w and not o.site:
             continue
-        y0, y1 = o.y(w, o.floor, o.wall_top)
+        y0, y1 = _span(o, w)
         if y1 >= old_top:  # the walls' top course (and the eaves band on it) moves up
             w["y"] = [y0 + k if y0 == y1 else y0, y1 + k]
+            _grow(w, old_top, k)
     for p in o.of("pillars"):
-        if "lo" in p:
+        if "lo" in p and not o.site:
             continue
-        y0, y1 = o.y(p, o.floor, o.wall_top)
+        y0, y1 = _span(o, p)
         if y1 >= old_top:
             p["y"] = [y0, y1 + k]
+            _grow(p, old_top, k)
     for op in (*o.of("roof"), *o.of("lights")):
         if "lo" in op:
             continue
         op["y"] = int(op.get("y", o.roof_y)) + k
-    o.headroom += k
+    o.headroom += dh
     changes.append(
         f"{abs(k)} block{'s' if abs(k) != 1 else ''} {'taller' if k > 0 else 'shorter'}: "
         f"walls to {old_top + k}, roof at {o.roof_at()}, headroom {o.headroom}"
     )
+
+
+def _span(o: _Ops, op: Mapping[str, Any]) -> list[int]:
+    """An op's rows: its ``y``, else its volume's height (a site hall's, D422), else the
+    walls'."""
+    if "lo" in op:
+        return o.y(op, int(op["lo"][1]), int(op["hi"][1]))
+    return o.y(op, o.floor, o.wall_top)
+
+
+def _grow(op: dict[str, Any], old_top: int, k: int) -> None:
+    """A site hall's wall or pillar volume (D422) moves its top with the walls' top."""
+    if "hi" in op and int(op["hi"][1]) >= old_top:
+        op["hi"] = [op["hi"][0], int(op["hi"][1]) + k, op["hi"][2]]
 
 
 def _sides(c: str) -> list[str]:

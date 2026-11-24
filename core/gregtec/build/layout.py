@@ -102,10 +102,13 @@ LIMITS: dict[str, tuple[int, int, int]] = {
     # inner walls, columns and courtyards; 0 packs them flush as before
     "spacing": (0, 0, 8),
     "band_gap": (0, 0, 16),
+    # site mode (D422): the interior a building must hold, as a percentage over the machines'
+    # keep-out volume (gregtec.build.fit)
+    "buffer": (25, 0, 100),
 }
-# options a layout's id and JSON leave out while they are 0, so layouts from before D389 keep
-# their ids
-_NEW = ("spacing", "band_gap")
+# options a layout's id and JSON leave out while they are at their default, so layouts from
+# before D389 (spacing, band_gap) and D422 (buffer) keep their ids
+_NEW = ("spacing", "band_gap", "buffer")
 
 
 @dataclass(frozen=True)
@@ -118,6 +121,7 @@ class Options:
     max_run: int = LIMITS["max_run"][0]
     spacing: int = LIMITS["spacing"][0]
     band_gap: int = LIMITS["band_gap"][0]
+    buffer: int = LIMITS["buffer"][0]
 
     def __post_init__(self) -> None:
         for name, (_, lo, hi) in LIMITS.items():
@@ -141,6 +145,11 @@ class Options:
             except ValueError:
                 raise LayoutError(f"option {name} must be a whole number") from None
         return cls(**out)
+
+
+def options_json(opts: Options) -> dict[str, int]:
+    """The options as a layout's JSON and id carry them: the newer ones only off default."""
+    return {k: v for k, v in asdict(opts).items() if k not in _NEW or v != LIMITS[k][0]}
 
 
 @dataclass(frozen=True)
@@ -368,6 +377,136 @@ def instances(
     return out, unplaced
 
 
+@dataclass(frozen=True)
+class Program:
+    """What a layout places, apart from where (D422): the plans' machines in layout order, the
+    nodes left unplaced, the services between them and the warnings that don't depend on the
+    geometry. Placement ``m<i>`` is ``instances[i - 1]``, so ``services`` name machines by the
+    ids a layout that places every instance gives them."""
+
+    plans: tuple[dict[str, Any], ...]  # id, name and kind of each plan
+    gt: str | None
+    run: int | str | None
+    instances: tuple[Instance, ...]
+    unplaced: tuple[dict[str, Any], ...]
+    # controller (registry@meta) -> its variants and sizes, when it has more than one
+    variants: dict[str, list[tuple[str, fp.Offset]]]
+    services: tuple[dict[str, Any], ...]
+    service_warnings: tuple[str, ...]
+
+    def to_json(self, opts: Options) -> dict[str, Any]:
+        """``program.json`` (D422): enough to fit or refit without the plans or the DB."""
+        from gregtec.build import fit  # the need is the fitter's rule
+
+        prints = {i.footprint.key: i.footprint for i in self.instances}
+        return {
+            "v": 1,
+            "options": asdict(opts),
+            "plans": [dict(p) for p in self.plans],
+            "gt": self.gt,
+            "run": self.run,
+            "footprints": {k: prints[k].to_json() for k in sorted(prints)},
+            "instances": [
+                {
+                    "id": f"m{n}",
+                    "plan": i.plan,
+                    "node": i.node,
+                    "role": i.role,
+                    "mte": i.mte,
+                    "kind": i.kind,
+                    "name": i.name,
+                    "tier": i.tier,
+                    "variant": i.footprint.variant,
+                    "source": i.footprint.source,
+                    "footprint": i.footprint.key,
+                }
+                for n, i in enumerate(self.instances, 1)
+            ],
+            "unplaced": [dict(u) for u in self.unplaced],
+            "variants": {
+                k: [[name, list(size)] for name, size in v]
+                for k, v in sorted(self.variants.items())
+            },
+            "services": [dict(x) for x in self.services],
+            "warnings": list(self.service_warnings),
+            "need": fit.need(self, opts),
+        }
+
+    @classmethod
+    def from_json(cls, d: Mapping[str, Any]) -> tuple[Program, Options]:
+        """The inverse of :meth:`to_json`, with the options it was saved with."""
+        if d.get("v") != 1:
+            raise LayoutError(f"not a v1 program: v{d.get('v')!r}")
+        prints = {k: fp.Footprint.from_json(v) for k, v in d["footprints"].items()}
+        insts = tuple(
+            Instance(
+                str(i["plan"]),
+                str(i["node"]),
+                str(i["role"]),
+                int(i["mte"]),
+                str(i["kind"]),
+                i.get("name"),
+                i.get("tier"),
+                prints[i["footprint"]],
+            )
+            for i in d["instances"]
+        )
+        prog = cls(
+            plans=tuple(dict(p) for p in d["plans"]),
+            gt=d.get("gt"),
+            run=d.get("run"),
+            instances=insts,
+            unplaced=tuple(dict(u) for u in d.get("unplaced", [])),
+            variants={
+                k: [(str(name), (s[0], s[1], s[2])) for name, s in v]
+                for k, v in d.get("variants", {}).items()
+            },
+            services=tuple(dict(x) for x in d.get("services", [])),
+            service_warnings=tuple(str(w) for w in d.get("warnings", [])),
+        )
+        known = {k: int(v) for k, v in (d.get("options") or {}).items() if k in LIMITS}
+        return prog, Options(**known)
+
+
+def program(conn: sqlite3.Connection, plans: Sequence[Mapping[str, Any]]) -> Program:
+    """The machines ``plans`` (in order) place, their footprints read from the DB once."""
+    if not plans:
+        raise LayoutError("a layout needs at least one plan")
+    ids = [str(p.get("id", "?")) for p in plans]
+    if len(set(ids)) != len(ids):
+        raise LayoutError("a plan is named twice")
+    footprints = _Footprints(
+        conn,
+        {
+            m[0]
+            for p in plans
+            for n in p.get("nodes", [])
+            if isinstance(n, Mapping)
+            for m in _machines_of(p, n)
+        },
+    )
+    items, unplaced = instances(plans, footprints)
+    # every instance placed as m<i>: the services name them so (fit places all or none)
+    every = [
+        {"id": f"m{n}", "plan": i.plan, "node": i.node, "role": i.role, "tier": i.tier}
+        for n, i in enumerate(items, 1)
+    ]
+    flows, flow_warnings = services(plans, every)
+    return Program(
+        plans=tuple(
+            {"id": pid, "name": p.get("name"), "kind": p.get("kind")}
+            for pid, p in zip(ids, plans, strict=True)
+        ),
+        gt=next((p.get("gt") for p in plans if p.get("gt")), None),
+        run=next((p.get("run") for p in plans if p.get("run") is not None), None),
+        instances=tuple(items),
+        unplaced=tuple(unplaced),
+        variants=footprints.variants,
+        services=tuple(flows),
+        service_warnings=tuple(flow_warnings),
+    )
+
+
 # --- packing --------------------------------------------------------------------------------
 
 
@@ -418,23 +557,10 @@ def plan_layout(
     options: Options | None = None,
 ) -> dict[str, Any]:
     """The layout of ``plans`` (in order) as its JSON. Reads the DB; writes nothing."""
-    if not plans:
-        raise LayoutError("a layout needs at least one plan")
+    prog = program(conn, plans)
     opts = options or Options()
-    ids = [str(p.get("id", "?")) for p in plans]
-    if len(set(ids)) != len(ids):
-        raise LayoutError("a plan is named twice")
-    footprints = _Footprints(
-        conn,
-        {
-            m[0]
-            for p in plans
-            for n in p.get("nodes", [])
-            if isinstance(n, Mapping)
-            for m in _machines_of(p, n)
-        },
-    )
-    items, unplaced = instances(plans, footprints)
+    ids = [p["id"] for p in prog.plans]
+    items, unplaced = list(prog.instances), list(prog.unplaced)
     c, ct, W, H = (
         opts.clearance,
         opts.clearance_top,
@@ -475,14 +601,11 @@ def plan_layout(
                 sx, sy, sz = turned.size
                 x0 = W + xo
                 kz_lo = z0 - (sz + 2 * c) if row.side == "north" else z0 + W
-                keep = Box(
-                    (x0, 0, kz_lo),
-                    (x0 + sx + 2 * c - 1, sy - 1 + ct, kz_lo + sz + 2 * c - 1),
-                )
                 body = Box(
                     (x0 + c, 0, kz_lo + c),
                     (x0 + c + sx - 1, sy - 1, kz_lo + c + sz - 1),
                 )
+                keep = keepout_of(body, c, ct)
                 slots[idx] = (inst, turned, keep, body, cid, hid)
         z = z0 + W + band.south.depth(kz)
     for idx in sorted(slots):  # ids in layout order: m1 is the most upstream machine
@@ -515,7 +638,7 @@ def plan_layout(
         for p in placements
         if p["kind"] == "multiblock" and not p["hatches"]
     ]
-    warnings += _variant_warnings(placements, footprints.variants)
+    warnings += _variant_warnings(placements, prog.variants)
     warnings += [
         f"{u['plan']} {u['node']}: {u['count']}x mte:{u['mte']} not placed: no footprint"
         for u in unplaced
@@ -530,7 +653,7 @@ def plan_layout(
         "gt": next((p.get("gt") for p in plans if p.get("gt")), None),
         "run": next((p.get("run") for p in plans if p.get("run") is not None), None),
         "axes": AXES,
-        "options": {k: v for k, v in asdict(opts).items() if k not in _NEW or v},
+        "options": options_json(opts),
         "bounds": {**bounds.to_json(), "size": list(bounds.size)},
         "placements": placements,
         "keepouts": keepouts,
@@ -567,6 +690,15 @@ def _variant_warnings(
             "the variant its recipe needs isn't in the DB, so check the size before building"
         )
     return out
+
+
+def keepout_of(body: Box, c: int, ct: int) -> Box:
+    """A machine's keep-out: its box grown by ``c`` on each horizontal side and ``ct`` above,
+    from the floor (y 0)."""
+    return Box(
+        (body.lo[0] - c, 0, body.lo[2] - c),
+        (body.hi[0] + c, body.hi[1] + ct, body.hi[2] + c),
+    )
 
 
 def _chase(hid: str, cid: str, under: Box, opts: Options) -> dict[str, Any]:
@@ -640,9 +772,11 @@ def service_cells(
     keepouts: Iterable[Mapping[str, Any]],
     corridors: Iterable[Mapping[str, Any]],
     boxes: Mapping[str, Box],
+    extra_open: frozenset[Cell] = frozenset(),
 ) -> set[Cell]:
-    """Corridors plus every keep-out minus its machine's box: the open space to move in."""
-    out: set[Cell] = set()
+    """Corridors plus every keep-out minus its machine's box, plus ``extra_open`` (a fitted
+    layout's open floor, D422): the open space to move in."""
+    out: set[Cell] = set(extra_open)
     for c in corridors:
         out.update(box_of(c).cells())
     for k in keepouts:
@@ -671,10 +805,11 @@ def reach_all(
     corridors: Sequence[Mapping[str, Any]],
     entrances: Sequence[Mapping[str, Any]],
     boxes: Mapping[str, Box],
+    extra_open: frozenset[Cell] = frozenset(),
 ) -> None:
     """Fill each placement's ``reach`` (and each hatch's ``reached``) by flood fill."""
     reached = flood(
-        service_cells(keepouts, corridors, boxes),
+        service_cells(keepouts, corridors, boxes, extra_open),
         (cell for e in entrances for cell in box_of(e).cells()),
     )
     for p in placements:

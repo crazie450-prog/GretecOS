@@ -9,6 +9,7 @@ data.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import io
 import json
 import sqlite3
@@ -193,6 +194,20 @@ def test_a_tier_choice_swaps_the_channel_cells_only(conn: sqlite3.Connection) ->
         lib.get(GT, 9001, tiers={"coil": 9})
     with pytest.raises(fp.FootprintError, match="no tier channel glass"):
         lib.get(GT, 9001, tiers={"glass": 1})
+
+
+def test_a_footprint_comes_back_from_its_json(conn: sqlite3.Connection) -> None:
+    """D422: a site build's program.json keeps its footprints as to_json; from_json is the
+    inverse (the machine id isn't in the JSON)."""
+    lib = fp.library(conn)
+    for mte in (9001, 9002, 9003):
+        for f in lib.for_mte(mte):
+            for face in fp.FACINGS:
+                turned = f.rotated(face)
+                back = fp.Footprint.from_json(json.loads(json.dumps(turned.to_json())))
+                assert back == dataclasses.replace(turned, machine_id=None)
+    hot = lib.get(GT, 9001, tiers={"coil": 3})
+    assert fp.Footprint.from_json(hot.to_json()).key == hot.key
 
 
 def test_an_ambiguous_tier_channel_is_refused_when_chosen() -> None:

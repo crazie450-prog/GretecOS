@@ -133,6 +133,12 @@
      "type": "integer",
      "minimum": 0,
      "maximum": 16
+    },
+    "buffer": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 100,
+     "description": "site mode (D422): the interior over the keep-out volume a building must hold, in percent; left out at its default, 25"
     }
    }
   },
@@ -214,7 +220,8 @@
      "kind": {
       "enum": [
        "hall",
-       "spine"
+       "spine",
+       "aisle"
       ]
      },
      "lo": {
@@ -416,6 +423,122 @@
    "type": "array",
    "items": {
     "type": "string"
+   }
+  },
+  "fit": {
+   "description": "Site mode only (D422): the machines were fitted into a building designed first (gregtec.build.fit). bounds is the site; the hall c1 is the lobby inside the door e1, and the aisles are the free floor left. A layout without it was laid out first (plan_layout).",
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "mode",
+    "site",
+    "building",
+    "entrance_from",
+    "pass",
+    "need",
+    "have",
+    "spare_pct",
+    "placed",
+    "of",
+    "zones"
+   ],
+   "properties": {
+    "mode": {
+     "const": "site"
+    },
+    "site": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "lo",
+      "hi"
+     ],
+     "properties": {
+      "lo": {
+       "$ref": "#/$defs/cell"
+      },
+      "hi": {
+       "$ref": "#/$defs/cell"
+      }
+     }
+    },
+    "building": {
+     "type": "string",
+     "pattern": "^[0-9a-f]{12}$",
+     "description": "sha256 (12 hex) of the building's solid positions in the site, sorted"
+    },
+    "entrance_from": {
+     "enum": [
+      "answer",
+      "auto"
+     ]
+    },
+    "pass": {
+     "enum": [
+      "prior",
+      "flow",
+      "area"
+     ]
+    },
+    "need": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "keepout_volume",
+      "required"
+     ],
+     "properties": {
+      "keepout_volume": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "required": {
+       "type": "integer",
+       "minimum": 0
+      }
+     }
+    },
+    "have": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "volume",
+      "volume_raw",
+      "floor"
+     ],
+     "properties": {
+      "volume": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "volume_raw": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "floor": {
+       "type": "integer",
+       "minimum": 0
+      }
+     }
+    },
+    "spare_pct": {
+     "type": "integer"
+    },
+    "placed": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "of": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "zones": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "pattern": "^[0-9a-f]{12}$"
+    }
    }
   }
  },

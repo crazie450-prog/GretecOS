@@ -15,6 +15,18 @@ operations:`` line), with no network, no key and no cost:
   inventory) and its first revision is chat instead of JSON; each is right on the next round,
   so a run shows what a repair round looks like.
 
+In site mode (D422; the brief's facts say ``"mode": "site"``) the building comes first: plain,
+ornate and sloppy draw a roofed hall in a corner of SITE whose air holds :data:`ROOM` times
+NEED (walls, roof and the ornament on the hall's own volume, a door three wide in its west
+wall), and GOS fits the machines into it. Two more show the fit's refusals:
+
+- ``fake-cramped``: its first hall holds only :data:`CRAMPED_ROOM` of NEED (the fit refuses
+  it for floor or volume); the repair is the plain hall (refused, repaired, accepted).
+- ``fake-tower``: enough air, but on floor three blocks wide (a spine with three-wide wings,
+  a comb): no machine wider than that fits, so it ends refused, every round.
+
+In layout mode those two answer as fake-plain.
+
 A follow-up is answered with GOS's own reviser (:mod:`gregtec.build.shell_revise`) on the current
 operations. They are the bake-off's hands-on tour and CI's models; what they draw says nothing
 about any real model.
@@ -23,8 +35,9 @@ about any real model.
 from __future__ import annotations
 
 import json
+import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,6 +47,12 @@ from gregtec.llm.prices import Usage
 
 PLAIN, ORNATE, SLOPPY = "fake-plain", "fake-ornate", "fake-sloppy"
 NAMES = (PLAIN, ORNATE, SLOPPY)
+CRAMPED, TOWER = "fake-cramped", "fake-tower"  # site mode's fit refusals (D422)
+ALL = (*NAMES, CRAMPED, TOWER)
+ROOM = (
+    shell_brief.ROOM
+)  # a site hall's air, in NEED.required (D422 §2.8: 1.5; see ROOM)
+CRAMPED_ROOM = 0.7
 PROVIDER = "fake"
 _REQUEST = re.compile(r"<request>\n(.*?)\n</request>", re.DOTALL)
 _REPAIR = "Your previous answer was:"
@@ -73,6 +92,14 @@ else:
 """
 
 
+def site_script(hall: Mapping[str, Any], top: int, line_type: str) -> str:
+    """fake-ornate's ornament on a site hall: the same script, its walls the hall's."""
+    head = f"LINE = {line_type!r}\nHALL = {json.dumps(dict(hall))}\nTOP = {top}\n"
+    return head + ORNAMENT.replace(
+        'lo, hi = WALLS["lo"], WALLS["hi"]', 'lo, hi = HALL["lo"], HALL["hi"]'
+    ).replace("WALL_TOP", "TOP").replace("ROOF_Y", "(TOP + 1)")
+
+
 def _line(user: str, key: str) -> Any:  # noqa: ANN401 - the line's JSON
     for line in user.splitlines():
         if line.startswith(key):
@@ -84,7 +111,131 @@ def _clears(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [{"op": "clear", "lo": d["lo"], "hi": d["hi"]} for d in facts["doorways"]]
 
 
+def site(facts: Mapping[str, Any]) -> bool:
+    return facts.get("mode") == "site"
+
+
+def hall(facts: Mapping[str, Any], room: float = ROOM) -> tuple[list[int], list[int]]:
+    """A site hall's walls (lo, hi; y 0 up to the eaves, the roof one above): in SITE's west
+    corner, its air ``room`` times NEED.required up to cap_height and its floor ``room`` times
+    NEED.floor_required (a tall cap would otherwise make a floor the keep-outs don't fit on), at
+    least the widest keep-out across, centred in z."""
+    lo, hi, need = facts["site"]["lo"], facts["site"]["hi"], facts["need"]
+    cap = int(need["cap_height"])
+    sx, sz = hi[0] - lo[0] + 1, hi[2] - lo[2] + 1
+    # inner floor, cap high
+    area = math.ceil(room * max(need["required"] / cap, need.get("floor_required", 0)))
+    wide = max(need["widest"][0], need["widest"][2])
+    ix = min(max(math.ceil(math.sqrt(area)), wide), sx - 2)
+    iz = min(max(math.ceil(area / ix), wide), sz - 2)
+    if ix * iz < area:  # SITE is too narrow for a square: as long as it can be
+        ix = min(math.ceil(area / iz), sx - 2)
+    z0 = lo[2] + (sz - iz - 2) // 2
+    return [lo[0], lo[1], z0], [lo[0] + ix + 1, lo[1] + cap - 1, z0 + iz + 1]
+
+
+def _door(
+    facts: Mapping[str, Any], lo: Sequence[int], hi: Sequence[int]
+) -> dict[str, Any]:
+    """A clear three wide in the hall's west wall, door_height high."""
+    mid = (lo[2] + hi[2]) // 2
+    top = lo[1] + int(facts["need"]["door_height"]) - 1
+    return {"op": "clear", "lo": [lo[0], lo[1], mid - 1], "hi": [lo[0], top, mid + 1]}
+
+
+def site_plain(facts: Mapping[str, Any], room: float = ROOM) -> list[dict[str, Any]]:
+    """fake-plain on a site: the hall, windows, pillars and a flat roof, then its door."""
+    roles = {p["role"] for p in facts["palette"]}
+    lo, hi = hall(facts, room)
+    top = hi[1]
+    vol = {"lo": lo, "hi": hi}
+    ops: list[dict[str, Any]] = [{"op": "walls", "role": "wall", "y": [0, top], **vol}]
+    if "window" in roles and top >= 3:
+        ops.append(
+            {"op": "windows", "role": "window", "y": [1, 2], "every": 6, "width": 2}
+            | vol
+        )
+    if "pillar" in roles:
+        ops.append({"op": "pillars", "role": "pillar", "y": [0, top], "every": 8} | vol)
+    roof = {"lo": [lo[0], top + 1, lo[2]], "hi": [hi[0], top + 1, hi[2]]}
+    ops.append({"op": "roof", "role": "roof", "style": "flat", **roof})
+    return [*ops, _door(facts, lo, hi)]
+
+
+def site_ornate(
+    facts: Mapping[str, Any], line_type: str = "general"
+) -> list[dict[str, Any]]:
+    """fake-ornate on a site: the hall with a plinth, an eaves band, tall windows, pillars, a
+    gable roof in its own volume where it fits, and the ornament script round the hall."""
+    roles = [p["role"] for p in facts["palette"]]
+    lo, hi = hall(facts)
+    top, ceiling = hi[1], facts["site"]["hi"][1]
+    vol = {"lo": lo, "hi": hi}
+    ops: list[dict[str, Any]] = [{"op": "walls", "role": "wall", "y": [0, top], **vol}]
+    if "trim" in roles:
+        ops.append({"op": "walls", "role": "trim", "y": [0, 0], **vol})
+    if "accent" in roles and top >= 3:
+        ops.append({"op": "walls", "role": "accent", "y": [top, top], **vol})
+    if "window" in roles and top >= 3:
+        ops.append(
+            {"op": "windows", "role": "window", "y": [1, top - 1], "every": 4}
+            | {"width": 2, **vol}
+        )
+    if "pillar" in roles:
+        ops.append({"op": "pillars", "role": "pillar", "y": [0, top], "every": 4} | vol)
+    short = min(hi[0] - lo[0], hi[2] - lo[2]) + 1
+    roof: dict[str, Any] = {"op": "roof", "role": "roof"}
+    if short <= 33 and ceiling - 2 > top + 1:
+        roof |= {"style": "gable", "lo": [lo[0], top + 1, lo[2]]}
+        roof["hi"] = [hi[0], ceiling - 2, hi[2]]
+    else:
+        roof |= {"style": "flat", "lo": [lo[0], top + 1, lo[2]]}
+        roof["hi"] = [hi[0], top + 1, hi[2]]
+    if roles.count("roof") > 1:
+        roof["edge"] = "roof"
+        roof["edge_n"] = roles.count("roof") - 1
+    ops.append(roof)
+    the_hall = {"lo": lo, "hi": [hi[0], ceiling, hi[2]]}
+    ops.append({"op": "script", "script": site_script(the_hall, top, line_type)})
+    return [*ops, _door(facts, lo, hi)]
+
+
+def site_tower(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """fake-tower: a comb over the whole SITE, every floor three blocks wide: a spine along
+    the west wall and wings east from it, cap_height high, one roof over all, a door in the
+    spine's west wall."""
+    lo, hi, need = facts["site"]["lo"], facts["site"]["hi"], facts["need"]
+    top = lo[1] + int(need["cap_height"]) - 1
+    ops: list[dict[str, Any]] = [
+        {
+            "op": "walls",
+            "role": "wall",
+            "y": [0, top],
+            "lo": lo,
+            "hi": [*hi[:1], top, hi[2]],
+        },
+        {
+            "op": "fill",
+            "role": "roof",
+            "lo": [lo[0], top + 1, lo[2]],
+            "hi": [hi[0], top + 1, hi[2]],
+        },
+    ]
+    for z in range(lo[2] + 4, hi[2], 4):  # walls between the wings, east of the spine
+        ops.append(
+            {
+                "op": "fill",
+                "role": "wall",
+                "lo": [lo[0] + 4, 0, z],
+                "hi": [hi[0] - 1, top, z],
+            }
+        )
+    return [*ops, _door(facts, lo, [hi[0], top, hi[2]])]
+
+
 def plain(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if site(facts):
+        return site_plain(facts)
     roles = {p["role"] for p in facts["palette"]}
     top = facts["wall_top"]
     ops: list[dict[str, Any]] = [{"op": "walls", "role": "wall", "y": [0, top]}]
@@ -103,6 +254,8 @@ def plain(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
 def ornate(
     facts: Mapping[str, Any], line_type: str = "general"
 ) -> list[dict[str, Any]]:
+    if site(facts):
+        return site_ornate(facts, line_type)
     roles = [p["role"] for p in facts["palette"]]
     top = facts["wall_top"]
     walls = facts.get("walls") or facts["bounds"]  # the wall line (D386)
@@ -158,6 +311,8 @@ def revised(user: str, facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     m = _REQUEST.search(user)
     words = m.group(1) if m else ""
     rec = {**facts, "ops": current}
+    if site(facts):  # as a saved site build's record says (D422)
+        rec["fit"] = {"mode": "site"}
     got = shell_revise.revise(rec, words)
     return [dict(o) for o in (got.ops if got.ok else current)]
 
@@ -189,14 +344,30 @@ class FakeDesigner:
                     "lo": [x, top, z],
                     "hi": [x, top, z],
                 }
-                text = json.dumps({"ops": [*plain(facts), chest]})
+                text = json.dumps(
+                    {"ops": [*plain(facts), chest]}
+                    | ({"entrance": None, "zones": []} if site(facts) else {})
+                )
         else:
             if revise:
                 ops = revised(user, facts)
+            elif site(facts) and self.model == TOWER:
+                ops = site_tower(facts)
+            elif site(facts) and self.model == CRAMPED and not repair:
+                ops = site_plain(facts, CRAMPED_ROOM)
             else:
                 m = _LINE_TYPE.search(user)
                 line = m.group(1) if m else "general"
                 ops = ornate(facts, line) if self.model == ORNATE else plain(facts)
-            text = shell_brief.answer(ops)
+            if not site(facts):
+                text = shell_brief.answer(ops)
+            elif revise:  # the current door and zones, sent again to keep them
+                text = shell_brief.answer(
+                    ops,
+                    _line(user, "current entrance: "),
+                    _line(user, "current zones: "),
+                )
+            else:
+                text = shell_brief.answer(ops, None, [])
         usage = Usage(input=(len(system) + len(user)) // 4, output=len(text) // 4 + 1)
         return Reply(text, usage)

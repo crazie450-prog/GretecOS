@@ -4,7 +4,9 @@ Run only by :func:`gregtec.build.sandbox.run`, as ``python -S -s -B -P <this fil
 empty environment, in an empty folder, under OS limits (a Windows Job Object; rlimits on POSIX).
 It imports the standard library only. It reads one JSON request from stdin (the script, the
 build's facts, the cell cap), runs the script with the building API below and a short list of
-builtins, and writes one JSON answer to stdout: the cells, or why it stopped.
+builtins, and writes one JSON answer to stdout: the cells, or why it stopped. In site mode
+(D422) the script also has ``covered()``: the sheltered volume of its blocks so far against
+NEED (:func:`measure`, the rule of gregtec.build.floor, which the child can't import).
 
 Before the script runs, an audit hook (PEP 578) is installed that refuses every audited event
 but the one ``exec`` of the script's own code: no file, socket, process, import, ctypes, frame
@@ -52,7 +54,7 @@ def _main() -> None:
                 raise BuildError(f"{what} must be finite")
             v = round(v)
         if abs(v) > 100_000:
-            raise BuildError(f"{what} is too far from the layout")
+            raise BuildError(f"{what} is too far from the site")
         return int(v)
 
     def _xyz(args: tuple[object, ...], n: int, name: str) -> tuple[int, ...]:
@@ -253,6 +255,12 @@ def _main() -> None:
                 w,
             )
 
+    def covered() -> dict[str, int]:
+        """Site mode (D422): the sheltered volume of the blocks placed so far against NEED,
+        {"volume", "floor", "need_volume", "short_by", "need_floor"}; the building is big
+        enough for the fitter to try once short_by <= 0 and floor >= need_floor."""
+        return measure(cells, facts["site"], facts["need"])
+
     def _print(*args: object, sep: object = " ", end: object = "") -> None:
         if len(log) < MAX_LOG:
             log.append(str(sep).join(str(a) for a in args)[:MAX_LINE])
@@ -328,6 +336,7 @@ def _main() -> None:
         "sphere": sphere,
         "pyramid": pyramid,
         "arch": arch,
+        **({"covered": covered} if "site" in facts and "need" in facts else {}),
         **{k.upper(): _freeze(v) for k, v in facts.items()},
         **MODULES,
     }
@@ -411,6 +420,38 @@ def _disarm_os() -> None:
                     delattr(mod, attr)
                 except (AttributeError, TypeError):
                     pass
+
+
+def measure(
+    cells: dict[tuple[int, ...], str], site: dict, need: dict
+) -> dict[str, int]:
+    """gregtec.build.floor.measure, again here: the child imports the standard library only
+    (``-S``), so the rule is kept in step by a test that both give the same numbers. Every
+    site column whose y 0 is air under a block above, with at least door_height of air,
+    counts its air up to cap_height."""
+    lo, hi = site["lo"], site["hi"]
+    low: dict[tuple[int, int], int] = {}  # each column's lowest block in the site
+    for c in cells:
+        x, y, z = c
+        if lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1] and lo[2] <= z <= hi[2]:
+            k = (x, z)
+            if k not in low or y < low[k]:
+                low[k] = y
+    ch, cap = int(need["door_height"]), int(need["cap_height"])
+    volume = floor = 0
+    for y in low.values():
+        h = y - lo[1]
+        if h >= ch:  # y 0 is air (h > 0) and a roof is above
+            volume += min(h, cap)
+            floor += 1
+    want = int(need["required"])
+    return {
+        "volume": volume,
+        "floor": floor,
+        "need_volume": want,
+        "short_by": want - volume,
+        "need_floor": int(need.get("floor_required", 0)),
+    }
 
 
 def _freeze(v: object) -> object:
