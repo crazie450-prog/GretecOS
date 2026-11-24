@@ -291,6 +291,63 @@ def test_a_bad_entrance_is_refused(hint: dict[str, Any], why: str | None) -> Non
     assert r.layout is None
 
 
+@pytest.mark.parametrize(
+    "hint",
+    [
+        {"side": ["west"], "at": [0, 6]},
+        {"side": {"w": 1}, "at": [0, 6]},
+        {"side": None, "at": [0, 6]},
+        {"side": "west", "at": [0.9, 6.2]},
+        {"side": "west", "at": "06"},
+        {"side": "west", "at": [True, 6]},
+        {"side": "west", "at": [0, 6, 1]},
+        {"side": "west", "at": None},
+    ],
+)
+def test_a_malformed_entrance_is_refused_not_raised(hint: dict[str, Any]) -> None:
+    r = run([CUBE], hall_with_doors(("west", 0, 5, 3)), hint=hint)
+    assert r.reasons == [
+        "the entrance is not {side: north|east|south|west, at: [x, z]}"
+    ]
+
+
+def test_a_door_slides_along_a_wide_opening_past_a_pillar() -> None:
+    # a pillar 2 blocks behind the middle of a 9-wide arcade: the middle window's lobby hits
+    # it, so the door moves along the opening (nearest the middle first)
+    pillar = {(2, y, 6) for y in range(5)}
+    cells = hall_with_doors(("west", 0, 2, 9)) | pillar
+    lay = fitted([CUBE], cells)
+    e = lay["entrances"][0]
+    assert e["side"] == "west" and e["lo"] == [0, 0, 3] and e["hi"] == [0, 2, 5]
+    # an answer's door in the same opening slides too, keeping its column
+    lay = fitted([CUBE], cells, hint={"side": "west", "at": [0, 7]})
+    assert lay["entrances"][0]["lo"] == [0, 0, 7]
+
+
+def test_a_canopy_does_not_take_the_door_from_the_hall() -> None:
+    hall = door(building(rect(10, 0, 22, 12), 5), "west", 10, 5, 3)
+    # a free-standing canopy west of it: a roof at y 4 on corner posts, open on every side
+    canopy = {(x, 4, z) for x in range(1, 6) for z in range(13)}
+    canopy |= {(x, y, z) for x in (1, 5) for z in (0, 12) for y in range(4)}
+    cells = hall | canopy
+    site = Box((0, 0, 0), (24, 8, 13))
+    lay = fitted([CUBE, CUBE], cells, site=site)
+    assert lay["entrances"][0]["lo"][0] == 10  # the hall's door, not the canopy's face
+    assert lay["fit"]["entrance_from"] == "auto"
+    # with no door into the hall, the canopy's floor is what is measured
+    shut = building(rect(10, 0, 22, 12), 5) | canopy
+    r = run([CUBE, CUBE], shut, site=site)
+    assert r.reasons[0].startswith("the roofed floor holds ")
+
+
+def test_two_machines_in_a_square_hall_with_a_middle_door() -> None:
+    # the first keep-out nearest the lobby splits the hall in two 4-wide strips; packing from
+    # a corner fits both
+    cells = door(building(rect(0, 0, 12, 12), 5), "west", 0, 5, 3)
+    lay = fitted([CUBE, CUBE], cells)
+    assert lay["fit"]["pass"] == "area"
+
+
 def test_a_porch_in_the_way_closes_a_doorway() -> None:
     cells = building(rect(3, 0, 15, 12), 5)
     cells = door(door(cells, "west", 3, 5), "east", 15, 5)

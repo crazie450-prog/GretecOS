@@ -538,6 +538,7 @@ class Prepared:
     max_blocks: int
     baseline: int  # blocks of GOS's own procedural shell for this case (for the report)
     brief: str  # the user text (the same for every model)
+    machines: int = 0  # a site case's machines to fit (its program's instances)
 
 
 def _preview(
@@ -629,7 +630,8 @@ def prepare(
             palette.CatalogError,
         ) as exc:
             raise BakeoffError(f"case {case.id} can't be set up: {exc}") from None
-        out.append(Prepared(case, ids, rec["max_blocks"], baseline, brief))
+        machines = len(lay["instances"]) if case.mode == "site" else 0
+        out.append(Prepared(case, ids, rec["max_blocks"], baseline, brief, machines))
     return out
 
 
@@ -1449,8 +1451,15 @@ class Runner:
                     ops=said.ops,
                     by="architect",
                     asked=case["followup"],
+                    # the answer's door and zones replace the parent's (the brief shows
+                    # them): a null entrance is GOS's choice, as the prompt says
                     **(
-                        {"entrance": said.entrance, "zones": said.zones}
+                        {
+                            "entrance": versions.AUTO
+                            if said.entrance is None
+                            else said.entrance,
+                            "zones": said.zones,
+                        }
                         if shell_store.site_mode(old)
                         else {}
                     ),
@@ -1510,6 +1519,17 @@ class Runner:
                 where.parent.rmdir()
             raise
         result["design"], result["design_id"] = step.to_json(), ds
+        if self.mode == "site" and "fit" not in result["design"]:
+            # no answer reached the fit: it still counts, none of its machines placed
+            result["design"]["fit"] = {
+                "fit_ok": False,
+                "placed": 0,
+                "of": spec.machines,
+                "spare_pct": None,
+                "entrance_from": None,
+                "service_len": None,
+                "rounds_to_fit": None,
+            }
         self.run["results"].append(result)
         self._keep()
         self.say(_line(case["id"], letter, "design", result["design"]))

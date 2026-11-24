@@ -3339,3 +3339,63 @@ def test_a_layout_run_reports_without_the_fit_columns(
     assert "fit" not in result(run, "zebra")["design"]
     got = bo.report(home, run["id"], reveal_unrated=True)
     assert got.card["columns"] == list(bo.COLS) and "fit " not in got.text
+
+
+def test_the_site_brief_names_a_boundary_ports_way_and_the_prompt_its_repair(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    (small,) = bo.prepare(conn, home, VaultIO(home / "vault"), [site_case()], PLANS)
+    lines = [x for x in small.brief.splitlines() if x.startswith("- ") and " -> " in x]
+    assert "the door -> the door" not in small.brief
+    assert any(x.startswith("- the door -> the line: ") for x in lines), lines
+    assert all(x.endswith(" (input)") for x in lines if "-> the line" in x)
+    assert all(x.endswith(" (product)") for x in lines if x.startswith("- the line"))
+    assert "removes blocks placed outside the bounding volume" in (
+        shell_brief.system_prompt("site")
+    )
+
+
+def test_a_site_revise_shows_and_keeps_the_zones_and_null_is_gos_s_door(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    zone = {"kind": "open", "lo": [1, 0, 2], "hi": [2, 3, 3]}
+    fake = shell_fakes.FakeDesigner(shell_fakes.PLAIN)
+    seen: list[str] = []
+
+    def answer(user: str) -> str:
+        seen.append(user)
+        got = json.loads(fake.complete("", user, {}, 0).text)
+        if user.startswith("Revise the current design"):
+            return json.dumps(got)  # the fake sends the current zones and door again
+        return json.dumps({**got, "zones": [zone]})
+
+    run = ran(conn, home, [ZEBRA], {"zebra": Scripted(then=answer)}, [site_case()])
+    r = result(run, "zebra")
+    assert r["design"]["ok"] and r["revise"]["ok"], r
+    brief = seen[1]
+    assert "current entrance: null" in brief
+    assert "current zones: " + json.dumps([zone], separators=(",", ":")) in brief
+    assert "send them again to keep them" in brief
+    where = bo.entry_home(home, run["id"], "c1", "A")
+    built = shell_store.load(where, r["revise"]["build"])
+    assert built["fit"]["zones"] == [zone]
+
+
+def test_a_site_design_that_never_reaches_the_fit_counts_in_the_fit_columns(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    cases = [site_case(), site_case(id="c2")]
+    run = ran(
+        conn,
+        home,
+        [ZEBRA],
+        {"zebra": Scripted(["Sure, here is a building!"] * 3)},
+        cases,
+    )
+    bad, good = result(run, "zebra"), result(run, "zebra", "c2")
+    assert not bad["design"]["ok"] and bad["design"]["fit"]["fit_ok"] is False
+    assert bad["design"]["fit"]["placed"] == 0 and bad["design"]["fit"]["of"] == 8
+    assert good["design"]["fit"]["fit_ok"]
+    got = bo.report(home, run["id"], reveal_unrated=True)
+    row = dict(zip(got.card["columns"], got.card["rows"][0], strict=True))
+    assert row["fit ok"] == "1 of 2" and row["placed"] == "8 of 16"

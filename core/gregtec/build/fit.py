@@ -9,7 +9,8 @@ building drives them, the model never places one.
    ``h`` above y 0 (the machine floor).
 2. **Door.** A ground opening at least ``corridor_height`` high with a straight way out to the
    site's edge (:func:`_door`): the answer's entrance when it gives one, else the widest run of
-   such openings. A ``corridor_width``-deep lobby (corridor c1, the hall) lies inside it.
+   such openings whose roofed floor holds the machines (else the one holding most). A
+   ``corridor_width``-deep lobby (corridor c1, the hall) lies inside it.
 3. **Capacity.** The usable region R is every column at least ``corridor_height`` high under a
    roof, 4-joined to the lobby, less what zones mask. Its volume V counts each column's air up
    to H (the tallest keep-out, or corridor plus chase if higher). V must reach
@@ -18,8 +19,9 @@ building drives them, the model never places one.
 4. **Packing.** Each machine's keep-out (its box plus ``clearance`` round and ``clearance_top``
    above) goes on R's free floor in one of four facings, nearest (by walking distance) the
    front of the plan's previous machine, else the lobby (the *flow* pass); when one doesn't
-   fit, all are packed again largest first nearest the lobby (the *area* pass). Placements kept
-   from an earlier fit (``prior``) go first and stay where they are while they still fit.
+   fit, all are packed again largest first nearest the lobby, and when that fails too, from
+   each corner of the site in turn (the *area* pass). Placements kept from an earlier fit
+   (``prior``) go first and stay where they are while they still fit.
 5. **Walkways.** The free floor left becomes aisles (corridors c2...), with chases above them
    where the ceiling is high enough; each machine takes the nearest corridor and its chase.
 6. **Check.** Every front and hatch kind must be reached from the door
@@ -55,6 +57,8 @@ SIDES: dict[str, Column] = {
 _DOOR_ORDER = ("west", "south", "east", "north")  # the tie order of two equal doorways
 _STEPS: tuple[Column, ...] = ((1, 0), (-1, 0), (0, 1), (0, -1))
 _FAR = 1 << 30
+# the area pass's fallbacks: corner-first from each corner of the site (signs of z and x)
+_CORNERS: tuple[tuple[int, int], ...] = ((1, 1), (1, -1), (-1, 1), (-1, -1))
 
 type Size = tuple[int, int, int]
 
@@ -201,7 +205,10 @@ def _runs(cands: Sequence[tuple[str, Column]]) -> list[tuple[str, list[Column]]]
 
 def _door(
     floor: Floor, tall: set[Column], opts: Options, hint: Mapping[str, Any] | None
-) -> tuple[_Door | None, list[str]]:
+) -> tuple[list[_Door], list[str]]:
+    """The answer's door (one, validated), or every candidate door in rank order: per run of
+    openings (widest first, ties west, south, east, north, then the lowest), its
+    ``corridor_width``-wide window nearest the run's middle with a full lobby behind it."""
     ch, cw = opts.corridor_height, opts.corridor_width
     site = floor.site
 
@@ -228,10 +235,17 @@ def _door(
         )
         return out if all(c in tall for c in out) else None
 
-    def window(run: list[Column], at: int) -> list[Column]:
+    def windows(run: list[Column], at: int) -> list[list[Column]]:
+        """The run's windows ``corridor_width`` wide (or the run's width), the one centred on
+        ``at`` first, then outward (ties: the lower)."""
         w = min(len(run), cw)
-        start = min(max(at - (w - 1) // 2, 0), len(run) - w)
-        return run[start : start + w]
+        first = min(max(at - (w - 1) // 2, 0), len(run) - w)
+        starts = sorted(range(len(run) - w + 1), key=lambda s: (abs(s - first), s))
+        return [run[s : s + w] for s in starts]
+
+    def found(side: str, cols: list[Column]) -> _Door | None:
+        got = lobby(cols, side)
+        return None if got is None else _Door(side, tuple(cols), got)
 
     cands = [
         (side, col)
@@ -242,41 +256,52 @@ def _door(
     runs = _runs(cands)
     if hint is not None:
         side, at = hint.get("side"), hint.get("at")
-        try:
-            col = (int(at[0]), int(at[1]))  # type: ignore[index]
-        except (TypeError, ValueError, IndexError):
-            return None, [
-                "the entrance is not {side: north|east|south|west, at: [x, z]}"
-            ]
+        shape = ["the entrance is not {side: north|east|south|west, at: [x, z]}"]
+        if (
+            not isinstance(side, str)
+            or not isinstance(at, list | tuple)
+            or len(at) != 2
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in at)
+        ):
+            return [], shape
+        col = (at[0], at[1])
         head = f"entrance at [{col[0]},{col[1]}] on the {side}"
         if side not in SIDES:
-            return None, [f"{head}: the side is not one of {', '.join(SIDES)}"]
+            return [], [f"{head}: the side is not one of {', '.join(SIDES)}"]
         if col not in tall:
-            return None, [f"{head}: it is not roofed floor at least {ch} high"]
+            return [], [f"{head}: it is not roofed floor at least {ch} high"]
         if not edge(col, side):
-            return None, [f"{head}: it is not on the building's {side} edge"]
+            return [], [f"{head}: it is not on the building's {side} edge"]
         if not way_out(col, side):
             way = f"there is no straight way out to the site's {side} edge at y 0..{ch - 1}"
-            return None, [f"{head}: {way}"]
+            return [], [f"{head}: {way}"]
         run = next(r for s, r in runs if s == side and col in r)
-        cols = window(run, run.index(col))
-        got = lobby(cols, side)
-        if got is None:
-            return None, [f"{head}: the floor inside it is less than {cw} deep"]
-        return _Door(side, tuple(cols), got), []
+        for cols in windows(run, run.index(col)):
+            if col in cols and (door := found(side, cols)) is not None:
+                return [door], []
+        return [], [f"{head}: the floor inside it is less than {cw} deep"]
     ranked = sorted(
         runs, key=lambda r: (-len(r[1]), _DOOR_ORDER.index(r[0]), r[1][0][::-1])
     )
+    doors = []
     for side, run in ranked:
-        cols = window(run, (len(run) - 1) // 2)
-        got = lobby(cols, side)
-        if got is not None:
-            return _Door(side, tuple(cols), got), []
+        door = next(
+            (
+                d
+                for cols in windows(run, (len(run) - 1) // 2)
+                if (d := found(side, cols))
+            ),
+            None,
+        )
+        if door is not None:
+            doors.append(door)
+    if doors:
+        return doors, []
     why = (
         f"no doorway: no ground opening at least {ch} high has a straight way out of the "
         f"site and {cw} blocks of floor inside it; open one on an outer face"
     )
-    return None, [why]
+    return [], [why]
 
 
 # --- grids ----------------------------------------------------------------------------------
@@ -459,10 +484,13 @@ def _best(
     dist: Mapping[Column, int],
     opts: Options,
     turns: dict[tuple[str, str], fp.Footprint],
+    corner: tuple[int, int] | None = None,
 ) -> _Spot | None:
-    """The free spot for ``inst`` whose front is nearest by ``dist`` (ties: z, x, facing)."""
+    """The free spot for ``inst`` whose front is nearest by ``dist`` (ties: z, x, facing); with
+    ``corner`` (the signs of z and x), the one nearest that corner of the site instead (by z,
+    then x, then facing; ``dist`` unused)."""
     site, c = packer.site, opts.clearance
-    best: tuple[tuple[int, int, int, int], fp.Footprint] | None = None
+    best: tuple[tuple[int, ...], fp.Footprint, int, int] | None = None
     for fi, facing in enumerate(fp.FACINGS):
         turned = _turn(inst, facing, turns)
         kx, ky, kz = keep_size(turned, opts)
@@ -474,12 +502,20 @@ def _best(
             for x in range(site.lo[0], site.hi[0] - kx + 2):
                 if not sat.full(x, z, kx, kz):
                     continue
-                key = (dist.get((x + fx, z + fz), _FAR), z, x, fi)
+                if corner is None:
+                    key: tuple[int, ...] = (dist.get((x + fx, z + fz), _FAR), z, x, fi)
+                else:
+                    sz, sx = corner
+                    key = (
+                        z if sz > 0 else -(z + kz - 1),
+                        x if sx > 0 else -(x + kx - 1),
+                        fi,
+                    )
                 if best is None or key < best[0]:
-                    best = (key, turned)
+                    best = (key, turned, x, z)
     if best is None:
         return None
-    (_, z, x, _), turned = best
+    _, turned, x, z = best
     return _spot(turned, x, z, opts)
 
 
@@ -539,9 +575,11 @@ def _pack(
     turns: dict[tuple[str, str], fp.Footprint],
     *,
     flow: bool,
+    corner: tuple[int, int] | None = None,
 ) -> list[int]:
     """Place the instances ``order`` into ``placed`` (one already there stays, and in the flow
-    pass leads its plan's next machine); the ones that didn't fit."""
+    pass leads its plan's next machine); the ones that didn't fit. ``corner``: each goes
+    nearest that corner of the site, not nearest the lobby (see :func:`_best`)."""
     cache: dict[tuple[Column, ...], dict[Column, int]] = {}
 
     def dist_from(starts: tuple[Column, ...]) -> dict[Column, int]:
@@ -559,7 +597,14 @@ def _pack(
             )
             continue
         src = (last[inst.plan],) if flow and inst.plan in last else tuple(lobby)
-        spot = _best(inst, packer, dist_from(src), opts, turns)
+        spot = _best(
+            inst,
+            packer,
+            {} if corner is not None else dist_from(src),
+            opts,
+            turns,
+            corner,
+        )
         if spot is None:
             failed.append(n)
             continue
@@ -602,20 +647,33 @@ def fit(
         return refuse(*bad)
     floor = derive(cells, site)
     tall = {c for c, v in floor.h.items() if v >= ch}
-    door, why = _door(floor, tall, opts, hint)
-    if door is None:
+    doors, why = _door(floor, tall, opts, hint)
+    if not doors:
         return refuse(*why)
+    k, m = want["keepout_volume"], want["required"]
+
+    def capacity(
+        d: _Door,
+    ) -> tuple[set[Column], dict[Column, int], set[Column], int, int]:
+        joined = set(_flood(tall, d.lobby))
+        usable = _usable(floor, sorted(joined), machines, open_)
+        region = {c for c in joined if usable[c] >= 1}
+        volume = sum(min(usable[c], cap) for c in region)
+        return joined, usable, region, volume, sum(floor.h[c] for c in region)
+
+    # --- capacity: the first door (in rank order) whose roofed floor holds NEED, else the
+    # one that holds the most (a doorway into a porch or a canopy never hides the hall's)
+    door, got = doors[0], capacity(doors[0])
+    for d in doors[1:]:
+        if got[3] >= m:
+            break
+        other = capacity(d)
+        if other[3] > got[3]:
+            door, got = d, other
+    joined, usable, region, volume, raw = got
     stats["entrance_from"] = "auto" if hint is None else "answer"
     stats["door"] = {"side": door.side, "at": list(door.cols[0])}
-
-    # --- capacity
-    joined = set(_flood(tall, door.lobby))
-    usable = _usable(floor, sorted(joined), machines, open_)
-    region = {c for c in joined if usable[c] >= 1}
-    volume = sum(min(usable[c], cap) for c in region)
-    raw = sum(floor.h[c] for c in region)
     stats |= {"volume": volume, "volume_raw": raw, "floor": len(region)}
-    k, m = want["keepout_volume"], want["required"]
     if volume < m:
         msg = (
             f"the roofed floor holds {volume} usable blocks (air up to {cap} high under "
@@ -693,17 +751,34 @@ def fit(
                 kx, _, kz = sizes[program.instances[n].footprint.key]
                 return (-kx * kz, n)
 
-            failed = _pack(
-                program,
-                sorted(todo, key=area),
-                packer,
-                placed,
-                door.lobby,
-                joined,
-                opts,
-                turns,
-                flow=False,
-            )
+            def area_pass(corner: tuple[int, int] | None) -> list[int]:
+                return _pack(
+                    program,
+                    sorted(todo, key=area),
+                    packer,
+                    placed,
+                    door.lobby,
+                    joined,
+                    opts,
+                    turns,
+                    flow=False,
+                    corner=corner,
+                )
+
+            failed = area_pass(None)
+            # nearest the lobby can split a hall in two; corner-first packs it from a corner
+            if failed:
+                first = (dict(placed), list(failed), set(packer.taken))
+                for corner in _CORNERS:
+                    placed = dict(kept)
+                    packer.taken = set(taken)
+                    packer._rebuild()
+                    failed = area_pass(corner)
+                    if not failed:
+                        break
+                else:  # none did: the refusal tells of the lobby-first try
+                    placed, failed, packer.taken = first
+                    packer._rebuild()
         if failed:
             stats["placed"] = len(placed)
             x, z, w, ln = _largest(packer.free(1), site)

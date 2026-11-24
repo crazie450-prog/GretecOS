@@ -405,7 +405,9 @@ def site_prompt() -> str:
         "The code refuses a design that names a role or block the palette does not have (the "
         "palette holds plain blocks only: nothing with an inventory or a screen, no machine "
         "block), whose script breaks the rules above or fails, that has more than max_blocks "
-        "blocks, or none. It refuses it too when the machines don't fit: no doorway, too little "
+        "blocks, or none. It removes blocks placed outside the bounding volume (SITE and the "
+        "relief zone, up to the top) and refuses the design when that is more than a quarter "
+        "of it. It refuses it too when the machines don't fit: no doorway, too little "
         "roofed air, no floor wide or high enough for a machine, machines that don't pack, or "
         "no ceiling high enough for the chase; the refusal says what to change. Stay valid "
         "first, then be ambitious: a refused design is worth nothing.\n\n"
@@ -585,8 +587,21 @@ MAX_IDS = 12  # machine ids named on one PROGRAM row
 
 def _who(ids: Sequence[str]) -> str:
     """Service ends as the brief names them: machine ids, the door for e1 (the line's way in
-    and out)."""
-    return " ".join("the door" if i == "e1" else str(i) for i in ids) or "the door"
+    and out), the line for none (a boundary port's inside end)."""
+    return " ".join("the door" if i == "e1" else str(i) for i in ids) or "the line"
+
+
+def _service(v: Mapping[str, Any]) -> str:
+    """A service as the site brief lists it; a boundary port says which way it runs."""
+    a, b = list(v["from"]), list(v["to"])
+    end = (
+        " (input)"
+        if a == ["e1"] and not b
+        else " (product)"
+        if b == ["e1"] and not a
+        else ""
+    )
+    return f"- {_who(a)} -> {_who(b)}: {v['item']}{end}"
 
 
 def _site_body(
@@ -650,10 +665,7 @@ def _site_body(
     )
     lines += _listed(
         "Services (what GOS runs between the machines through the chases):",
-        [
-            f"- {_who(v['from'])} -> {_who(v['to'])}: {v['item']}"
-            for v in program.get("services", [])
-        ],
+        [_service(v) for v in program.get("services", [])],
     )
     lines.append("facts: " + json.dumps(facts(rec), separators=(",", ":")))
     return lines
@@ -709,13 +721,22 @@ def revise_brief(
     ]
     if site_record(rec):
         head.append(
-            "GOS fits the machines into the revised building again: they may move."
+            "GOS fits the machines into the revised building again: they may move. Your "
+            "answer's entrance and zones replace the current ones: send them again to keep "
+            "them (entrance null: GOS takes the widest doorway; zones []: none)."
         )
     script, ops = split(rec["ops"])
     tail = [
         "current script: " + json.dumps(script),
         "current operations: " + json.dumps(ops, separators=(",", ":")),
     ]
+    if site_record(rec):
+        fit = rec["fit"]
+        tail += [
+            "current entrance: " + json.dumps(fit.get("entrance")),
+            "current zones: "
+            + json.dumps(fit.get("zones") or [], separators=(",", ":")),
+        ]
     return _fit("\n".join([*head, *_body(rec, lay, names, None), *tail]))
 
 

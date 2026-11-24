@@ -60,6 +60,7 @@ ROOT = Path("data", "build", "designs")
 CURRENT = "current.json"
 DESIGN_ID = re.compile(r"ds-[0-9a-f]{12}")
 BY = ("procedural", "architect")
+AUTO = "auto"  # a site revision's entrance: drop the parent's door hint (D422)
 MAX_VERSIONS = (
     200  # a design this long is started again (nothing is dropped to make room)
 )
@@ -419,7 +420,7 @@ def revise(
     cost_usd: float | None = None,
     asked: str | None = None,
     save_it: bool = True,
-    entrance: Mapping[str, Any] | None = None,
+    entrance: Mapping[str, Any] | str | None = None,
     zones: Sequence[Mapping[str, Any]] | None = None,
 ) -> Revised:
     """A new version of design ``ds`` (the current design if none) from its current version and
@@ -434,7 +435,8 @@ def revise(
     plans or the ``structure`` rows), into the revised building, keeping the places of the
     parent's layout that still fit when a fresh fit would move them (design §2.7).
     ``entrance`` and ``zones`` (a site build's only; none: the parent's) are the answer's
-    door hint and steering boxes."""
+    door hint and steering boxes; ``entrance`` :data:`AUTO` drops the parent's hint (GOS
+    takes the widest doorway)."""
     if by not in BY:
         raise ValueError(by)
     ds = ds or current_id(home)
@@ -447,6 +449,10 @@ def revise(
     site = shell_store.site_mode(rec)
     if not site and (entrance is not None or zones is not None):
         raise VersionError("an entrance or zones are for a site build")
+    if isinstance(entrance, str) and entrance != AUTO:
+        raise VersionError(
+            f"the entrance is {{side, at}} or {AUTO!r}, not {entrance!r}"
+        )
     words = " ".join(words.split())
     if len(words) > shell_revise.MAX_WORDS:
         raise VersionError(f"say it in at most {shell_revise.MAX_WORDS} characters")
@@ -538,6 +544,13 @@ def revise(
     fitted: shell_store.Fitted | None = None
     if site:
         info = rec["fit"]
+        door: Mapping[str, Any] | None = (
+            info.get("entrance")
+            if entrance is None
+            else None
+            if isinstance(entrance, str)  # AUTO
+            else entrance
+        )
         fitted = shell_store.fit_site(
             conn,
             spec,
@@ -545,7 +558,7 @@ def revise(
             source,
             prog,
             opts,
-            info.get("entrance") if entrance is None else entrance,
+            door,
             (info.get("zones") or ()) if zones is None else zones,
             lay,
             parent,
@@ -715,11 +728,13 @@ def refit(
     save_it: bool = True,
 ) -> Revised:
     """A new version of site build ``build`` (D422, design §2.7) with the same operations and
-    building, its plans' machines as they are today (new footprint data, a re-solved plan)
+    site, its plans' machines as they are today (new footprint data, a re-solved plan)
     fitted into it again, keeping the places that still fit; by GOS, free, asked "refit".
-    ``gos shell export`` names it when the machines changed. ``build`` must be its design's
-    current version. Refused (nothing written) when the machines no longer fit the building
-    (revise the building) or nothing changed."""
+    The operations run with today's NEED and PROGRAM: a plain design gives the same
+    building, a script that sizes itself by NEED grows with the machines.
+    ``gos shell export`` names it when the machines changed (by the same rule). ``build``
+    must be its design's current version. Refused (nothing written) when the machines no
+    longer fit the building (revise the building) or are the ones it was fitted for."""
     from gregtec.build import layout as layout_lib
     from gregtec.planner.outputs import store as plan_store
 
@@ -749,7 +764,14 @@ def refit(
         raise VersionError(f"the plans' machines can't be read now: {exc}") from None
     if not prog.instances:
         raise VersionError("the plans place no machine now: nothing to house")
-    _, _, opts = shell_store._program(home, build)
+    saved, _, opts = shell_store._program(home, build)
+    if json.loads(json.dumps(prog.to_json(opts))) == saved:
+        same = (
+            f"the plans' machines are the ones {build} was fitted for: nothing changes "
+            "(nothing was written)",
+        )
+        out = shell.Outcome("refused", rec["source"], {}, {}, same)
+        return Revised(ds, build, build, out, (), (), same, False, None, None)
     lay = _layout_of(home, build)
     swatches = shell_store._swatches(rec)
     try:
@@ -757,18 +779,7 @@ def refit(
     except palette.CatalogError as exc:
         raise VersionError(str(exc)) from None
     line_type = rec.get("line_type", theme_lib.GENERAL)
-    spec = shell.spec_for_site(
-        prog,
-        shell_store.layout_lib.box_of(rec["fit"]["site"]),  # the same building
-        swatches,
-        opts,
-        prompt=rec.get("prompt", ""),
-        line_type=line_type,
-        max_blocks=rec["max_blocks"],
-        headroom=rec["headroom"],
-        relief=rec.get("relief", 0),
-    )
-    spec = replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
+    spec = shell_store.site_spec_with(prog, opts, rec, swatches)  # the same site
     progress.stage("gate")
     info = rec["fit"]
     fitted = shell_store.fit_site(

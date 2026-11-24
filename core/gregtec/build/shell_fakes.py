@@ -357,10 +357,15 @@ class FakeDesigner:
                 m = _LINE_TYPE.search(user)
                 line = m.group(1) if m else "general"
                 ops = ornate(facts, line) if self.model == ORNATE else plain(facts)
-            text = (
-                shell_brief.answer(ops, None, [])
-                if site(facts)
-                else shell_brief.answer(ops)
-            )
+            if not site(facts):
+                text = shell_brief.answer(ops)
+            elif revise:  # the current door and zones, sent again to keep them
+                text = shell_brief.answer(
+                    ops,
+                    _line(user, "current entrance: "),
+                    _line(user, "current zones: "),
+                )
+            else:
+                text = shell_brief.answer(ops, None, [])
         usage = Usage(input=(len(system) + len(user)) // 4, output=len(text) // 4 + 1)
         return Reply(text, usage)

@@ -1552,7 +1552,7 @@ More detail: [shells.md](runbooks/shells.md), and [shell_bakeoff.md](runbooks/sh
 
 ## Part 9. The free bake-off
 
-A bake-off gives the same seven building requests to several designers and lets you pick the better building without knowing who drew it. The program's own messages call a request a **case**. In this part the designers are three small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it.
+A bake-off gives the same seven building requests to several designers and lets you pick the better building without knowing who drew it. The program's own messages call a request a **case**. In this part the designers are small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. This part uses three of them. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it. Two more, `fake-cramped` and `fake-tower`, show the refusals of a hall too small for the machines and of floors too narrow for them; [shell_bakeoff.md](runbooks/shell_bakeoff.md) says more. You do not need them here.
 
 Each designer builds first, on an empty plot sized for your machines, and GOS then fits the machines inside the building (since D422; the "site mode" in [`runbooks/shells.md`](runbooks/shells.md)). Your own shells from Part 8 are built the other way round, around the machines' floor plan, and stay that way. The fake halls have no lights, so in the marble temple request the follow-up "no lights" changes nothing: GOS refuses it as "nothing changes". That is expected.
 
@@ -1604,6 +1604,8 @@ label	provider	model	effort	price	key
 fake-plain	fake	fake-plain	default	free	none needed
 fake-ornate	fake	fake-ornate	default	free	none needed
 fake-sloppy	fake	fake-sloppy	default	free	none needed
+fake-cramped	fake	fake-cramped	default	free	none needed
+fake-tower	fake	fake-tower	default	free	none needed
 # run cap: $10.00, and 1,000,000 tokens for models without a price ([bakeoff] cap_usd, cap_tokens)
 ```
 

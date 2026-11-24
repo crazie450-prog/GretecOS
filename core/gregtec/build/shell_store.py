@@ -645,6 +645,18 @@ def _site_spec(
     """A site build's design-time spec from its own files (KEEP_CLEAR [] and its NEED: the
     facts its script was run with), never the fitted one (design §2.7)."""
     _, prog, opts = _program(home, build)
+    return site_spec_with(prog, opts, rec, swatches), prog, opts
+
+
+def site_spec_with(
+    prog: layout_lib.Program,
+    opts: layout_lib.Options,
+    rec: Mapping[str, Any],
+    swatches: Sequence[shell.Swatch],
+) -> shell.Spec:
+    """A site build's spec (its site, sizes and palette) with the machine program ``prog``:
+    its saved one (:func:`_site_spec`), or today's for a refit (whose script then runs with
+    today's NEED and PROGRAM; the export's check asks the same, :func:`_check_site`)."""
     spec = shell.spec_for_site(
         prog,
         layout_lib.box_of(rec["fit"]["site"]),
@@ -656,11 +668,7 @@ def _site_spec(
         headroom=rec["headroom"],
         relief=rec.get("relief", 0),
     )
-    return (
-        replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name")),
-        prog,
-        opts,
-    )
+    return replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
 
 
 def _site_cells(
@@ -867,8 +875,9 @@ def _check_site(
     """:func:`check_layout` for a site build (D422, design §2.7): today's machines (the plans'
     footprints now) fitted again into the saved building as at design time. The same layout:
     export. Otherwise refused (export never changes a build): with the refit message when
-    they still fit (from scratch, or with the saved layout as the prior: a prior pass can
-    fail where a fresh one fits), else with the fit's reasons."""
+    ``gos shell refit`` would pass (the same rule as :func:`shell_versions.refit`: the design
+    run with today's program, a script sized by NEED growing with it, and fitted from
+    scratch or keeping the saved places), else with its reasons."""
     build = str(rec["id"])
     try:
         lay = json.loads(
@@ -892,11 +901,24 @@ def _check_site(
     res = _refit(now, opts, spec, got, rec, _saved_prior(home, build, rec))
     if res.layout == lay:
         return
-    # changed: do they still fit, from scratch or the machines that can staying put?
-    if res.layout is None and _refit(now, opts, spec, got, rec, lay).layout is None:
+    # changed: would a refit pass? (today's program, as refit runs it)
+    info = rec["fit"]
+    again = fit_site(
+        conn,
+        site_spec_with(now, opts, rec, _swatches(rec)),
+        rec["ops"],
+        rec["source"],
+        now,
+        opts,
+        info.get("entrance"),
+        info.get("zones") or (),
+        lay,
+        build,
+    )
+    if not again.outcome.ok:
         raise shell.ShellError(
             "the machines changed since this shell was designed and no longer fit the "
-            "building: " + " | ".join(res.reasons) + ": revise the building"
+            "building: " + " | ".join(again.outcome.reasons) + ": revise the building"
         )
     raise shell.ShellError(
         "the machines changed since this shell was designed; the building still holds "

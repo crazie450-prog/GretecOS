@@ -779,6 +779,60 @@ def test_refit_fits_todays_machines_into_the_same_building(
         versions.refit(conn, home, v1)
 
 
+def test_export_and_refit_agree_on_a_script_sized_by_need(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    from gregtec.build.worldreg import WorldRegistry
+
+    from .test_shell import HALL
+
+    made = shell_store.make(
+        conn,
+        home,
+        VaultIO(home / "vault"),
+        ["pl-steel"],
+        theme_id="th-foundry",
+        mode="site",
+        ops=[{"op": "script", "script": HALL}],
+    )
+    assert made.outcome.status == "accepted", made.outcome.reasons
+    versions.start(home, made.build, asked="a hall", by="architect")
+    rec = shell_store.load(home, made.build)
+    names = {m["block"].split("@")[0] for m in rec["materials"]}
+    world = WorldRegistry("lab", frozenset(names), frozenset(), "level.dat")
+    plan_file = home / "data" / "plans" / "pl-steel.json"
+    more = json.loads(plan_file.read_text(encoding="utf-8"))
+    more["nodes"][0]["count"] += 2
+    plan_file.write_text(json.dumps(more), encoding="utf-8")
+    # the saved hall is too small for them, but the script grows with today's NEED: export
+    # offers the refit, and the refit passes
+    with pytest.raises(shell.ShellError, match="gos shell refit " + made.build):
+        shell_store.export(conn, home, made.build, world)
+    got = versions.refit(conn, home, made.build)
+    assert got.saved and got.record is not None, got.reasons
+    assert shell_store.export(conn, home, got.build, world).paths
+
+
+def test_refitting_a_version_with_a_prior_again_changes_nothing(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    _, made = site_first(conn, home)
+    lay = versions._layout_of(home, made.build)
+    hit = next(p for p in lay["placements"] if p["id"] == "m4")
+    x, z = hit["lo"][0], hit["lo"][2]
+    ops = [
+        *made.ops,
+        {"op": "fill", "role": "pillar", "lo": [x, 0, z], "hi": [x, 11, z]},
+    ]
+    v2 = rev(conn, home, "a pillar", ops=ops, by="architect")
+    assert v2.saved and v2.record is not None and v2.record["fit"].get("prior")
+    shell_store.check_layout(conn, home, v2.record)  # exports as it is
+    before = builds_on_disk(home)
+    same = versions.refit(conn, home, v2.build)
+    assert not same.saved and "nothing changes" in same.reasons[0], same.reasons
+    assert builds_on_disk(home) == before
+
+
 def test_gos_shell_design_site_and_refit(
     home: Path, tmp_path: Path, conn: sqlite3.Connection
 ) -> None:
@@ -819,6 +873,20 @@ def test_build_revise_takes_a_site_builds_entrance_and_zones(
     assert rec["fit"]["entrance"] == ent and rec["fit"]["fit"]["entrance_from"] == (
         "answer"
     )
+    # left out, the hint stays; null (or auto) drops it: GOS takes the widest doorway
+    out = reg.call("build_revise", {"words": "make the roof steeper"}, lane=DEEP)
+    assert not out.is_error, out.text
+    rec = shell_store.load(home, versions.get(home, ds)["current"])
+    assert rec["fit"]["entrance"] == ent
+    out = reg.call(
+        "build_revise", {"words": "shorter by 1", "entrance": "null"}, lane=DEEP
+    )
+    assert not out.is_error, out.text
+    rec = shell_store.load(home, versions.get(home, ds)["current"])
+    assert rec["fit"]["entrance"] is None
+    assert rec["fit"]["fit"]["entrance_from"] == "auto"
+    with pytest.raises(versions.VersionError, match="the entrance is"):
+        rev(conn, home, "no lights", entrance="west")
     bad = {"side": "north", "at": [1, 1]}
     out = reg.call(
         "build_revise",

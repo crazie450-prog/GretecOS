@@ -387,7 +387,14 @@ BUILD_REVISE_SCHEMA: dict[str, Any] = {
         "max_blocks": BUILD_REQUEST_SCHEMA["properties"]["max_blocks"],
         "headroom": BUILD_REQUEST_SCHEMA["properties"]["headroom"],
         # a site build's (D422); left out: the current version's
-        "entrance": BUILD_REQUEST_SCHEMA["properties"]["entrance"],
+        "entrance": {
+            "type": "string",
+            "maxLength": MAX_HINT_TEXT,
+            "description": 'site mode: your main door as JSON, {"side": "west", "at": [x, '
+            "z]}: a ground column of its opening (roofed, on the building's outer edge on "
+            "that side); leave out to keep the current version's; null or auto for GOS to "
+            "take the widest doorway",
+        },
         "zones": BUILD_REQUEST_SCHEMA["properties"]["zones"],
         "save": {
             "type": "boolean",
@@ -420,7 +427,11 @@ def build_revise(call: Call, args: dict[str, Any], offset: int) -> Result:
         if not isinstance(ops, list):
             raise ToolError("design_ops is a JSON list of operations")
     save = args.get("save", True)
-    entrance = _json_arg(args, "entrance", dict, "a JSON object {side, at}")
+    entrance: dict[str, Any] | str | None
+    if str(args.get("entrance", "")).strip() in ("null", "auto", '"auto"'):
+        entrance = versions.AUTO  # GOS takes the widest doorway
+    else:
+        entrance = _json_arg(args, "entrance", dict, "a JSON object {side, at}")
     zones = _json_arg(args, "zones", list, "a JSON list of {kind, lo, hi}")
     # The chain's note is Clayton's own request when a lane passes it on, else the words.
     asked = call.request or words
