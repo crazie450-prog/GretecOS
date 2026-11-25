@@ -235,9 +235,16 @@ def usage_rows(store: Store) -> list[dict[str, Any]]:
 
 def test_the_shell_keys_are_soft_service_keys(tmp_path: Path) -> None:
     path = tmp_path / "gos.toml"
-    path.write_text('[shell]\ndesigner = "astra"\ndesigner_max_usd = 6\n', "utf-8")
+    path.write_text(
+        '[shell]\ndesigner = "astra"\ndesigner_max_usd = 6\ndesigner_big_max_usd = 9\n',
+        "utf-8",
+    )
     cfg = config.load(path)
     assert cfg.shell_designer == "astra" and cfg.shell_designer_max_usd == 6.0
+    assert cfg.shell_designer_big_max_usd == 9.0
+    assert (
+        config.Config().shell_designer_big_max_usd is None
+    )  # unset: cap_of picks (D429)
     assert cfg.service_errors == ()
     assert config.Config().shell_designer == ""  # unset: today's behaviour
     for text, why in (
@@ -246,12 +253,15 @@ def test_the_shell_keys_are_soft_service_keys(tmp_path: Path) -> None:
         ("[shell]\ndesigner_max_usd = 0.1\n", "designer_max_usd must be"),
         ("[shell]\ndesigner_max_usd = nan\n", "designer_max_usd must be"),
         ("[shell]\ndesigner_max_usd = true\n", "designer_max_usd must be"),
+        ("[shell]\ndesigner_big_max_usd = 21\n", "designer_big_max_usd must be"),
+        ('[shell]\ndesigner_big_max_usd = "6"\n', "designer_big_max_usd must be"),
         ('shell = "x"\n', "shell must be a table"),
     ):
         path.write_text(text, "utf-8")
         cfg = config.load(path)  # never stops the load: the core says so at start
         assert any(why in e for e in cfg.service_errors), (text, cfg.service_errors)
         assert cfg.shell_designer == "" and cfg.shell_designer_max_usd == 4.0
+        assert cfg.shell_designer_big_max_usd is None
 
 
 def test_resolve_reads_the_label_per_request(
@@ -302,7 +312,7 @@ def test_the_bakeoff_builds_its_designers_as_the_live_designer_does() -> None:
     assert built.effort == "low"
 
 
-# --- held: the AI switch, the credit pause, the day cap ----------------------------------------
+# --- held: the AI switch and the credit pause; the day cap only warns ----------------------------
 
 
 def test_held_honours_the_switch_and_the_pause_for_every_designer(
@@ -342,25 +352,24 @@ def test_held_honours_the_switch_and_the_pause_for_every_designer(
     )
 
 
-def test_held_refuses_at_the_day_cap_and_lowers_the_cap_to_what_it_leaves(
+def test_the_day_cap_only_warns_and_never_lowers_the_cap(
     home: Path, toml: Path, ring: MemoryKeyring, store: Store
 ) -> None:
+    # D429 (Clayton, 2026-11-25): [budget] day_max_usd only warns, as for every other lane
     ring.set_password("gregtec-os/openai", "openai", OPENAI_KEY)
     astra = shell_designer.resolve(cfg_of(home, "astra"), toml)
     meter = UsageMeter(store, 100.0, (80, 100))
     cfg = cfg_of(home, "astra")
     meter.record("fast", "claude-opus-5-5", Usage(), usd=7.5, task="x")
-    assert shell_designer.held(cfg, store, AiMode(), astra) == (None, 2.5)
-    meter.record("fast", "claude-opus-5-5", Usage(), usd=2.62, task="x")
-    assert shell_designer.held(cfg, store, AiMode(), astra) == (
-        (
-            "today's AI spend $10.12 has reached the day cap $10.00 ([budget] "
-            "day_max_usd): the shell designer is off until tomorrow, or raise day_max_usd"
-        ),
-        0.0,
-    )
+    assert shell_designer.held(cfg, store, AiMode(), astra) == (None, 4.0)
     st = shell_designer.status(cfg, store, AiMode(), toml)
-    assert st["configured"] and not st["ready"] and "day cap" in st["why"]
+    assert (st["cap_usd"], st["big_cap_usd"], st["day_left_usd"]) == (4.0, 6.0, 2.5)
+    meter.record("fast", "claude-opus-5-5", Usage(), usd=2.62, task="x")
+    assert shell_designer.held(cfg, store, AiMode(), astra) == (None, 4.0)
+    assert shell_designer.checked(cfg, store, AiMode(), astra) is astra
+    st = shell_designer.status(cfg, store, AiMode(), toml)
+    assert st["configured"] and st["ready"] and st["why"] is None
+    assert st["cap_usd"] == 4.0 and st["big_cap_usd"] == 6.0
     assert st["day_left_usd"] <= 0 and st["label"] == "astra"
     assert MODEL_ID not in json.dumps(st)  # never a model id
     assert shell_designer.status(cfg_of(home, ""), store) == {"configured": False}
@@ -613,7 +622,7 @@ def test_the_guard_stops_before_a_try_past_the_cap_with_the_figures(
         assert len(astra.requests) == 1  # nothing more was sent
 
 
-def test_the_day_cap_is_read_again_before_every_try(
+def test_a_spend_past_the_day_cap_never_stops_the_next_try(
     home: Path, toml: Path, store: Store, astra: FakeResponsesAPI
 ) -> None:
     UsageMeter(store, 100.0, (80, 100)).record(
@@ -641,16 +650,119 @@ def test_the_day_cap_is_read_again_before_every_try(
     astra.policy = policy
     ctx = ctx_of(home, toml, "astra", store, ai=AiMode())
     got = shell_designer.design(ctx, site_ask(), lambda _s: None)
-    (why,) = got.result["refused"]
+    # D429: the day cap only warns (D334's cost watch); the repair goes on and passes
+    assert got.ok, got.result
     one = (2000 * 10 + 400 * 50) / 1e6
-    assert why.startswith(
-        f"stopped before try 2: today's AI spend is ${8.0 + 2.5 + one:.2f} and the next try "
+    assert got.result["rounds"] == 1 and len(astra.requests) == 2
+    assert got.result["cost_usd"] == pytest.approx(2 * one)
+    from gregtec.ops.costs import CostWatch
+
+    day = CostWatch.of(store, ctx.cfg).caps()["day"]
+    assert day["reached"] and day["spent_usd"] == pytest.approx(8.0 + 2.5 + 2 * one)
+
+
+def big_ask(**kw: Any) -> shell_brief.DesignRequest:  # noqa: ANN401
+    """A plan-free warehouse on a plot whose own procedural building passes BIG_PREVIEW."""
+    return shell_brief.DesignRequest(
+        (),
+        "a vast empty marble warehouse",
+        mode="free",
+        area=2_000,
+        theme="th-foundry",
+        **kw,
     )
+
+
+def test_a_large_request_gets_32000_tokens_the_longer_echo_and_its_own_cap(
+    home: Path, toml: Path, store: Store, astra: FakeResponsesAPI
+) -> None:
+    # D429 (Clayton, 2026-11-25): a large live request is asked as a big bake-off case is
+    junk = "x" * 30_000  # not a design: refused, and sent back whole
+    astra.policy = lambda body: (
+        Answer(text=junk) if len(astra.requests) == 1 else good(body)
+    )
+    ctx = ctx_of(home, toml, "astra", store)
+    got = shell_designer.design(ctx, big_ask(), lambda _s: None)
+    assert got.ok, got.result
+    assert got.result["max_output_tokens"] == 32_000 and got.result["rounds"] == 1
+    assert [b["max_output_tokens"] for b in astra.requests] == [32_000, 32_000]
+    repair = astra.requests[1]["input"]
+    assert junk in repair and "...(cut)" not in repair  # the 40,000-character echo
+    # its revision is large too (the version it revises passes BIG_PREVIEW blocks)
+    rec = shell_store.load(home, got.result["build"])
+    assert shell_brief.big_request(rec["blocks"], rec["max_blocks"])
+    again = shell_designer.revise(
+        ctx, got.result["design"], "a taller clock tower", lambda _s: None
+    )
+    assert again.ok, again.result
+    assert astra.requests[-1]["max_output_tokens"] == 32_000
+    # the cap: the larger of designer_big_max_usd (6 unless changed) and designer_max_usd
+    cfg = ctx.cfg
+    assert (
+        shell_designer.cap_of(cfg, True) == 6.0
+        and shell_designer.cap_of(cfg, False) == 4.0
+    )
+    high = replace(cfg, shell_designer_max_usd=8.0)
+    assert shell_designer.cap_of(high, True) == 8.0  # never below a standard request's
+    # a lowered designer_max_usd bounds large requests too while designer_big_max_usd is unset
+    lowered = replace(cfg, shell_designer_max_usd=1.0)
+    assert (
+        shell_designer.cap_of(lowered, True)
+        == shell_designer.cap_of(lowered, False)
+        == 1.0
+    )
+    assert shell_designer.cap_of(replace(cfg, shell_designer_max_usd=5.0), True) == 6.0
+    chosen = replace(lowered, shell_designer_big_max_usd=3.0)  # set: honoured
+    assert shell_designer.cap_of(chosen, True) == 3.0
+    low = ctx_of(
+        home,
+        toml,
+        "astra",
+        store,
+        cfg={"shell_designer_max_usd": 0.5, "shell_designer_big_max_usd": 0.5},
+    )
+    n = len(astra.requests)
+    refused = shell_designer.design(low, big_ask(), lambda _s: None)
+    (why,) = refused.result["refused"]
+    assert why.startswith("one try of astra can cost up to $")
     assert why.endswith(
-        f"over the day cap $10.00 ([budget] day_max_usd). ${one:.2f} spent on this "
-        "request; nothing was saved."
+        "this request's cap is $0.50: raise [shell] designer_big_max_usd"
     )
-    assert len(astra.requests) == 1
+    assert len(astra.requests) == n  # nothing was sent
+
+
+def test_a_large_answer_cut_off_says_32000_tokens(
+    home: Path, toml: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[int] = []
+
+    def cut(self: Any, system: str, user: str, schema: Any, most: int) -> llm.Reply:  # noqa: ANN401
+        seen.append(most)
+        return llm.Reply('{"ops": [', Usage(), llm.MAX_TOKENS)
+
+    monkeypatch.setattr(fakes.FakeDesigner, "complete", cut)
+    got = shell_designer.design(ctx_of(home, toml), big_ask(), lambda _s: None)
+    assert got.status == shell_designer.REFUSED
+    assert got.result["attempts"][0]["why"] == (
+        "the answer was cut off at the output limit (32000 tokens): use fewer operations"
+    )
+    assert seen == [32_000] * 3
+
+
+def test_a_small_request_keeps_16000_tokens_and_the_standard_cap(
+    home: Path, toml: Path, store: Store, astra: FakeResponsesAPI
+) -> None:
+    ctx = ctx_of(home, toml, "astra", store)
+    got = shell_designer.design(ctx, site_ask(), lambda _s: None)
+    assert got.ok, got.result
+    assert got.result["max_output_tokens"] == 16_000
+    assert [b["max_output_tokens"] for b in astra.requests] == [16_000]
+    # a big plot with max_blocks at 5,000 or under is never large (D425: target <= max_blocks)
+    shell_designer.design(ctx, big_ask(max_blocks=5_000), lambda _s: None)
+    assert astra.requests[-1]["max_output_tokens"] == 16_000
+    assert not shell_brief.big_request(9_000, 5_000)
+    assert not shell_brief.big_request(2_000, 20_000)
+    assert shell_brief.big_request(2_001, 5_001)
 
 
 @pytest.mark.parametrize(
@@ -1035,40 +1147,35 @@ def test_the_architect_asks_the_designer_and_may_not_write_operations(
     assert out.is_error and "runs in the core (gos serve)" in out.text
 
 
-def test_at_the_day_cap_chat_and_the_architect_see_the_designer_as_not_ready(
+def test_at_the_day_cap_chat_and_the_architect_still_see_the_designer_as_ready(
     conn: sqlite3.Connection,
     home: Path,
     toml: Path,
     store: Store,
     astra: FakeResponsesAPI,
 ) -> None:
-    from gregtec.agents import router
-
+    # D429: past the day cap the designer stays ready; the day cap only warns
     UsageMeter(store, 100.0, (80, 100)).record(
         "fast", "claude-opus-5-5", Usage(), usd=10.5, task="x"
     )
-    why = (
-        "today's AI spend $10.50 has reached the day cap $10.00 ([budget] day_max_usd): "
-        "the shell designer is off until tomorrow, or raise day_max_usd"
-    )
     st = shell_designer.status(cfg_of(home, "astra"), store, AiMode(), toml)
-    assert not st["ready"] and st["why"] == why
+    assert st["ready"] and st["why"] is None and st["day_left_usd"] <= 0
     ds = first(conn, home)
     started: list[dict[str, Any]] = []
-    a, deep = _asker(home, toml, "astra", AiMode(), started)
+    a, _ = _asker(home, toml, "astra", AiMode(), started)
     assert a.shell_jobs is not None
     a.shell_jobs.store = store  # as the core sets it
-    # chat: why first, then the architect (no job that would refuse at once)
-    reply = a.ask("make the roof steeper")
-    assert reply.lane == router.DEEP and started == []
-    assert reply.text.startswith(f"The shell designer isn't ready ({why}). ")
-    assert deep.recent()[-1].request == "make the roof steeper"
-    # the architect: the head says why, and it may write the operations itself
+    # chat: the designer's job starts at once
+    a.ask("make the roof steeper")
+    assert started == [
+        {"revise": {"design": ds, "words": "make the roof steeper", "ai": True}}
+    ]
+    # the architect: the head says ready, and it may not write the operations itself
     look = _call(a.registry, "build_request", {"plans": "pl-steel", "save": False})
-    assert parse(look.text).head["designer"] == f"astra (not ready: {why})"
+    assert parse(look.text).head["designer"] == "astra (ready)"
     hand = _call(a.registry, "build_revise", {"words": "taller", "design_ops": "[]"})
-    assert "ask_designer=true" not in hand.text
-    assert versions.get(home, ds)["id"] == ds and astra.requests == []
+    assert "ask_designer=true" in hand.text
+    assert astra.requests == []  # the job starter is a stub: nothing was asked
 
 
 # --- the CLI ---------------------------------------------------------------------------------------
@@ -1144,6 +1251,32 @@ def test_gos_shell_design_ai_with_a_priced_model_waits_for_yes(
     assert MODEL_ID not in text and OPENAI_KEY not in text
     code, text = gos(path, "revise", "make", "it", "taller", "--ai", "--yes")
     assert code == 0 and "Type yes" not in text, text
+
+
+def test_gos_shell_design_ai_shows_a_large_request_s_cap_and_only_warns_past_the_day_cap(
+    home: Path, toml: Path, store: Store, astra: FakeResponsesAPI
+) -> None:
+    UsageMeter(store, 100.0, (80, 100)).record(
+        "fast", "fast-model", Usage(), usd=10.5, task="x"
+    )
+    path = _with(toml, "astra")
+    argv = (
+        "design",
+        "--mode",
+        "free",
+        "--area",
+        "2000",
+        "--theme",
+        "th-foundry",
+        "--ai",
+    )
+    code, text = gos(path, *argv, typed="no\n")
+    assert code == 1 and "this request's cap $6.00 · one try up to $" in text, text
+    assert "past today's day cap (a warning only)" in text
+    assert "Type yes to spend up to $6.00: " in text and astra.requests == []
+    code, text = gos(path, *argv, "--yes")
+    assert code == 0, text
+    assert [b["max_output_tokens"] for b in astra.requests] == [32_000]
 
 
 # --- the shared engine -------------------------------------------------------------------------------

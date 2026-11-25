@@ -1,4 +1,4 @@
-"""The route reviewer (WO-3.10 F7, D389 (7)): a per-request toggle, off by default.
+"""The route reviewer (WO-3.10 F7, D427 (7)): a per-request toggle, off by default.
 
 When the Designer (``review: true``) or ``gos plan --review`` turns it on, the reviewer model
 (``[models] orchestrator``) reads the planner's ranked routes and looks for what the planner
@@ -10,7 +10,7 @@ world, no registry tool):
 - ``propose_constraints``: a **re-run**: the request with more ``exclude`` keys, re-solved by
   the planner.
 - ``propose_pin``: an **edit**: a node's recipe swapped for another candidate the graph lists,
-  then re-solved; refused until one re-run has been tried (D389's order). Code counts every pin
+  then re-solved; refused until one re-run has been tried (D427's order). Code counts every pin
   applied as an edit, and the record, the Designer, the vault note and the CLI say so.
 - ``escalate``: one question to the advisor model (``[models] planner``), whose advice comes
   back to the reviewer as data.

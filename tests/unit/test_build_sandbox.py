@@ -433,18 +433,18 @@ def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
         len(text) < 8_000
     )  # the per-call estimate in the runbook assumes about this size
     assert shell_brief.SCHEMA["required"] == ["script", "ops"]
-    # layout mode keeps v5's text; site mode (D422) is v6, and a run records each it sent
+    # layout mode keeps v5's text; site mode (D422) is v8 (WO-10.18), and a run records each it sent
     rec = shell_bakeoff.prompt_record()
     assert rec["version"] == shell_brief.PROMPT_VERSIONS["layout"] == 5
     assert len(rec["sha256"]) == 12 and rec["mode"] == "layout"
     assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v5 (sha ")
     assert shell_bakeoff.prompt_label({}).startswith("v1")
     site = shell_bakeoff.prompt_record("site")
-    assert site["version"] == shell_brief.PROMPT_VERSIONS["site"] == 6
+    assert site["version"] == shell_brief.PROMPT_VERSIONS["site"] == 8
     assert site["sha256"] != rec["sha256"]
     both = {"prompt": site, "prompts": {"site": site, "layout": rec}}
     assert shell_bakeoff.prompt_label(both) == (
-        f"v6 site (sha {site['sha256']}); v5 layout (sha {rec['sha256']})"
+        f"v8 site (sha {site['sha256']}); v5 layout (sha {rec['sha256']})"
     )
 
 
@@ -883,15 +883,17 @@ def test_the_planner_spreads_machines_when_asked(conn: sqlite3.Connection) -> No
 
 def test_a_case_picks_its_machine_arrangement() -> None:
     every = shell_bakeoff.load_cases()
-    # D425's big cases have none: a site case's arrangement is reset anyway (D422), and a
-    # plan-free one has no machines to arrange (D424)
-    cases = [c for c in every if c.target is None]
-    assert len(cases) == 7 and all(not c.layout for c in every if c.target is not None)
-    assert len({c.layout for c in cases}) == len(
-        cases
-    )  # every case arranged its own way
+    # WO-10.18's cases (D431) have none: a site case's arrangement is reset anyway (D422),
+    # and a plan-free one has no machines to arrange (D424)
+    assert every and not any(c.layout for c in every)
     for c in every:
         c.layout_options()  # each is a valid set of the planner's options
+    # a layout-mode case keeps the arrangement it picks; a site case's is reset
+    picked = ("max_run=16", "spacing=2", "band_gap=4")
+    kept = shell_bakeoff.case_options(picked, "layout")
+    assert (kept.max_run, kept.spacing, kept.band_gap) == (16, 2, 4)
+    reset = shell_bakeoff.case_options(picked, "site")
+    assert (reset.max_run, reset.spacing, reset.band_gap) != (16, 2, 4)
 
 
 def test_the_runner_says_it_is_still_waiting_and_what_it_spent() -> None:

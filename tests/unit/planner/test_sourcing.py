@@ -1,4 +1,4 @@
-"""Inputs closer to the world first (WO-3.10 F3, D389 (3), (6)) on the WO-3.3 fixture DB
+"""Inputs closer to the world first (WO-3.10 F3, D427 (3), (6)) on the WO-3.3 fixture DB
 (tests/unit/planner/test_graph.py) plus made-up recipes for this file. No pack data.
 
 - ``mixer/10``: Dust A -> Gear, LV (tier 1);

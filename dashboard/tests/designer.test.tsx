@@ -140,7 +140,7 @@ describe("helpers", () => {
     expect(routeLabel({ column: "reviewed", position: 1, of: 1 })).toBe("Reviewed route");
   });
 
-  it("heads the comparison's simplest route as its own column (D389 (4))", () => {
+  it("heads the comparison's simplest route as its own column (D427 (4))", () => {
     const card = view("pl-bbbbbbbbbb", [route("pl-bbbbbbbbbb", 1), route("pl-dddddddddd", 1, { column: "simplest" })]).comparison;
     card.routes[1].rank = "simplest";
     render(<RouteComparisonView card={card} />);
@@ -184,7 +184,7 @@ describe("the Designer view", () => {
     expect(designs).toEqual([{ spec: { target: STEEL, batch: "64", routes: 3, addons: false, simplest: false } }]);
   });
 
-  it("asks for the route reviewer only when its box is ticked (D389 (7))", async () => {
+  it("asks for the route reviewer only when its box is ticked (D427 (7))", async () => {
     jobAnswers({ ids: [FIRST.id], problems: [], view: FIRST });
     render(<Designer />);
     fireEvent.change(await screen.findByTestId("designer-target"), { target: { value: STEEL } });
@@ -364,7 +364,7 @@ describe("the Designer view", () => {
     await screen.findByTestId("route-1-base");
   });
 
-  it("sends a typed rate as a rate, and shows a batch's ETA in the route header (D389 (5))", async () => {
+  it("sends a typed rate as a rate, and shows a batch's ETA in the route header (D427 (5))", async () => {
     const batch = view("pl-cccccccccc", [
       route("pl-cccccccccc", 1, {
         target: { id: STEEL, name: "Steel Ingot", rate_s: 0.0178, qty: 64, window_s: 3600, eta_s: 3291.43 },

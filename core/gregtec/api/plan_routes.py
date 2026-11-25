@@ -138,7 +138,7 @@ def _run(fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
 
 
 def reviewer_for(core: "Core") -> Callable[[], "Reviewer"]:
-    """The route reviewer on the core's models, meter and no-AI mode (D389 (7)), made when a
+    """The route reviewer on the core's models, meter and no-AI mode (D427 (7)), made when a
     job with ``review: true`` runs (no key: a reviewer that skips and says why)."""
 
     def make() -> "Reviewer":
@@ -157,7 +157,7 @@ def _changed(home: Path, d: "Designed") -> dict[str, Any]:
         "problems": d.problems,
         "view": designer.view(home, d.ids[0]),
     }
-    if d.review is not None:  # the route reviewer ran (D389 (7))
+    if d.review is not None:  # the route reviewer ran (D427 (7))
         out["review"] = d.review
     return out
 

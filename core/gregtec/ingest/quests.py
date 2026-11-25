@@ -929,7 +929,7 @@ def read_tier_keys(path: Path) -> list[TierKey]:
     return keys
 
 
-# --- reachable dimensions (D389 (2)) ---------------------------------------------------------
+# --- reachable dimensions (D427 (2)) ---------------------------------------------------------
 
 # Always reachable; any other dimension once one of its quests is complete. Names as GT's ore
 # mixes spell them (gt_ore_mixes.json, ``ore_mix.dims``).

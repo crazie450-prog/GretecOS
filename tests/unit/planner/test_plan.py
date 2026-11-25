@@ -312,7 +312,7 @@ def test_exact_counts_never_exceed_the_ceiling(conn: sqlite3.Connection) -> None
 
 
 def test_request_simplest_is_written_only_when_set() -> None:
-    """D389 (4): every request from before keeps its canonical text, digest and plan ids."""
+    """D427 (4): every request from before keeps its canonical text, digest and plan ids."""
     r = Request(WIDGET)
     assert "simplest" not in r.as_dict() and not r.simplest
     s = Request(WIDGET, simplest=True)
@@ -328,7 +328,7 @@ def _choices(p: Mapping[str, object]) -> list[tuple[str, str]]:
 
 
 def test_simplest_route_is_its_own_column(conn: sqlite3.Connection) -> None:
-    """D389 (4): each primary node's first candidate, solved as one more route after the
+    """D427 (4): each primary node's first candidate, solved as one more route after the
     ranked ones; the ranked routes are the same as without it."""
     first = design(conn, Request(WIDGET, routes=1)).graph.item(WIDGET).chosen[0]
     ex = dataclasses.replace(
@@ -488,7 +488,7 @@ def run_cli(home: Path, monkeypatch: pytest.MonkeyPatch, *argv: str) -> tuple[in
 
 
 def test_request_default_is_still_a_rate() -> None:
-    """D389 (5)'s batch of 64 is the entry points' default, not the dataclass's: library
+    """D427 (5)'s batch of 64 is the entry points' default, not the dataclass's: library
     callers and stored requests keep a rate of 1/s."""
     r = Request(WIDGET)
     assert (r.mode, r.qty, r.unit) == ("rate", 1.0, "/s")
@@ -515,7 +515,7 @@ def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         prefs.unlink()
     assert code == 0 and text.startswith("ranked by weights (custom):")
     assert "EU/t 3" in text and "Ranked by code, weights (custom)" in text
-    # no amount: a batch of 64 with its ETA (D389 (5)); --within still sets its window
+    # no amount: a batch of 64 with its ETA (D427 (5)); --within still sets its window
     code, text = run_cli(home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1")
     assert code == 0 and "Widget line · 64 batch · MV" in text, text
     assert "  batch 64: ETA " in text and "sized at 64 per 3,600 s" in text
@@ -526,7 +526,7 @@ def test_cli(db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     code, text = run_cli(
         home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1", "--simplest"
     )
-    assert code == 0 and "[base, simplest]" in text, text  # D389 (4)
+    assert code == 0 and "[base, simplest]" in text, text  # D427 (4)
     # on by default (D404 (8)); --no-simplest leaves it out
     code, text = run_cli(home, monkeypatch, WIDGET, "--tier", "MV", "--routes", "1")
     assert code == 0 and "[base, simplest]" in text, text

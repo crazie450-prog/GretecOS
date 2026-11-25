@@ -346,6 +346,7 @@ def _make_site(
         "entrance": hint,
         "zones": zone_list,
         "buffer": opts.buffer,
+        **({"door_relief": True} if spec.door_relief else {}),  # WO-10.18
     }
 
     def refused(*why: str) -> Made:
@@ -364,7 +365,9 @@ def _make_site(
     if not first.ok:
         return Made(spec, design_ops, first, brief, build, None, info)
     progress.stage("fit")
-    res = fit_lib.fit(prog, first.cells, box, opts, hint, zone_list)
+    res = fit_lib.fit(
+        prog, first.cells, box, opts, hint, zone_list, door_relief=spec.door_relief
+    )
     info["fit"] = res.stats
     if not res.ok or res.layout is None:
         return refused(*res.reasons)
@@ -874,6 +877,7 @@ def site_spec_with(
         max_blocks=rec["max_blocks"],
         headroom=rec["headroom"],
         relief=rec.get("relief", 0),
+        door_relief=bool(rec["fit"].get("door_relief", False)),  # nor before WO-10.18
     )
     return replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
 
@@ -977,6 +981,7 @@ def _refit(
         info.get("entrance"),
         info.get("zones") or (),
         prior=prior,
+        door_relief=spec.door_relief,
     )
 
 
@@ -1047,6 +1052,7 @@ def fit_site(
         "entrance": hint,
         "zones": zone_list,
         "buffer": opts.buffer,
+        **({"door_relief": True} if spec.door_relief else {}),  # WO-10.18
     }
     build = shell.build_id(spec, ops, program, hint, zone_list)
 
@@ -1061,11 +1067,12 @@ def fit_site(
     if not first.ok:
         return refused(first)
     progress.stage("fit")
-    res = fit_lib.fit(prog, got.cells, spec.site, opts, hint, zone_list)
+    dr = spec.door_relief
+    res = fit_lib.fit(prog, got.cells, spec.site, opts, hint, zone_list, door_relief=dr)
     kept = None
     if prior is not None and _spots(res.layout) != _spots(prior):
         again = fit_lib.fit(
-            prog, got.cells, spec.site, opts, hint, zone_list, prior=prior
+            prog, got.cells, spec.site, opts, hint, zone_list, prior, door_relief=dr
         )
         if again.ok and _spots(again.layout) != _spots(res.layout):
             res, kept = again, dict(prior)

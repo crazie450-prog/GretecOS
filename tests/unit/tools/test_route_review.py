@@ -1,4 +1,4 @@
-"""The route reviewer (WO-3.10 F7, D389 (7)) on the WO-3.4 fixture DB (tests/unit/planner/
+"""The route reviewer (WO-3.10 F7, D427 (7)) on the WO-3.4 fixture DB (tests/unit/planner/
 test_plan.py), with :class:`gregtec.llm.fake.ScriptedClient` only: no key, no API call, no spend.
 Every item, recipe and machine is made up; no pack data.
 """

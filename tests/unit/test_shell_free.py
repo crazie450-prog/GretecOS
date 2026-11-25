@@ -382,11 +382,21 @@ GOLDEN = {  # the layout (v5) and site (v6) system texts at e9d48ae, before plan
 }
 
 
+# site mode's v8 (WO-10.18): v6's door sentence goes on through the relief zone, nothing else
+SITE_V8_DOOR = (
+    "to the edge of SITE and on through the relief zone (keep it clear there too).\n",
+    "to the edge of SITE.\n",
+)
+
+
 def test_the_plan_free_prompt_and_the_old_ones() -> None:
     for mode, digest in GOLDEN.items():
         text = shell_brief.system_prompt(mode)
+        if mode == "site":
+            assert text.count(SITE_V8_DOOR[0]) == 1
+            text = text.replace(*SITE_V8_DOOR)
         assert hashlib.sha256(text.encode()).hexdigest() == digest, mode
-    assert shell_brief.PROMPT_VERSIONS == {"layout": 5, "site": 6, "free": 7}
+    assert shell_brief.PROMPT_VERSIONS == {"layout": 5, "site": 8, "free": 7}
     text = shell_brief.system_prompt("free")
     for word in ("PROGRAM", "aisle", "keep-out", "chase", "1.75"):
         assert word not in text, word

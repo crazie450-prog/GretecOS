@@ -8,9 +8,10 @@ building drives them, the model never places one.
 1. **Floor.** :func:`gregtec.build.floor.derive` gives each site column its sheltered air height
    ``h`` above y 0 (the machine floor).
 2. **Door.** A ground opening at least ``corridor_height`` high with a straight way out to the
-   site's edge (:func:`_door`): the answer's entrance when it gives one, else the widest run of
-   such openings whose roofed floor holds the machines (else the one holding most). A
-   ``corridor_width``-deep lobby (corridor c1, the hall) lies inside it.
+   site's edge, and on through the relief zone clear at y 0..``corridor_height``-1 for a build
+   made since WO-10.18 (:func:`_door`): the answer's entrance when it gives one, else the
+   widest run of such openings whose roofed floor holds the machines (else the one holding
+   most). A ``corridor_width``-deep lobby (corridor c1, the hall) lies inside it.
 3. **Capacity.** The usable region R is every column at least ``corridor_height`` high under a
    roof, 4-joined to the lobby, less what zones mask. Its volume V counts each column's air up
    to H (the tallest keep-out, or corridor plus chase if higher). V must reach
@@ -212,6 +213,17 @@ def _runs(cands: Sequence[tuple[str, Column]]) -> list[tuple[str, list[Column]]]
     return out
 
 
+def _beyond(cells: Iterable[Cell], site: Box, ch: int) -> frozenset[Column]:
+    """The columns outside ``site`` with a block of ``cells`` at y 0..``ch``-1: the relief
+    zone's blocks in a doorway's height (D424, WO-10.18)."""
+    return frozenset(
+        (x, z)
+        for x, y, z in cells
+        if 0 <= y < ch
+        and not (site.lo[0] <= x <= site.hi[0] and site.lo[2] <= z <= site.hi[2])
+    )
+
+
 def _door(
     floor: Floor,
     tall: set[Column],
@@ -222,8 +234,9 @@ def _door(
     """The answer's door (one, validated), or every candidate door in rank order: per run of
     openings (widest first, ties west, south, east, north, then the lowest), its
     ``corridor_width``-wide window nearest the run's middle with a full lobby behind it.
-    ``beyond``: the columns outside SITE with a block at y 0..corridor_height-1 (a plan-free
-    building's relief zone, D424); a door's way out must not cross one."""
+    ``beyond``: the columns outside SITE with a block at y 0..corridor_height-1 (the relief
+    zone of a plan-free building, D424, or of a site building made since WO-10.18); a door's
+    way out must not cross one."""
     ch, cw = opts.corridor_height, opts.corridor_width
     site = floor.site
 
@@ -675,11 +688,14 @@ def fit(
     hint: Mapping[str, Any] | None = None,
     zones: Sequence[Mapping[str, Any]] = (),
     prior: Mapping[str, Any] | None = None,
+    door_relief: bool = False,
 ) -> FitResult:
     """Fit ``program``'s machines into the building ``cells`` (solid positions) inside ``site``.
 
     ``hint`` is the answer's entrance (``{"side", "at": [x, z]}``), ``zones`` its optional
     steering boxes, ``prior`` an earlier layout whose placements stay where they still fit.
+    ``door_relief``: the door's way out must also be clear through the relief zone outside
+    ``site`` (a site build made since WO-10.18); False is a build from before it.
     """
     opts = opts or Options()
     if site.lo[1] != 0:
@@ -700,7 +716,8 @@ def fit(
         return refuse(*bad)
     floor = derive(cells, site)
     tall = {c for c, v in floor.h.items() if v >= ch}
-    doors, why = _door(floor, tall, opts, hint)
+    beyond = _beyond(cells, site, ch) if door_relief else frozenset()
+    doors, why = _door(floor, tall, opts, hint, beyond)
     if not doors:
         return refuse(*why)
     k, m = want["keepout_volume"], want["required"]
@@ -1034,12 +1051,7 @@ def floor_check(
     stats: dict[str, Any] = {"floor": 0, "need_floor": area}
     # the relief zone's blocks in a doorway's height: nothing keeps a plan-free door's
     # approach clear but this (D424)
-    beyond = frozenset(
-        (x, z)
-        for x, y, z in got
-        if 0 <= y < ch
-        and not (site.lo[0] <= x <= site.hi[0] and site.lo[2] <= z <= site.hi[2])
-    )
+    beyond = _beyond(got, site, ch)
 
     def refuse(*why: str) -> Floored:
         return Floored(False, list(why), stats, None, None)

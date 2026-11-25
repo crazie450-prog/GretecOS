@@ -1,4 +1,4 @@
-"""Where raw inputs come from (WO-3.10 F2, D389 (2), (6)), on the WO-3.3 fixture DB
+"""Where raw inputs come from (WO-3.10 F2, D427 (2), (6)), on the WO-3.3 fixture DB
 (tests/unit/planner/test_graph.py) plus one made-up ore mix. No pack data.
 
 - An ore an ore mix places in a reachable dimension is a ``raw`` boundary with a ``vein:``
@@ -94,7 +94,7 @@ def test_an_ore_only_an_unreachable_dimension_places_is_rejected(
     add_mix(conn, ["moon"])
     cr1 = tg.ref_of(conn, "chemicalreactor", 1)
     g = tg.build_graph(conn, Request(DUST_A))
-    assert reasons(g, DUST_A)[cr1] == "Ore A: moon, not reachable (D389)"
+    assert reasons(g, DUST_A)[cr1] == "Ore A: moon, not reachable (D427)"
     assert ORE_A not in {i.id for i in g.items}
     # Once the moon is reachable, Ore A is a raw input with its vein as the source.
     g = tg.build_graph(conn, Request(DUST_A), tg.Base(dims=MOON))
@@ -162,7 +162,7 @@ def test_a_curated_dimension_source_and_an_unreachable_slot(
     )
     g = tg.build_graph(conn, Request(DUST_B))
     assert reasons(g, DUST_B)[mixer1] == (
-        "ore:logTest: every member: Twilight Forest, not reachable (D389)"
+        "ore:logTest: every member: Twilight Forest, not reachable (D427)"
     )
     # One member reachable: the slot keeps it, and the other never enters the graph.
     monkeypatch.setattr(graph, "raw_sources", lambda: {**orig(), LOG_B: twilight})

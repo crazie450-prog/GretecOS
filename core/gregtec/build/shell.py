@@ -197,6 +197,9 @@ class Spec:
     # the layout's interior may hold the shell's blocks outside the keep-outs, corridors and
     # chases (D389); False: the whole interior below the roof is kept empty (D316)
     interior_open: bool = False
+    # a site door's way out is kept clear through the relief zone too (WO-10.18); False: a site
+    # build from before it
+    door_relief: bool = False
     # where Clayton stands to paste: the first entrance's lo cell (D318)
     origin: Cell = (0, 0, 0)
     origin_entrance: str = ""
@@ -579,11 +582,13 @@ def spec_for_site(
     max_blocks: int | None = None,
     headroom: int | None = None,
     relief: int | None = None,
+    door_relief: bool = True,
 ) -> Spec:
     """A site build's design-time spec (D422): nothing is kept clear yet (the machines are
     fitted into the building afterwards), the bounding volume is ``site`` grown by the relief,
     the interior the site below its headroom; NEED and PROGRAM are the program's. The palette
-    must already have passed :func:`check_palette`."""
+    must already have passed :func:`check_palette`. ``door_relief``: the door's way out is
+    kept clear through the relief zone too (WO-10.18); False replays a build from before it."""
     from gregtec.build import fit
     from gregtec.build import layout as layout_lib
 
@@ -606,6 +611,7 @@ def spec_for_site(
         headroom=hr,
         relief=rf,
         interior_open=True,
+        door_relief=door_relief,
         theme_rules=_rules(theme, line_type),
         origin=site.lo,
         mode="site",
@@ -765,6 +771,7 @@ def fitted_spec(site_spec: Spec, lay: Mapping[str, Any]) -> Spec:
         theme_rules=site_spec.theme_rules,
         need=site_spec.need,
         program=site_spec.program,
+        door_relief=site_spec.door_relief,
     )
 
 
@@ -1662,6 +1669,8 @@ def build_id(
         }
         if prior is not None:
             payload["prior"] = prior
+        if spec.door_relief:  # site builds from before WO-10.18 keep their ids
+            payload["door_relief"] = True
     elif spec.mode == "free" and spec.site is not None:
         del payload["layout"]
         payload |= {

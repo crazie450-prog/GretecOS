@@ -160,7 +160,7 @@ def test_check_spec_parses_amounts_with_the_designer_s_rules(
     no_amount = {
         "target": "steel",
         "within": "2h",
-    }  # the designer's batch of 64 (D389 (5))
+    }  # the designer's batch of 64 (D427 (5))
     assert routes.check_spec("plan", no_amount) == no_amount
 
 

@@ -33,7 +33,7 @@ machine with a badge (flagged, low confidence, custom, D142 (a)) still counts, a
 only badged machines run carries the badge as a warning. Crafting-table and furnace recipes
 (NEI's) are kept, flagged ``manual``.
 
-**Raw sources** (WO-3.10 F2, D389 (2), (6)): a raw input comes from an ore vein (an ore block
+**Raw sources** (WO-3.10 F2, D427 (2), (6)): a raw input comes from an ore vein (an ore block
 GT's ore mixes place, ``ore_mix`` from ``gos ores load``: by its exact key, or any ore block of
 the mix's material in the same registry namespace on a stone of ``STONE_DIMS``, a Netherrack ore
 in the Nether only and an Endstone ore in the End only; another planet's stone only by its exact
@@ -43,19 +43,19 @@ reaches the Overworld and the Nether, and each dimension whose unlock quest he h
 (``BaseInputs.dimensions``). An ore a reachable dimension places is a ``raw`` boundary from the
 start (GT's space miner makes ores too, never expanded); a recipe that consumes an input only
 unreachable dimensions give, or an oredict or wildcard slot whose every member is one, is
-rejected ("Steeleaf Nugget: Twilight Forest, not reachable (D389)"), and such a member is left
+rejected ("Steeleaf Nugget: Twilight Forest, not reachable (D427)"), and such a member is left
 out of its slot. What he has (stock, line outputs, the request's boundary) is never gated.
 
 **Pruning** (§7.1): candidates are ordered by the heuristic key :func:`heuristic` (recycling,
 GT's container maps and EU-less recipes but a primitive machine's last, D142 (2), D189, D390;
 then the reverse of one of the item's own uses; avoid chanced-only; inputs closer to the world
-(WO-3.10 F3, D389 (3), (6), D393: every input it uses up at hand or one step from it, then some
+(WO-3.10 F3, D427 (3), (6), D393: every input it uses up at hand or one step from it, then some
 not, then an unknown raw among them; a fluid cell counts as its fluid, and a recipe that uses
 cells up is never in the first group; with no ore mixes loaded an unknown raw ranks as unsourced,
 since every ore block is unknown then, and the graph always says no ore mixes are loaded, D404 (5)); lower tier; the item as the main
 product before a byproduct route; fluid cells after none; fewer inputs; base machine first;
 machine before manual; unbadged first; fewer unsourced inputs; key) and the first :data:`TOP_N` valid ones are kept, plus the first
-recipe a primitive machine runs (the Bricked Blast Furnace beside the EBF, D389 (1), D390); every
+recipe a primitive machine runs (the Bricked Blast Furnace beside the EBF, D427 (1), D390); every
 candidate stays listed with its status for D61's swap and "show all". Only primary choices (§7.1 step 3)
 expand more than their first: the target and its direct inputs expand their top recipes but
 their side routes (:func:`side_route`), and a chain template on the target's route expands its
@@ -218,7 +218,7 @@ class ItemNode:
     template: str | None = None  # the chain template that chose its recipes
     branch: str | None = None  # the template's branch-point id
     warnings: tuple[str, ...] = ()
-    # Where a raw input comes from (WO-3.10 F2, D389): "vein:<dims>" (an ore mix places it),
+    # Where a raw input comes from (WO-3.10 F2, D427): "vein:<dims>" (an ore mix places it),
     # a curated source (raw_inputs.tsv: world, pump, dimension:<name>...), None if unknown.
     source: str | None = None
 
@@ -451,7 +451,7 @@ class _Reader:
         self.load_recipes(found)
 
     def load_feeds(self, keys: Iterable[str]) -> None:
-        """What makes each of ``keys``, for F3's sourcing (WO-3.10, D389 (3)): per recipe of
+        """What makes each of ``keys``, for F3's sourcing (WO-3.10, D427 (3)): per recipe of
         the run that outputs it in any slot (enabled; not fake but the assembly line), its
         tier, whether it ``counts`` as a step from the world, and the keys it uses up. A
         recipe counts when a crafting table or furnace makes it, or a machine map does with
@@ -779,7 +779,7 @@ def heuristic(
     recycling, GT's container maps and EU-less recipes but a primitive machine's last (D142 (2),
     D189, D390); then the reverse of one of ``item``'s own uses (it consumes the main product of a recipe that uses ``item``
     up, ``made_from``, D189; the builder adds the request's target, WO-3.10); avoid chanced-only;
-    the sourcing rank ``src[0]`` (WO-3.10 F3, D389 (3): 0 every input it uses up is at hand or
+    the sourcing rank ``src[0]`` (WO-3.10 F3, D427 (3): 0 every input it uses up is at hand or
     one step from it, 1 some aren't, 2 one is an unknown raw, which the builder ranks 1 when
     the run has no ore mixes loaded); lower tier; ``item`` as the recipe's main
     product (first output) before a byproduct route; recipes that use fluid cells after those
@@ -804,7 +804,7 @@ def _plain(valid: Sequence[RecipeNode]) -> int:
 def _top(valid: Sequence[RecipeNode]) -> list[str]:
     """The top recipes of ``valid`` (in heuristic order): the first :data:`TOP_N` that aren't
     primitive and the first primitive one, so the Bricked Blast Furnace stays a candidate
-    beside the EBF without taking its slot (D389 (1), D390)."""
+    beside the EBF without taking its slot (D427 (1), D390)."""
     plain = [n.id for n in valid if "primitive" not in n.flags][:TOP_N]
     prim = [n.id for n in valid if "primitive" in n.flags][:1]
     return [n.id for n in valid if n.id in plain or n.id in prim]
@@ -889,7 +889,7 @@ class _Builder:
         self.excluded_mtes = cons.excluded_mtes()
         src = sources(conn)
         self.boundary: dict[str, str] = dict.fromkeys(src.curated, "raw")
-        # Where raws come from, and what this player can't reach (D389 (2), (6)): an ore an
+        # Where raws come from, and what this player can't reach (D427 (2), (6)): an ore an
         # ore mix places in a reachable dimension is a raw input, never expanded (GT's space
         # miner makes ores too); one only unreachable dimensions place, or a curated
         # dimension:<name> row he can't reach, rejects every recipe that consumes it.
@@ -922,7 +922,7 @@ class _Builder:
                 self.unreachable.pop(k, None)
         self._slot_members: dict[str, list[str]] = {}
         self.uses: dict[str, frozenset[str]] = {}  # item -> made_from, minus boundaries
-        # F3's sourcing (D389 (3), (6)), request-dependent so never on the shared reader:
+        # F3's sourcing (D427 (3), (6)), request-dependent so never on the shared reader:
         # input key -> level (:meth:`_sourcing`).
         # Unknown raws rank last only where GOS has source data (ore mixes loaded): without
         # it every ore block is unknown and a space-mined one would outrank them.
@@ -1000,7 +1000,7 @@ class _Builder:
                     else None
                 )
                 name = info.name if info else p.key
-                return _Check(False, f"{name}: {where}, not reachable (D389)")
+                return _Check(False, f"{name}: {where}, not reachable (D427)")
         fluids = [p.key for p in consumed if p.key.startswith("fluid:")]
         dup = sorted({k for k in fluids if fluids.count(k) > 1})
         if dup:
@@ -1023,7 +1023,7 @@ class _Builder:
             m.kind == "primitive" for m in self.reader.machines_for(r.map)
         ):
             # A primitive machine (the Bricked Blast Furnace, the Coke Oven) runs it with no
-            # EU by GT's own rule: ranked like any other recipe (D389 (1), D390).
+            # EU by GT's own rule: ranked like any other recipe (D427 (1), D390).
             flags.append("primitive")
         elif r.eut <= 0:
             # The Eye of Harmony, the neutron activator...: the machine powers it its own
@@ -1540,7 +1540,7 @@ def _build(
                     nodes[key] = ItemNode(key, kind, "EU", depth, "eu")
                     continue
                 if kind in ("ore", "wildcard"):
-                    # A member he can't reach is never in the graph (D389 (2)).
+                    # A member he can't reach is never in the graph (D427 (2)).
                     members = [m for m in reader.members(key) if m not in b.unreachable]
                     for m in members[:TOP_N]:
                         flows[(m, key, "member")] = 1.0
@@ -1691,7 +1691,7 @@ def _build(
         b.warnings.append(
             "no ore mixes loaded (run gos ores load): GOS knows no veins, so inputs no"
             " recipe makes and GOS has no source for rank with the other unsourced ones,"
-            " not last (D389 (6))"
+            " not last (D427 (6))"
         )
     warnings = list(b.warnings)
     for n in items:

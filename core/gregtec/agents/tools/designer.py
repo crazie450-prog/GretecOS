@@ -221,7 +221,7 @@ def _routes(home: Path, pid: str, call: Call, offset: int, head: list[tuple[str,
                 r["position"] if r["column"] == "base" else r["column"],
                 f"plan:{r['id']}",
                 r["name"],
-                # a base route that is also the simplest route (D389 (4)) says so
+                # a base route that is also the simplest route (D427 (4)) says so
                 r["column"] + (", simplest" if r.get("simplest") else ""),
                 r["score"],
                 m.get("machines"),
@@ -368,7 +368,7 @@ def plan_get(call: Call, args: dict[str, Any], offset: int) -> Result:
         )  # fmt: skip
     p = d.load(home, pid)
     m = p.get("metrics") or {}
-    also = ", simplest" if route.get("simplest") else ""  # D389 (4)
+    also = ", simplest" if route.get("simplest") else ""  # D427 (4)
     head: list[tuple[str, object]] = [
         ("plan", cite),
         ("name", route["name"]),

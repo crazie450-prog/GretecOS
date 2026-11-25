@@ -381,6 +381,7 @@ export type ShellDesignerStatus =
       ready: boolean;
       why: string | null;
       cap_usd: number;
+      big_cap_usd: number; // a large request's cap (32,000-token answers, D429)
       day_left_usd: number | null;
       ai_off: string | null;
     };
@@ -988,18 +989,18 @@ export interface DesignerRoute {
   name: string;
   status: PlanStatus;
   column: "base" | "simplest" | "addon" | "reviewed";
-  /** a base route that is also the simplest route (each node's first recipe, D389 (4)) */
+  /** a base route that is also the simplest route (each node's first recipe, D427 (4)) */
   simplest: boolean;
   position: number;
   of: number;
   score: number;
-  /** a batch (D389 (5)) also has its qty, the window it is sized for and its ETA, in seconds */
+  /** a batch (D427 (5)) also has its qty, the window it is sized for and its ETA, in seconds */
   target: { id: string; name: string; rate_s: number; qty?: number; window_s?: number; eta_s?: number };
   tier_cap: string;
   pins: PlanPin[];
   nodes: DesignerNode[];
   warnings: string[];
-  /** the reviewed route's record (D389 (7)); null on the planner's own routes */
+  /** the reviewed route's record (D427 (7)); null on the planner's own routes */
   review?: RouteReview | null;
   /** "affected by update" (QA:D9, WO-11.1): the export run that flagged it and what it hit */
   affected: { run: string; hits: { cite: string; why: string }[] } | null;
@@ -1011,7 +1012,7 @@ export interface DesignerRoute {
   bom: BomCard;
 }
 
-/** The route reviewer's record (D389 (7)): what it changed, and whether it edited a route. */
+/** The route reviewer's record (D427 (7)): what it changed, and whether it edited a route. */
 export interface RouteReview {
   id: string;
   of: string[];
@@ -1061,7 +1062,7 @@ export interface DesignSpec {
   addons?: boolean;
   /** also the simplest route (each node's first recipe), its own column; the server's default is on */
   simplest?: boolean;
-  /** the route reviewer reads the routes first (uses the AI); off unless true (D389 (7)) */
+  /** the route reviewer reads the routes first (uses the AI); off unless true (D427 (7)) */
   review?: boolean;
 }
 

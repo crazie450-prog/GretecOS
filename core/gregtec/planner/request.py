@@ -20,7 +20,7 @@ same request always has the same text and digest, and the graph built from it th
   (D61); at most one pin per node;
 - ``routes``: how many ranked routes to return, 1 to 3 (D11);
 - ``simplest``: also return the simplest route, every node on its first (heuristic) recipe,
-  as an extra column beside the ranked routes (D389 (4)); written only when true, so every
+  as an extra column beside the ranked routes (D427 (4)); written only when true, so every
   request from before keeps its text and digest.
 
 **My base** (:class:`BaseInputs`) is the interface WO-3.3 and WO-3.8 both code to: the player's
@@ -53,7 +53,7 @@ MAX_TIER = 14  # MAX: GT's last real voltage tier (VN[15] is its error tier)
 MAX_COIL = 13  # tiers.COILS: Cupronickel 0 .. Eternal 13
 MAX_ROUTES = 3
 VERSION = 1  # of the canonical form
-# What a person or agent who names no amount gets: a batch of 64, with its ETA (D389 (5)).
+# What a person or agent who names no amount gets: a batch of 64, with its ETA (D427 (5)).
 # Applied by the entry points (plancli, designer.request_from_spec); the dataclass default
 # stays a rate of 1/s, so library callers and stored requests keep their meaning.
 DEFAULT_BATCH = 64.0
@@ -204,7 +204,7 @@ class Request:
     constraints: Constraints = field(default_factory=Constraints)
     pins: tuple[Pin, ...] = ()
     routes: int = MAX_ROUTES
-    simplest: bool = False  # D389 (4): the extra simplest-route column
+    simplest: bool = False  # D427 (4): the extra simplest-route column
 
     def __post_init__(self) -> None:
         if not is_stable_key(self.target):
@@ -392,14 +392,14 @@ class BaseInputs(Protocol):
         ...
 
     def dimensions(self) -> frozenset[str]:
-        """The dimensions he can reach, named as GT's ore mixes name them (D389 (2))."""
+        """The dimensions he can reach, named as GT's ore mixes name them (D427 (2))."""
         ...
 
 
 @dataclass(frozen=True)
 class DefaultBaseInputs:
     """WO-3.3's My base: the quest-detected tier (WO-1.5, ``tier.override`` first), the
-    quest-unlocked dimensions (D389 (2)), and nothing owned, stocked or produced by lines
+    quest-unlocked dimensions (D427 (2)), and nothing owned, stocked or produced by lines
     (D63)."""
 
     tier: int

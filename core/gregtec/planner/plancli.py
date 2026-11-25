@@ -11,12 +11,12 @@
   ranked (WO-3.5) with the weights from the vault's ``me/prefs.md`` (read only; balanced
   without one, D67), and the summary prints the weights first; ``--explain`` adds the templated
   explanation built from the metrics (the model-written one is the deep lane's, WO-3.7).
-- No ``--qty`` or ``--batch``: a batch of 64 (``request.DEFAULT_BATCH``, D389 (5)), with
+- No ``--qty`` or ``--batch``: a batch of 64 (``request.DEFAULT_BATCH``, D427 (5)), with
   ``--within`` if given.
-- The simplest route (each node's first recipe, D389 (4)) comes too, on by default (D404 (8)):
+- The simplest route (each node's first recipe, D427 (4)) comes too, on by default (D404 (8)):
   an extra column after the ranked routes, or ``[base, simplest]`` on the base route that is it;
   ``--no-simplest`` leaves it out (``--simplest`` is still accepted).
-- ``--review``: the route reviewer reads the ranked routes (D389 (7), off by default; it uses the
+- ``--review``: the route reviewer reads the ranked routes (D427 (7), off by default; it uses the
   AI and spends, capped by ``[budget] task_max_usd``). Its reviewed route, re-solved and scored by
   the planner, prints after the ranked ones as ``[reviewed]``, with every edit named ("EDITED by
   the reviewer"); ``--json`` prints it too, ``--save`` saves it and the review's record. With no
@@ -81,7 +81,7 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.add_argument(
         "--qty",
         default=None,
-        help="a rate: 2/s, 30/min, 100/h (default: a batch of 64, D389 (5))",
+        help="a rate: 2/s, 30/min, 100/h (default: a batch of 64, D427 (5))",
     )
     p.add_argument("--batch", default=None, help="a batch quantity instead of a rate")
     p.add_argument(
@@ -93,7 +93,7 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--simplest",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="also the simplest route: each node's first recipe (D389 (4)); on by "
+        help="also the simplest route: each node's first recipe (D427 (4)); on by "
         "default (D404 (8)), --no-simplest leaves it out",
     )
     p.add_argument(
@@ -102,7 +102,7 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p.add_argument(
         "--review",
         action="store_true",
-        help="the route reviewer reads the routes (uses the AI; D389 (7))",
+        help="the route reviewer reads the routes (uses the AI; D427 (7))",
     )
     p.add_argument(
         "--pin",
@@ -263,7 +263,7 @@ def _request(
         "simplest": args.simplest,
     }
     within = parse_duration(args.within) if args.within else None
-    if args.batch is None and args.qty is None:  # no amount: a batch of 64 (D389 (5))
+    if args.batch is None and args.qty is None:  # no amount: a batch of 64 (D427 (5))
         return Request(
             found.key,
             mode="batch",

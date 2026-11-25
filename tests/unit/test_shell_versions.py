@@ -1212,3 +1212,114 @@ def test_gos_eval_shell_revise_fake_runs_on_a_scratch_copy(
     assert (home / shell_eval_cli.SCRATCH / shell_store.ROOT).is_dir()
     args.plans = ["pl-nope"]
     assert shell_eval_cli.run(args, io.StringIO()) == 2
+
+
+# --- the relief-zone door rule (WO-10.18) -----------------------------------------------------
+
+
+def test_a_site_build_from_before_the_relief_door_rule_replays_as_it_was(
+    conn: sqlite3.Connection, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A site build saved before WO-10.18 whose only door is walled in the relief zone (no
+    ``door_relief`` in its record): it rebuilds, views, exports, revises and refits by the old
+    rule, every new version without the flag; under the new rule the same building has no
+    door."""
+    from gregtec.build.worldreg import WorldRegistry
+
+    from .test_shell import old_site_rule, walled
+
+    vault = VaultIO(home / "vault")
+
+    def make(ops: list[dict[str, Any]] | None = None) -> shell_store.Made:
+        return shell_store.make(
+            conn, home, vault, ["pl-steel"], theme_id="th-foundry", mode="site", ops=ops
+        )
+
+    plain = shell_store.make(
+        conn,
+        home,
+        vault,
+        ["pl-steel"],
+        theme_id="th-foundry",
+        mode="site",
+        save_it=False,
+    )
+    ops = [*plain.ops, walled(plain)]
+    assert make(ops).outcome.status == "refused"  # the new rule
+    with monkeypatch.context() as mp:
+        old_site_rule(mp)
+        made = make(ops)
+    assert made.outcome.status == "accepted" and made.saved is not None
+    rec = shell_store.load(home, made.build)
+    assert "door_relief" not in rec["fit"]
+    saved = {p.name: p.read_bytes() for p in made.saved.iterdir()}
+    lay = json.loads(saved["layout.json"])
+    # rebuilt and viewed from its own files: the same cells and layout
+    spec, out = shell_store.rebuild(conn, home, made.build)
+    assert out.cells == made.outcome.cells and spec.layout == lay["id"]
+    assert not spec.door_relief
+    _, cells = shell_store.cells_of(home, made.build)
+    assert cells == dict(made.outcome.cells) and len(cells) == rec["blocks"]
+    # exported
+    names = {m["block"].split("@")[0] for m in rec["materials"]}
+    world = WorldRegistry("lab", frozenset(names), frozenset(), "level.dat")
+    assert shell_store.export(conn, home, made.build, world).paths
+    assert {p.name: p.read_bytes() for p in made.saved.iterdir()} == saved
+    # revised: fitted by the old rule, the new version without the flag
+    ds = versions.start(home, made.build, asked="a hall", by="architect")["id"]
+    x, z = lay["placements"][0]["lo"][0], lay["placements"][0]["lo"][2]
+    pillar = {"op": "fill", "role": "pillar", "lo": [x, 12, z], "hi": [x, 12, z]}
+    v2 = versions.revise(
+        conn, home, vault, ds, "a pillar", ops=[*ops, pillar], by="architect"
+    )
+    assert v2.saved and v2.record is not None, v2.reasons
+    assert "door_relief" not in v2.record["fit"]
+    assert v2.record["fit"]["fit"]["door"] == rec["fit"]["fit"]["door"]
+    assert v2.build == shell.build_id(
+        shell.replace(
+            shell_store.site_spec_with(*_program_of(home, v2.build), v2.record, []),
+            swatches=tuple(shell_store._swatches(v2.record)),
+        ),
+        [*ops, pillar],
+        json.loads(
+            (shell_store.folder(home, v2.build) / "program.json").read_text("utf-8")
+        ),
+        None,
+        [],
+        (v2.record["fit"].get("prior") or {}).get("layout"),
+    )
+    _reloads(conn, home, v2.build)
+    # refitted after the plan changed: the old rule again
+    plan_file = home / "data" / "plans" / "pl-steel.json"
+    more = json.loads(plan_file.read_text(encoding="utf-8"))
+    more["nodes"][0]["count"] += 1
+    plan_file.write_text(json.dumps(more), encoding="utf-8")
+    v3 = versions.refit(conn, home, v2.build)
+    assert v3.saved and v3.record is not None, v3.reasons
+    assert "door_relief" not in v3.record["fit"]
+    _reloads(conn, home, v3.build)
+
+
+def _program_of(home: Path, build: str) -> tuple[Any, Any]:
+    _, prog, opts = shell_store._program(home, build)
+    return prog, opts
+
+
+def test_a_new_site_builds_versions_keep_the_relief_door_rule(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    _, made = site_first(conn, home)
+    assert made.record["fit"]["door_relief"] is True
+    got = rev(conn, home, "make the roof steeper")
+    assert got.saved and got.record is not None, got.reasons
+    assert got.record["fit"]["door_relief"] is True
+    spec, _ = shell_store.rebuild(conn, home, got.build)
+    assert spec.door_relief
+
+
+def test_a_version_keeps_a_long_request_whole() -> None:
+    """A version's history keeps up to 1,000 characters of what was asked (WO-10.18, D432)."""
+    words = "word " * 199  # 994 characters
+    assert versions.clip(words) == words.strip()
+    assert versions.clip("w" * 1001).endswith("…")
+    assert len(versions.clip("w" * 1001)) == versions.MAX_ASKED

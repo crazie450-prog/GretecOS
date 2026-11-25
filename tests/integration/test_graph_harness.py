@@ -120,7 +120,7 @@ def test_steel_in_the_ebf(conn: sqlite3.Connection) -> None:
 
 
 def test_steel_offers_the_bricked_blast_furnace(conn: sqlite3.Connection) -> None:
-    """D389 (1), D390: GT's Bricked Blast Furnace is a candidate for steel at MV, beside the
+    """D427 (1), D390: GT's Bricked Blast Furnace is a candidate for steel at MV, beside the
     EBF, with no EU (a ``primitive`` recipe, not ``eu0``)."""
     g, _ = timed(conn, STEEL, MV)
     bbf = [

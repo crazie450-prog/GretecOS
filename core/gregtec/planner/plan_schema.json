@@ -246,7 +246,7 @@
         "n": {"type": "integer", "minimum": 1},
         "column": {"enum": ["base", "simplest", "addon"]},
         "mode": {"enum": ["rate", "batch"]},
-        "simplest": {"type": "boolean", "description": "D389 (4): this base route is also the simplest route"},
+        "simplest": {"type": "boolean", "description": "D427 (4): this base route is also the simplest route"},
         "exact": {"type": "boolean"},
         "choices": {"type": "array", "items": {"$ref": "#/$defs/pin"}},
         "gates": {"type": "array", "items": {"$ref": "#/$defs/key"}},
@@ -273,7 +273,7 @@
     "warnings": {"type": "array", "items": {"type": "string"}},
     "review": {
       "type": "object",
-      "description": "D389 (7): the route reviewer's record, on its reviewed route only (gregtec.agents.route_review)",
+      "description": "D427 (7): the route reviewer's record, on its reviewed route only (gregtec.agents.route_review)",
       "required": ["v", "id", "of", "verdict", "status", "edited", "changes", "applied", "summary", "summary_source", "models"],
       "properties": {
         "v": {"const": 1},

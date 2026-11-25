@@ -173,7 +173,7 @@ def test_the_curated_key_quests(book: bq.Book, keys: list[bq.TierKey]) -> None:
 
 def test_the_curated_dimension_unlocks(book: bq.Book) -> None:
     """Every quest of data/curated/dimension_unlocks.tsv is in the book under its curated
-    name (WO-3.10 F2, D389 (2))."""
+    name (WO-3.10 F2, D427 (2))."""
     for u in bq.read_dimension_unlocks(quest_db.DIMENSION_UNLOCKS):
         assert u.quest in book.quests, f"{u.dimension}: q:{u.quest} is not in the book"
         assert book.quests[u.quest].name == u.name

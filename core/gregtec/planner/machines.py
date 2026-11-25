@@ -29,7 +29,7 @@ number comes from the recipe, a machine fact or GT's math, and each carries its 
   each tier he has reached (one plain hatch runs it at 1 A, D175).
 - ``primitive``: the Bricked Blast Furnace and the Coke Oven (``PRIMITIVE_MACHINES``): one
   recipe at a time in its own duration, no EU, no overclock, no parallel, from stone through
-  every tier (D389 (1), D390). The Bricked Blast Furnace never reads the special value, so it
+  every tier (D427 (1), D390). The Bricked Blast Furnace never reads the special value, so it
   needs no cleanroom or low gravity.
 
 Any other single block runs its own recipe check and is not modelled (D176).

@@ -64,8 +64,15 @@ export function housesText(d: { plans: string[]; area?: number | null }): string
 export function designerText(s: ShellDesignerStatus): string | null {
   if (!s.configured) return null;
   if (!s.ready) return `Designer: ${s.label} · not ready: ${s.why ?? "the core didn't say why"}`;
-  const left = s.day_left_usd !== null ? ` · $${s.day_left_usd.toFixed(2)} left today` : "";
-  return `Designer: ${s.label} · up to $${s.cap_usd.toFixed(2)} a request${left}`;
+  // the day cap only warns, as for the other AI work (D429)
+  const left =
+    s.day_left_usd === null
+      ? ""
+      : s.day_left_usd > 0
+        ? ` · $${s.day_left_usd.toFixed(2)} left today`
+        : " · past today's day cap (a warning only)";
+  const big = s.big_cap_usd > s.cap_usd ? ` ($${s.big_cap_usd.toFixed(2)} a large one)` : "";
+  return `Designer: ${s.label} · up to $${s.cap_usd.toFixed(2)} a request${big}${left}`;
 }
 
 /** A plan-free building's plot as the core sized it (the dashboard never computes it). */
@@ -547,7 +554,7 @@ export function ShellWorkbench() {
   );
   const working = busy !== null || runner.job !== null;
   const form = { words, theme, plans: [plan, plan2].filter(Boolean), lineType, maxBlocks, headroom, free, area, siteFactor };
-  // The live shell designer (D423): set, and ready now (his AI switch, the credit pause and the day cap allow it).
+  // The live shell designer (D423): set, and ready now (his AI switch and the credit pause allow it; the day cap only warns, D429).
   const drawer = designer?.configured ? designer : null;
   const ready = drawer?.ready === true;
 

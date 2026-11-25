@@ -680,3 +680,14 @@ def test_gos_theme(home: Path, vault: VaultIO, conn: sqlite3.Connection) -> None
     themes.record_use(home, themes.Use("b1", "th-brass-works", 0, 10, 10))
     code, text = run("select", "--at", "0", "0", "0")
     assert code == 0 and "theme: th-brass-works (used by 1 build within" in text
+
+
+def test_a_request_may_say_up_to_a_thousand_characters() -> None:
+    """A request's own words may be as long as the API, the tool and the bake-off allow
+    (WO-10.18, D432); a theme's values keep their 200."""
+    words = "a long hall " * 83  # 996 characters once split and joined
+    brief = themes.select([], prompt=words)
+    assert brief.prompt == " ".join(words.split())
+    with pytest.raises(themes.ThemeError, match="over 1000 characters"):
+        themes.select([], prompt="x" * (themes.MAX_PROMPT + 1))
+    assert themes.MAX_TEXT == 200

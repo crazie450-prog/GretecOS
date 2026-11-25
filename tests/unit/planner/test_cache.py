@@ -385,7 +385,7 @@ def test_each_input_of_a_component_solve_is_in_its_key(
 
         raw = graph.raw_sources
         before = lambda: _solve(c, MV, tg.Base())
-    elif what == "dimensions":  # the plate only from a moon vein (D389 (2))
+    elif what == "dimensions":  # the plate only from a moon vein (D427 (2))
         _plate_mix(c, "moon")
         before = lambda: _solve(c, MV, tg.Base())
         after = lambda: _solve(c, MV, tg.Base(dims=ALWAYS_DIMENSIONS | {"moon"}))

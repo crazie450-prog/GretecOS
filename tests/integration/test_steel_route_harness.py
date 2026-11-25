@@ -9,13 +9,13 @@ Bricked Blast Furnace's iron + coal recipes have no machine model and nothing ga
 input comes from.
 
 ``test_steel_at_mv_is_iron_and_carbon`` is the acceptance test of the fixes Clayton approved
-(D389), on a batch of 64 (what a request with no amount gets, F6), with Clayton's bounds (D404
+(D427), on a batch of 64 (what a request with no amount gets, F6), with Clayton's bounds (D404
 (1)): iron from any GT iron ore, at most 25 machines. It passes since D404's planner work. ``test_a_locked_import_is_gated_and_warned`` checks F4 (D395).
 The fixture loads
 the run's GT ore mixes as `gos ores load` does (no world, so no veins), so the raw-source gate
 (F2, D391) sees vein sources: ``test_twilight_raws_are_gated`` checks it, and
 ``test_steel_starts_with_iron_and_coal`` checks F3's ranking on them (D393).
-``test_simplest_steel_route_is_an_extra_column`` checks F5's extra column (D389 (4)) and that
+``test_simplest_steel_route_is_an_extra_column`` checks F5's extra column (D427 (4)) and that
 the flag can't reorder the ranked routes (D404 (8)).
 ``GOS_SERVER_RUN`` names another server run folder.
 """
@@ -90,7 +90,7 @@ def conn(
 
 @pytest.fixture(scope="module")
 def plans(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
-    # No amount named: a batch of 64, as the entry points make it (D389 (5), F6).
+    # No amount named: a batch of 64, as the entry points make it (D427 (5), F6).
     req = Request(STEEL, tier_cap=MV, mode="batch", qty=DEFAULT_BATCH)
     d = plan.design(conn, req, DefaultBaseInputs(MV))
     assert d.plans
@@ -119,13 +119,13 @@ def materials(conn: sqlite3.Connection, keys: set[str]) -> set[str]:
 
 
 def test_twilight_raws_are_gated(conn: sqlite3.Connection) -> None:
-    """D389 (2): with no quests, only the Overworld and the Nether are reachable, so the
+    """D427 (2): with no quests, only the Overworld and the Nether are reachable, so the
     Steeleaf ingot's alloy smelter recipe is rejected for its nugget (a Twilight Forest
     material, data/curated/raw_inputs.tsv), and iron ore is a raw input from its veins."""
     g = graph.build(conn, Request(STEELEAF_INGOT, tier_cap=MV), DefaultBaseInputs(MV))
     why = {c.recipe: c.reason for c in g.item(STEELEAF_INGOT).candidates}
     assert (
-        why[STEELEAF_ALLOY] == "Steeleaf Nugget: Twilight Forest, not reachable (D389)"
+        why[STEELEAF_ALLOY] == "Steeleaf Nugget: Twilight Forest, not reachable (D427)"
     )
     vein = graph.sources(conn).vein
     assert {"Overworld", "Nether"} <= set(vein[IRON_ORE])
@@ -150,7 +150,7 @@ def test_every_ore_mix_dimension_is_known(conn: sqlite3.Connection) -> None:
 def test_a_locked_import_is_gated_and_warned(
     conn: sqlite3.Connection, best: dict[str, Any]
 ) -> None:
-    """F4 (D389 (6), D395): a locked import is a gate, so steel's best plan makes its steel
+    """F4 (D427 (6), D395): a locked import is a gate, so steel's best plan makes its steel
     from reachable raws instead of importing the locked Steeleaf ingot (the best plan before
     F4). It stays legal: Steeleaf dust, which only the ingot's macerator recipe makes, still
     gets a plan that imports the ingot through a gate, with its warning."""
@@ -175,9 +175,9 @@ def test_a_locked_import_is_gated_and_warned(
 
 
 def test_steel_starts_with_iron_and_coal(conn: sqlite3.Connection) -> None:
-    """F3 (D389 (3), D393): with the run's ore mixes loaded, iron dust is one step from its
+    """F3 (D427 (3), D393): with the run's ore mixes loaded, iron dust is one step from its
     veins' ores, so steel's first candidate is the Bricked Blast Furnace's iron dust + coal,
-    and the EBF is still offered beside it (D389 (1)). The platline still builds in time."""
+    and the EBF is still offered beside it (D427 (1)). The platline still builds in time."""
     g = graph.build(conn, Request(STEEL, tier_cap=MV), DefaultBaseInputs(MV))
     steel = g.item(STEEL)
     first = g.recipe(steel.candidates[0].recipe)
@@ -194,7 +194,7 @@ def test_steel_starts_with_iron_and_coal(conn: sqlite3.Connection) -> None:
 def test_simplest_steel_route_is_an_extra_column(
     conn: sqlite3.Connection, plans: tuple[dict[str, Any], ...]
 ) -> None:
-    """F5 (D389 (4)): asking for the simplest route adds it beside the ranked routes, made of
+    """F5 (D427 (4)): asking for the simplest route adds it beside the ranked routes, made of
     each node's first candidate (steel's: the Bricked Blast Furnace, F3), and leaves the
     ranked routes as they were, in the same order (ties break on the route, D404 (8))."""
     req = Request(STEEL, tier_cap=MV, mode="batch", qty=DEFAULT_BATCH, simplest=True)

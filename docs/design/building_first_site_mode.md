@@ -3,7 +3,7 @@
 VERDICT: derived-interior wins. The final design below takes its core (the model only builds, GOS derives the floor and fits the machines) and grafts on three pieces: optional zones from rooms-placer, the `prior` pass and `extra_open` reach from rooms-placer, and the program/site split and compile-once gate from model-places. Model-placed pins are left out of this PR (Q6).
 
 Checked in the repo for this review:
-- docs/decisions.md ends at D421, and D389 is used twice (L299 and L301). The new entry is D422, and the PR should mention the clash.
+- docs/decisions.md ends at D421, and D389 is used twice (L299 and L301). The new entry is D422, and the PR should mention the clash. (Since renumbered: the WO-3.10 pair is D426 and D427, D428.)
 - D385 limits the sandbox script to shell geometry.
 - D386 records Clayton saying "don't worry about practicality", "the quicker we can [get to testing], the better", and that the procedural generator is being phased out.
 - shell_bakeoff.REPAIR_ROUNDS = 2 (L120). shell_brief.PROMPT_VERSION = 5.
@@ -141,7 +141,7 @@ Checked in the repo for this review:
     - `gos shell refit BUILD`;
     - `gos shell design --mode site|layout`;
     - help text.
-17. `docs/decisions.md`: D422, partly superseding D316 (interior/origin), D317 (repair does not apply to fit refusals), D368 and D389. Note the duplicate D389 id. Also the plan §8 WO line.
+17. `docs/decisions.md`: D422, partly superseding D316 (interior/origin), D317 (repair does not apply to fit refusals), D368 and D389. Note the duplicate D389 id (since renumbered, D428). Also the plan §8 WO line.
 
 No dashboard or TS changes: layout.json and the ghost shapes are unchanged. The Designer copy and a `/api/shells/{build}/layout` route are a follow-up.
 
@@ -210,7 +210,7 @@ No dashboard or TS changes: layout.json and the ghost shapes are unchanged. The 
   - The cap stops a 40-high vault counting air no machine can use.
   - Uncapped Vr is reported alongside for Clayton's literal reading (Q2).
 - **Gate**: V ≥ M. The volume rule is necessary but not sufficient; the packing is the proof. Aisles, the lobby and chases come out of the 25%.
-- **Floor gate (added in build, D422 (2)):** |R| ≥ F = ceil((1 + buffer/100) × Σ keep-out x·z). H is usually one block taller than a keep-out (corridor 3 + chase 2 = 5 against a 4-high keep-out), so air counted up to H can make up for a floor smaller than the keep-outs themselves: a probe of plain halls sized just past V ≥ M was refused for packing about half the time. The machines stand on the floor (ground floor only), so the 25% is asked of the floor too. NEED and `covered()` carry `floor_required` / `need_floor`.
+- **Floor gate (added in build, D422 (2)):** |R| ≥ F = ceil((1 + buffer/100) × Σ keep-out x·z). H is usually one block taller than a keep-out (corridor 3 + chase 2 = 5 against a 4-high keep-out), so air counted up to H can make up for a floor smaller than the keep-outs themselves: a probe of plain halls sized just past V ≥ M was refused for packing about half the time. The machines stand on the floor (ground floor only), so the 25% is asked of the floor too. NEED and `covered()` carry `floor_required` / `need_floor`. Kept by Clayton (2026-11-25, D429 (3)).
 
 ### 2.4 Algorithm
 
@@ -260,6 +260,7 @@ fit.fit(program, cells, site, opts, hint, zones, prior):
 - **With a hint**: validate it or refuse.
 - **Without one**: take the widest run of candidates. Ties go west, south, east, north, then the lowest coordinate.
 - The doorway volume = that straight path, so the gate never removes porch blocks.
+- **Through the relief zone too (WO-10.18, D430).** A site design made since WO-10.18 also needs the way out clear past SITE's edge, through the relief zone, at y 0..ch-1 (as a plan-free door, D424): a candidate walled there is dropped, and a hint on one is refused with "entrance at [x,z] on the {side}: its way out is blocked in the relief zone outside SITE at y 0..{ch-1}: keep it clear". Blocks above the door's height or beside its way out are fine. The rule is the record flag `fit.door_relief` (true on new designs, `Spec.door_relief`); a site build saved before it has no flag and rebuilds, exports, revises and refits by the old rule, with the same build ids. Prompt v8 (site) says it in the door rule.
 - Origin and `to_schematic` use e1's lo (D318 semantics move from "first layout entrance" to "e1").
 
 ### 2.6 Gate order (shell_store.make, site branch) and messages
@@ -413,7 +414,7 @@ It is large for one PR, so review it commit by commit (§2.1).
 7. When a revise or new footprint data would move machines already built: keep valid old positions (proposed `prior`), and should export refuse and offer `gos shell refit` (proposed) or refit automatically?
 8. Low-ceiling buildings: refuse when no ceiling over open floor is chase-high (proposed), or make the cable chase optional (a schema change)?
 9. Should the No-AI procedural shell stay layout-first (proposed; D386 phases it out), and should new AI designs default to site mode immediately?
-10. Approve D422 superseding parts of D316, D317, D368 and D389, and renumbering or noting the duplicate D389.
+10. Approve D422 superseding parts of D316, D317, D368 and D389, and renumbering or noting the duplicate D389 (renumbered by D428).
 
 Paths:
 - /home/user/GretecOS/core/gregtec/build/layout.py

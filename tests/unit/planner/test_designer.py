@@ -183,7 +183,7 @@ def test_design_refusals(home: Path) -> None:
 
 
 def test_request_from_spec_defaults_to_a_batch_of_64(home: Path) -> None:
-    """D389 (5): a spec with no amount is a batch of 64 (with ``within`` if given)."""
+    """D427 (5): a spec with no amount is a batch of 64 (with ``within`` if given)."""
     req = designer.request_from_spec(home, {"target": WIDGET, "tier": "MV"})
     assert isinstance(req, Request)
     assert (req.mode, req.qty, req.within_s) == ("batch", 64.0, None)
@@ -198,7 +198,7 @@ def test_request_from_spec_defaults_to_a_batch_of_64(home: Path) -> None:
 
 
 def test_request_from_spec_asks_for_the_simplest_route_by_default(home: Path) -> None:
-    """D389 (4): the Designer and the agent tool show the simplest route unless told not to."""
+    """D427 (4): the Designer and the agent tool show the simplest route unless told not to."""
     req = designer.request_from_spec(home, {"target": WIDGET, "rate": "2/s"})
     assert isinstance(req, Request) and req.simplest
     req = designer.request_from_spec(

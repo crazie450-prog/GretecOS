@@ -60,8 +60,10 @@ if TYPE_CHECKING:
 #    (WO-10.16, D422). Layout mode keeps v5's text, word for word.
 # 7: plan-free buildings: an empty building sized by its roofed floor (WO-10.17, D424). Layout
 #    and site modes keep v5's and v6's texts, word for word.
-PROMPT_VERSION = 7
-PROMPT_VERSIONS = {"layout": 5, "site": 6, "free": PROMPT_VERSION}
+# 8: site mode: the door's way out is kept clear through the relief zone too, as v7 asks of a
+#    plan-free door (WO-10.18). One sentence on from v6; layout and free keep v5 and v7.
+# Each mode has its own version: the newest number is not every mode's.
+PROMPT_VERSIONS = {"layout": 5, "site": 8, "free": 7}
 MODES = tuple(PROMPT_VERSIONS)
 # What the vocabulary is, in the words build_request's own description uses (its tool adds how
 # to ask for GOS's procedural shell; gregtec.agents.tools.shells.VOCABULARY).
@@ -123,16 +125,17 @@ MAX_ECHO = 16_000  # characters of a refused answer sent back (room for a build 
 MAX_WHY = (
     4_000  # characters of the code's refusal sent back (its reasons can be very long)
 )
-# A bake-off case that aims at more blocks than BIG_TARGET (D425) gets a longer answer and a
-# longer echo: the whole sandbox script (gregtec.build.sandbox.MAX_SCRIPT_CHARS). The live
-# designer and every other case keep the standard two (D423).
+# A request that aims at more blocks than BIG_TARGET gets a longer answer and a longer echo:
+# the whole sandbox script (gregtec.build.sandbox.MAX_SCRIPT_CHARS). A bake-off case aims at
+# its target (D425); a live designer request at its preview's size (big_request, D429). Every
+# other request keeps the standard two (D423).
 BIG_TARGET = 5_000
 BIG_OUTPUT_TOKENS = 32_000
 BIG_ECHO = 40_000
 
 
 def out_tokens(target: int | None) -> int:
-    """The output limit of a bake-off case aiming at ``target`` blocks (D425)."""
+    """The output limit of a request aiming at ``target`` blocks (D425, D429)."""
     return (
         BIG_OUTPUT_TOKENS
         if target is not None and target > BIG_TARGET
@@ -141,8 +144,33 @@ def out_tokens(target: int | None) -> int:
 
 
 def echo(target: int | None) -> int:
-    """How much of a refused answer goes back to a bake-off case aiming at ``target`` (D425)."""
+    """How much of a refused answer goes back to a request aiming at ``target`` (D425, D429)."""
     return BIG_ECHO if target is not None and target > BIG_TARGET else MAX_ECHO
+
+
+# A live request has no target (D429): it is large when GOS's own procedural building for it
+# passes BIG_PREVIEW blocks (the plot, sized from the machines or the floor area, is what makes
+# a building big, D425). On the bake-off's old cases the standard ones' previews were 1,131 to
+# 1,483 blocks and the four big cases' 2,399 to 9,771; D431's eight are all big, 2,071 to 17,323
+# (test_shell_bakeoff checks the split, standard site cases standing in for the rest).
+BIG_PREVIEW = 2_000
+
+
+def big_request(blocks: int, max_blocks: int) -> bool:
+    """A live designer request is large (D429) when GOS's own procedural building for it (a new
+    design's preview, :func:`baseline`), or the version it revises, has more than
+    :data:`BIG_PREVIEW` blocks and its max_blocks allows more than :data:`BIG_TARGET` (as a big
+    bake-off case's target is at most its max_blocks, D425)."""
+    return blocks > BIG_PREVIEW and max_blocks > BIG_TARGET
+
+
+def baseline(made: Any) -> int:  # noqa: ANN401 - a shell_store.Made
+    """Blocks of GOS's own procedural building in a preview: a site preview whose machines
+    didn't pack still counts its building (its SITE, NEED and palette are what the brief
+    states; the fitter's limits are the model's to work round, D422)."""
+    if made.outcome.ok:
+        return len(made.outcome.cells)
+    return len(shell.compile_ops(made.spec, made.ops).cells)
 
 
 # Site mode (D422): how much air a building is asked to give, in NEED.required. The fitter
@@ -326,7 +354,7 @@ def system_prompt(mode: str = "layout") -> str:
     """The same text for every model and every case of a mode (:data:`PROMPT_VERSIONS`): the
     ambition first, then the space, the answer and its script API, the rules the code checks,
     and that the request's words are data. No whole building is shown: an example gets copied
-    (D387). Layout mode is v5's text; site mode (v6, D422) is :func:`site_prompt`."""
+    (D387). Layout mode is v5's text; site mode (v8, D422, WO-10.18) is :func:`site_prompt`."""
     if mode not in MODES:
         raise ValueError(mode)
     if mode == "site":
@@ -402,7 +430,8 @@ def site_prompt() -> str:
         "least NEED.door_height of air, joined to the door, on at least NEED.floor_required "
         "such columns.\n"
         "- At least one ground doorway at least NEED.door_height high and 3 wide, with a "
-        "straight way out at y 0 to the edge of SITE.\n"
+        "straight way out at y 0 to the edge of SITE and on through the relief zone (keep it "
+        "clear there too).\n"
         "- Some ceilings over open floor at least NEED.aisle_height high (the cable chase runs "
         "there).\n"
         "- Each machine's keep-out (PROGRAM) needs that much free floor in one piece, at least "

@@ -1,6 +1,6 @@
-# The shell designer bake-off (WO-10.11, big cases WO-10.17)
+# The shell designer bake-off (WO-10.11, big cases WO-10.17, the eight creative requests WO-10.18)
 
-You asked for it on 2026-11-20: "I do think a bakeoff so to speak would be a good idea so i can also test out the framework of the building generator app". A bake-off gives the same building requests to several AI models, checks every answer with GOS's own gate, and lets you pick the better building without knowing which model drew it. Decisions: D374-D378.
+You asked for it on 2026-11-20: "I do think a bakeoff so to speak would be a good idea so i can also test out the framework of the building generator app". A bake-off gives the same building requests to several AI models, checks every answer with GOS's own gate, and lets you pick the better building without knowing which model drew it. Decisions: D374-D378 (the requests: D431).
 
 There are two walk-throughs here. **Part 1 is free** (fake models, no key, nothing leaves the PC) and doubles as your hands-on tour of the building tool. **Part 2 is paid**: real models from Anthropic and OpenAI, your money, your yes.
 
@@ -41,7 +41,7 @@ That is the tool. These buttons use GOS's own free generator; **Ask the architec
 
 The fake models are small programs inside GOS that answer like a model would. `fake-plain` draws a simple hall, `fake-ornate` a fancier one, and `fake-sloppy` gets its first answer wrong on purpose so you can see the gate refuse it and the repair round fix it.
 
-Since D422 every bake-off request is a **site** design: the model builds first, inside a plot sized for the machines, and GOS fits the machines in afterwards ([`shells.md`](shells.md), "Two kinds of shell"). Two more fakes show the refusals this adds: `fake-cramped` first draws a hall too small for the machines (the gate says by how much), then a big enough one in the repair round; `fake-tower` draws enough room but only on floors three blocks wide, so no machine fits and it is refused every round. Add them to `--models` if you want to see those. The fake halls have no lights, so the marble temple's follow-up ("no lights") changes nothing: GOS refuses it as "nothing changes", and that follow-up counts as not done for `fake-plain` and `fake-ornate`. That is expected.
+Since D422 every bake-off request is a **site** design: the model builds first, inside a plot sized for the machines, and GOS fits the machines in afterwards ([`shells.md`](shells.md), "Two kinds of shell"). Two more fakes show the refusals this adds: `fake-cramped` first draws a hall too small for the machines (the gate says by how much), then a big enough one in the repair round; `fake-tower` draws enough room but only on floors three blocks wide, so no machine fits and it is refused every round. Add them to `--models` if you want to see those. Every follow-up in the table asks for something the fakes can do (a steeper roof, more pillars, more or bigger windows), so each fake that drew a building also makes its second version. `fake-cramped` can't give a plan-free request its floor at all, so it is refused every round on the four plan-free requests: that is expected too.
 
 8. See which models you can name:
    ```powershell
@@ -49,10 +49,10 @@ Since D422 every bake-off request is a **site** design: the model builds first, 
    ```
 9. Run it (a minute or two; it prints "Contacts: nothing" and asks nothing, because it is free):
    ```powershell
-   & $gos shell bakeoff run <plan-id> --models fake-plain,fake-ornate,fake-sloppy --limit 7
+   & $gos shell bakeoff run <plan-id> --models fake-plain,fake-ornate,fake-sloppy
    ```
-   `--limit 7` asks the table's first seven requests; without it the run asks all eleven, the four big ones of section K too.
-   If you also have a power plan for that line, add `--large <plan-id>,<power-plan-id>` so four of the seven requests get a bigger building.
+   It asks the table's eight requests (section K): four built around your plan (two on the small line, two on the large one), then four plan-free buildings that house no plan.
+   If you also have a power plan for that line, add `--large <plan-id>,<power-plan-id>` so the two large-line requests get a bigger building.
    The last lines name the run (it looks like `bo-20261121-193000-ab12`). Below, `<run>` means that name.
 10. In the dashboard's **Build** view scroll down to **Shell bake-off**. The panel shows up by itself a few seconds after the run starts, also when the Build view was already open: you do not need to reload the page. (If you look while the run is still going, it says "running" and the buildings fill in as they are made.) You see the first request, what was asked next ("Then"), and the answers side by side as **A**, **B**, **C**. Which model is which letter is hidden, and it is shuffled for every request.
 11. Click **After the follow-up** to see each building after the change that was asked; click **The first design** to go back. Turn the buildings and use the layer sliders as in step 7. The table under them compares the blocks of the first two.
@@ -92,13 +92,13 @@ A bake-off building can't be exported. To put a building into the Lab, use one o
 
 ### E. What it costs
 
-One run of the first seven requests asks each model for 7 buildings and 7 changes: 14 answers, plus up to 2 repair rounds each when the gate refuses an answer. Each answer may use at most 16,000 output tokens, thinking included. Since D425 the table has four more, bigger requests (6,000 to 20,000 blocks): they cost more and are best run on their own (section K). A run with no `--only` and no `--limit` asks all eleven.
+One run of the table asks each model for 8 buildings and 8 changes: 16 answers, plus up to 2 repair rounds each when the gate refuses an answer. Since D431 (WO-10.18) every request is a big one (6,000 to 20,000 blocks, section K), so each answer may use up to 32,000 output tokens, thinking included.
 
-With the prices read on 2026-11-20, a run of the first 6 requests was likely **about $1 for Claude Opus 5.5 and about $2.50 to $3 for GPT-6 Astra**, if every answer passes at once and uses a quarter of that limit. If every answer used the whole limit and every repair round, it would be about $14 and $35; it can't get there, because the run stops at its cap, which is **$10 for the whole run unless you change it**. The command prints its own estimate for your models before it asks; trust that one, not this page. Prices move: check the pricing pages below on the day.
+On the test plans (2026-11-25, Astra at $10 in / $50 out) the command's own estimate for all eight is **likely about $8.46 for `opus` and $21.15 for `astra`**, about $29.60 for both; worst case (every answer the whole limit and every repair round) $44.13 and $110.31. One request is about an eighth of that (likely about $1.06 and $2.66). A run stops at its cap, which is **$10 for the whole run unless you change it**, and never gets more than what `[budget] day_max_usd` still leaves today ($10 unless you changed it): for the whole table raise both for the day you run it (section K). The command prints its own estimate for your models before it asks; trust that one, not this page. Prices move: check the pricing pages below on the day.
 
-**Since D422 (designer prompt v6, site mode):** the model no longer gets the machines' floor plan. It gets the SITE (the plot), NEED (how much roofed floor the machines need, with 25% to spare) and a short PROGRAM table (machine sizes and counts), and builds whatever it likes there; GOS fits the machines in afterwards. The brief is shorter for big lines (no machine coordinates). A building that is too small, has no door out, or can't be packed comes back in a repair round with the exact numbers, so some answers may need a second round; the repair rounds are still 2. The report's head says `designer prompt v6` (site). Runs made before D422 stay layout runs (prompt v5 or earlier) and are not comparable with site runs.
+**Since D422 (designer prompt v6, site mode):** the model no longer gets the machines' floor plan. It gets the SITE (the plot), NEED (how much roofed floor the machines need, with 25% to spare) and a short PROGRAM table (machine sizes and counts), and builds whatever it likes there; GOS fits the machines in afterwards. The brief is shorter for big lines (no machine coordinates). A building that is too small, has no door out, or can't be packed comes back in a repair round with the exact numbers, so some answers may need a second round; the repair rounds are still 2. The report's head says `designer prompt v6` (site). Runs made before D422 stay layout runs (prompt v5 or earlier) and are not comparable with site runs. Since D430 (WO-10.18) site mode is **v8**: one sentence more, the door's way out kept clear through the relief zone too, which new site designs must now do; the head says `designer prompt v8` (site).
 
-**Since D387 (designer prompt v4, seven varied requests):** the seven requests are new and varied on purpose: a stack-crowned foundry, a marble temple with a dome, a gothic cathedral, a desert ziggurat, a pagoda workshop and an art deco power station (the last four with their own vanilla palettes: the table's new `palette` column), and one from the marble theme alone, with headroom 10 to 16 and relief 3 to 6 (`headroom` and `relief` columns). Each answer is now a building program first (`{"script", "ops"}`), with shape helpers. One real answer (GPT-6 Astra, effort high, the gothic case) used 13,184 output tokens, so the likely cost is now counted at 80% of the output limit: about **$3.78 for Claude Opus 5.5 and $9.45 for GPT-6 Astra**, about $13 for the run, above the default $10 cap and day limit. Raise `cap_usd` (20) and `[budget] day_max_usd` (25) for a run that finishes, or accept a partial one. The report's head says `designer prompt v4`. The paragraph below is the earlier D386 note.
+**Since D387 (designer prompt v4, seven varied requests; that table was replaced by D431's eight):** the seven requests were new and varied on purpose: a stack-crowned foundry, a marble temple with a dome, a gothic cathedral, a desert ziggurat, a pagoda workshop and an art deco power station (the last four with their own vanilla palettes: the table's new `palette` column), and one from the marble theme alone, with headroom 10 to 16 and relief 3 to 6 (`headroom` and `relief` columns). Each answer is now a building program first (`{"script", "ops"}`), with shape helpers. One real answer (GPT-6 Astra, effort high, the gothic case) used 13,184 output tokens, so the likely cost is now counted at 80% of the output limit: about **$3.78 for Claude Opus 5.5 and $9.45 for GPT-6 Astra**, about $13 for the run, above the default $10 cap and day limit. Raise `cap_usd` (20) and `[budget] day_max_usd` (25) for a run that finishes, or accept a partial one. The report's head says `designer prompt v4`. The paragraph below is the earlier D386 note.
 
 **D386 (designer prompt v3, seven requests):** the 7th request, `landmark-large`, asks for something striking with headroom 10 (the table's new `headroom` column; the first six are unchanged and keep the default 4), and every building may now stand out 3 blocks past its wall ring (the relief zone). On the test fixtures the command's own estimate for all seven is **likely about $1.33 for Claude Opus 5.5 and $3.34 for GPT-6 Astra** (worst case $19.77 and $46.26, which the $10 cap stops long before). The report's `designer prompt` line says v3 for these runs.
 
@@ -149,17 +149,17 @@ Since D385 (designer prompt v2, freeform build scripts) every call also carries 
 
 ### H. Run it
 
-25. Start with one request to see it work (likely well under $1 for both models together):
+25. Start with one request to see it work (the first one, `clockwork-foundry`: likely about $3.70 for both models together; the $10 cap stops its worst case):
     ```powershell
     & $gos shell bakeoff run <plan-id> --models opus,astra --limit 1
     ```
     Read what it prints: how many answers it will ask for, each model's likely and worst-case cost, "Contacts: api.anthropic.com, api.openai.com", and the hard cap. Type `yes` and press Enter to spend it; anything else stops with nothing spent.
-26. Then the full seven, the same day or later (add `--large <plan-id>,<power-plan-id>` if you have a power plan, and `--cap-usd 6` if you want a lower limit for this run):
+26. Then all eight, the same day or later (add `--large <plan-id>,<power-plan-id>` if you have a power plan). They likely cost about $30 together, far more than the $10 defaults, so first raise `day_max_usd` under `[budget]` in gos.toml for the day (for example to 60; put it back afterwards), then give the run a cap of its own:
     ```powershell
-    & $gos shell bakeoff run <plan-id> --models opus,astra --limit 7
+    & $gos shell bakeoff run <plan-id> --models opus,astra --cap-usd 60
     ```
-    Keep `--limit 7`: without it the run also asks the four big requests (section K), which cost far more. It takes a few minutes per model. **Ctrl+C** stops it cleanly: what is finished stays, nothing is left half-written. If it reaches the cap it stops the same way and says so.
-    If you already spent something today (step 25 did), it prints "Today's limit ([budget] day_max_usd) leaves $9.55: this run's cap is lowered from $10.00 to that" just above the "Hard cap for this run" line. That is fine: the run can never take the day over your day limit, and the six requests likely cost far less. Type `yes` as before.
+    Or split it over two days with `--only` (section K). It takes a while per model: a big answer can take several minutes. **Ctrl+C** stops it cleanly: what is finished stays, nothing is left half-written. If it reaches the cap it stops the same way and says so.
+    If you already spent something today (step 25 did), it prints "Today's limit ([budget] day_max_usd) leaves $9.55: this run's cap is lowered from $10.00 to that" just above the "Hard cap for this run" line. That is fine: the run can never take the day over your day limit. If what is left is less than the estimate, the run stops partway at its cap and keeps what it finished. Type `yes` as before.
     If the connection drops in the middle of an answer, GOS tries that answer again (at most twice). The vendor may still charge for the broken one, and GOS can't see how much, so it counts each at the most it could have cost against the cap and tells you at the end ("... call(s) broke off after they were sent ... or came back without their token count"). The same goes for an answer that arrives without its token count. Your bill on the vendor's site is the last word.
     **If one model can't be asked at all** (its key is refused, its model id is wrong, the account is out of credit), the run stops at that request instead of paying for the other model's remaining requests with nothing to compare them with. The last line then says "stopped (a model could not be asked at all ...)". It does not say which model, so that what was already made can still be rated blind; "If something is off" below has the steps.
     You can leave the dashboard open while it runs. The panel reading the run never gets in the run's way, and if some other program does hold the run's file for a while (a virus scanner, an editor), the run keeps its record in a second file beside it (`run.unsaved.json`) and everything reads it from there: nothing you paid for is lost.
@@ -177,40 +177,47 @@ Since D385 (designer prompt v2, freeform build scripts) every call also carries 
 - **asked / kept**: for the follow-up, whether it changed what was asked and left the rest alone (checked by code, for simple requests only).
 - **cost / seconds / tokens**: what the answers took. A cost of "unknown" means you gave no price. If the report has a line about calls that "broke off" or "came back without their token count", the vendor may have charged a little more than the cost column says (that line gives the most it can be).
 - **why refused** (the second table): for each request and letter, why the gate sent an answer back, try by try (`design try 1: ...`, `follow-up try 2: ...`). An answer that passed after a repair round still shows why its first try failed.
-- **Six requests is a first look, not proof.** If one model is ahead 4 to 2, that can be chance; 6 to 0 with clearly better buildings is worth believing. To be surer, run it again another day (each run shuffles the letters anew) or with other plans, and see whether the same model wins.
+- **Eight requests is a first look, not proof.** If one model is ahead 5 to 3, that can be chance; 8 to 0 with clearly better buildings is worth believing. To be surer, run it again another day (each run shuffles the letters anew) or with other plans, and see whether the same model wins.
 - The bake-off only compares. Which model draws your real shells is set apart, by `[shell] designer` in gos.toml (D423, checklist 5.11.17: the [shells runbook](shells.md) has the steps); with it unset, the architect in `[models]` (Anthropic) draws them.
-- **target** (only in a run with a big request, section K): how many of that model's buildings for those requests came within 20% of the block count the request aimed at; the second table says, per request and letter, "12,840 / 12,000 hit" or "4,500 / 6,000 miss (-25%, under the band)". A plan-free request's fit columns are its floor check: **fit ok** (the floor held), **spare %** and **entrance**; it has no machines, so **placed** and **service len** say `-` for a model with only plan-free fits.
+- **target** (every request since D431, section K): how many of that model's buildings for those requests came within 20% of the block count the request aimed at; the second table says, per request and letter, "12,840 / 12,000 hit" or "4,500 / 6,000 miss (-25%, under the band)". A plan-free request's fit columns are its floor check: **fit ok** (the floor held), **spare %** and **entrance**; it has no machines, so **placed** and **service len** say `-` for a model with only plan-free fits.
 
 Your usual cost page counts these runs too (**Costs** view, lane `bakeoff`).
 
-### K. The big requests (D425)
+### K. The eight requests (D425, D431)
 
-You asked on 2026-11-24 for "a couple options in the 5,000 to 20,000-block range". The first seven requests came out around 2,000 blocks because the plot (SITE) is sized from the machines: a small plan gets a plot of about 24 x 24. The four big requests are at the end of the table:
+You asked on 2026-11-24 for "a couple options in the 5,000 to 20,000-block range" (D425), and on 2026-11-25 for new requests that "push the boundaries" in four styles: steampunk, floating islands, fantasy-punk and industrial (D431). The table now holds eight big requests, built around your plans first, then plan-free (a request the model can't do stops it, so the harder plan-free ones come last):
 
-| request | houses | plot (on the test plans) | aims at | block limit |
-|---|---|---|---|---|
-| `big-foundry-hall` | the large line, plot factor 4.0, headroom 12 | 30 x 24 x 30 (about 34 a side on your plans) | about 6,000 | 7,500 |
-| `big-deco-station` | the large line, plot factor 6.0 (the most), headroom 16 | 37 x 28 x 37 (about 42 on yours) | about 10,000 | 12,500 |
-| `free-warehouse` | **no plan**: an empty building with at least 2,000 blocks of roofed floor, headroom 12 | 64 x 24 x 64 | about 12,000 | 15,000 |
-| `free-great-hall` | **no plan**: at least 3,000 blocks of roofed floor, headroom 16 | 78 x 28 x 78 | about 20,000 | 25,000 |
+| request | style | houses | plot (on the test plans) | aims at | block limit |
+|---|---|---|---|---|---|
+| `clockwork-foundry` | steampunk: an amber glass vault, a stopped clock tower, three smokestacks | the small line (foundry theme), plot factor 6.0, headroom 12 | 30 x 24 x 30 | about 7,000 | 8,750 |
+| `deep-anvil` | fantasy-punk: a dwarven forge-hall of triangles and diamonds | the small line, plot factor 5.0, headroom 14 | 28 x 26 x 28 | about 6,000 | 7,500 |
+| `dynamo-basilica` | industrial: a power house built as a temple (marble theme) | the large line, plot factor 6.0, headroom 16 | 37 x 28 x 37 | about 11,000 | 13,750 |
+| `anchorage-hall` | floating islands: a mossy hall on the ground, a broken sky harbour above it | the large line, plot factor 6.0, headroom 16 | 37 x 28 x 37 | about 9,500 | 11,875 |
+| `leviathan-port` | steampunk: an airship terminus, the Leviathan moored above | **no plan**: at least 3,000 blocks of roofed floor, headroom 16 | 87 x 28 x 87 | about 13,000 | 16,250 |
+| `root-reliquary` | floating islands: a ziggurat in a giant tree's roots, shrines on broken bridges | **no plan**: at least 6,000 floor, headroom 16 | 110 x 28 x 110 | about 17,000 | 21,250 |
+| `artificer-aerodrome` | fantasy-punk: a gear-crowned rotunda, hangar wings, ornithopters | **no plan**: at least 6,000 floor, headroom 12 | 110 x 24 x 110 | about 16,000 | 20,000 |
+| `gasholder-cathedral` | industrial: an old gasworks saved as a market, a glowing glass drum | **no plan**: at least 6,000 floor, headroom 14 | 110 x 26 x 110 | about 20,000 | 25,000 |
 
-- GOS adds one line to each of these briefs, and to its follow-up: "TARGET: about 12,000 blocks (aim for 9,600 to 14,400); max_blocks is 15,000." The request's own words carry no number. 20,000 blocks is tried plan-free only: on your plans the biggest plot is about 42 x 28 x 42, and 20,000 blocks there would fill about 40% of it.
-- A big request may answer with up to **32,000 output tokens** (the other requests and your live shell designer keep 16,000) and a refused answer goes back whole, up to 40,000 characters. The report's **tokens in/out** column then shows whether a big building needed more than 16,000: that is what checklist 5.11.20 asks you to decide.
-- **What it costs.** On the test plans the command's estimate for the four big requests (2026-11-25, Astra at $10 in / $50 out) is **likely about $10.57 for GPT-6 Astra and $4.23 for Claude Opus 5.5**, worst case $55.10 and $22.04; each big request's share is printed on its own line ("of which free-warehouse: ..."). Your plans give slightly different figures: trust the command's own lines.
-- **The day limit stops it.** A paid run never gets more than what `[budget] day_max_usd` still leaves today ($10 unless you changed it), so at the default it stops partway through. For the day you run it, raise `day_max_usd` in gos.toml (for example to 40) and give the run a cap from the printed worst case, or run two requests one day and two the next.
+- The plots on your plans are a little bigger than on the test plans (the large line at factor 6.0 is about 42 a side). The plan-free plots don't depend on your plans.
+- GOS adds one line to each of these briefs, and to its follow-up: "TARGET: about 13,000 blocks (aim for 10,400 to 15,600); max_blocks is 16,250." The request's own words carry no number. The plan-free requests carry the big targets: on your plans 20,000 blocks would fill about 40% of the biggest plot.
+- **Floating islands** have to fit in the building's own box: at headroom 16 everything is between y 0 and y 27, and GOS doesn't check that an island is held up. The base hall stays on the ground, with its floor and door at y 0, as every building's must.
+- Each request may answer with up to **32,000 output tokens** and a refused answer goes back whole, up to 40,000 characters. The report's **tokens in/out** column then shows whether a big building needed more than 16,000. Your live shell designer does the same for its large requests (checklist 5.11.20, answered: D429).
+- **What it costs.** On the test plans the command's estimate for all eight (2026-11-25, Astra at $10 in / $50 out) is **likely about $21.15 for `astra` and $8.46 for `opus`**, worst case $110.31 and $44.13; each request's share is printed on its own line ("of which leviathan-port: ..."), about $2.65 and $1.06 each. Your plans give slightly different figures: trust the command's own lines.
+- **The day limit stops it.** A paid run never gets more than what `[budget] day_max_usd` still leaves today ($10 unless you changed it), so at the default it stops partway through. For the day you run it, raise `day_max_usd` in gos.toml (for example to 60) and give the run a cap (`--cap-usd 60`), or run four requests one day and four the next.
 
-30. See the four with the fakes first (free, nothing leaves the PC):
+30. See the eight with the fakes first (free, nothing leaves the PC; step 9 did the same):
     ```powershell
-    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models fake-plain,fake-ornate --only big-foundry-hall,big-deco-station,free-warehouse,free-great-hall
+    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models fake-plain,fake-ornate
     ```
-    The fakes draw much smaller buildings than the targets: their **target** column says "miss", as it should.
-31. Try one big request on its own with a real model first (a vendor that refuses the 32,000-token limit stops that model for the rest of the run, D378):
+    The fakes don't aim at the targets: around your plans they draw much smaller buildings, so their **target** column says "miss", as it should; a plan-free fake's plain walls on its big plot may come near a target by chance.
+31. Try one plan-free request on its own with a real model first (a vendor that refuses the 32,000-token limit stops that model for the rest of the run, D378):
     ```powershell
-    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models astra --only free-warehouse --cap-usd 15
+    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models astra --only leviathan-port --cap-usd 15
     ```
-32. Then the four (or the other three), after raising `day_max_usd` for the day:
+32. To split the table over two days, run the four on your plans one day and the four plan-free ones the next (each about $15 likely for both models), after raising `day_max_usd` for the day:
     ```powershell
-    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models opus,astra --only big-foundry-hall,big-deco-station,free-warehouse,free-great-hall --cap-usd 40
+    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models opus,astra --only clockwork-foundry,deep-anvil,dynamo-basilica,anchorage-hall --cap-usd 30
+    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models opus,astra --only leviathan-port,root-reliquary,artificer-aerodrome,gasholder-cathedral --cap-usd 30
     ```
     `--only` takes the requests' ids, comma-separated; an id that isn't in the table is refused before anything is spent. Rate and read the report as in steps 28-29; the plan-free buildings show no machines in the 3D view. Put `day_max_usd` back afterwards.
 33. A plan-free bake-off building can't be exported (no bake-off building can). To get one of your own, design it in the Shell workbench's **Plan-free** mode or with `gos shell design --mode free --area 2000` ([shells runbook](shells.md)).
@@ -246,4 +253,4 @@ You asked on 2026-11-24 for "a couple options in the 5,000 to 20,000-block range
 
 - A run: `%USERPROFILE%\GregtecOS\data\bakeoff\<run>\` (its buildings and `run.json`; `run.unsaved.json` beside it only while another program was holding `run.json`).
 - Reports: `%USERPROFILE%\GregtecOS\data\reports\shell-bakeoff-<run>.md`.
-- The eleven requests: `tests\evals\shell_bakeoff.tsv` in the app folder (a small table; `--cases <file>` runs your own, `--only <id>,<id>` some of them). Its last three columns (D425), after `mode`, are `site_factor`, `area` (a plan-free request's floor; its `line` is `none` and its `mode` `free`) and `target`; an empty cell means the default.
+- The eight requests (D431): `tests\evals\shell_bakeoff.tsv` in the app folder (a small table; `--cases <file>` runs your own, `--only <id>,<id>` some of them). Its last three columns (D425), after `mode`, are `site_factor`, `area` (a plan-free request's floor; its `line` is `none` and its `mode` `free`) and `target`; an empty cell means the default.

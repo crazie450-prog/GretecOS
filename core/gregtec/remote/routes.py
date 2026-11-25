@@ -100,7 +100,7 @@ def _check_amounts(spec: Mapping[str, str]) -> None:
             if "within" in spec:
                 if "rate" in spec:
                     raise JobError("within is for a batch only")
-                parse_duration(spec["within"])  # no amount is a batch (D389 (5))
+                parse_duration(spec["within"])  # no amount is a batch (D427 (5))
             if "rate" in spec and parse_qty(spec["rate"])[1] is None:
                 raise JobError("a rate needs /s, /min or /h")
         if "tier" in spec:
@@ -151,7 +151,7 @@ def _route(r: Mapping[str, Any]) -> dict[str, Any]:
         "position": r.get("position"),
         "of": r.get("of"),
         "target": target.get("name") or target.get("id"),
-        "batch": target.get("qty"),  # batch mode only, with its ETA (D389 (5))
+        "batch": target.get("qty"),  # batch mode only, with its ETA (D427 (5))
         "eta_s": target.get("eta_s"),
         "machines": metrics.get("machines"),
         "eut_avg": metrics.get("eut_avg"),

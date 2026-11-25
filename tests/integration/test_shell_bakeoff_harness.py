@@ -9,12 +9,13 @@ dump (CI) each benchmark multi gets the fixture's stand-in shape in that DB, as 
 gives them (``test_layout_harness._stand_ins``).
 
 On that home the shipped cases (``tests/evals/shell_bakeoff.tsv``: the steel line alone for the
-small cases, both lines for the large ones) run against the three fake models, free and with no
+small cases, both lines for the large ones, no plan for the plan-free ones; WO-10.18's eight,
+D431) run against the three fake models, free and with no
 network: every brief is written from the real catalog's names, every answer goes through the
 product's gate, and the run is then rated and reported. Checked:
 
 - the plain fake's design passes the gate in every case (it is the procedural shell's walls and
-  flat roof), the ornate one's passes or is refused for too many blocks (the tight case), and the
+  flat roof), the ornate one's passes or is refused for too many blocks, and the
   sloppy one's chest is refused on the real catalog and repaired in the next round;
 - nothing is written into ``data/build`` (his own shells and designs): the run lives under
   ``data/bakeoff`` alone, and a bake-off build is unknown to the shell store;

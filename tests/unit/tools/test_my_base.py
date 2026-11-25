@@ -240,7 +240,7 @@ def test_the_tier_override_is_set_and_cleared(conn: sqlite3.Connection) -> None:
 
 
 def test_reachable_dimensions_come_from_the_quests(conn: sqlite3.Connection) -> None:
-    """D389 (2): the Overworld and the Nether, and the Twilight Forest once its quest is
+    """D427 (2): the Overworld and the Nether, and the Twilight Forest once its quest is
     complete for the tracked player."""
     assert state.MyBase.from_db(conn).dimensions() == bq.ALWAYS_DIMENSIONS
     conn.execute(
