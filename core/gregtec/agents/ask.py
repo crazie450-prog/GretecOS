@@ -76,7 +76,7 @@ from gregtec.agents.fast_lane import (
 from gregtec.agents.no_ai import NEEDS_AI, AiMode
 from gregtec.agents.personas import STATE_FILE, Personas, UnknownPersona
 from gregtec.agents.tools.catalog import default_registry
-from gregtec.agents.tools.registry import Registry
+from gregtec.agents.tools.registry import Registry, ShellJobError, ShellJobs
 from gregtec.agents.tools.tsv import Parsed
 from gregtec.bridge.actions import VIAS, ActionDesk
 from gregtec.db import access
@@ -275,8 +275,11 @@ class Asker:
         home: Path | None = None,
         personas: Personas | None = None,
         actions: ActionDesk | None = None,
+        shell_jobs: ShellJobs | None = None,
     ) -> None:
         self.registry = registry
+        # the live shell designer's job starter (D423); None: revisions go as before
+        self.shell_jobs = shell_jobs
         self.personas = personas  # WO-5.6; None: no persona commands
         self.actions = (
             actions  # the confirm flow (WO-7.1); None: nothing can be pending
@@ -488,11 +491,18 @@ class Asker:
         except shell.ShellError as exc:
             return Reply(f"No shell revision: {exc}", router.INSTANT, route.intent)
 
+        first = ""
+        if (drawn := self._designer_revise(route, ds, reasons)) is not None:
+            if isinstance(drawn, Reply):
+                return drawn
+            first = drawn  # set but not ready: say why, then as before
         if not reasons:
             task = shell_versions.revise_task(ds, route.text)
             item = self.deep.handoff(task, route.text, "router")
             text = DEEP_OFFLINE if item.status == OFFLINE else HANDED_OFF
-            return Reply(text, router.DEEP, route.intent, handoff=item.as_dict())
+            return Reply(
+                first + text, router.DEEP, route.intent, handoff=item.as_dict()
+            )
         why = reasons[0]
         try:
             conn = access.connect(self.registry.env.db, readonly=True)
@@ -512,7 +522,7 @@ class Asker:
                 "No AI, and GOS's own reviser couldn't do that, so nothing changed: "
                 + " ".join(got.reasons)
             )
-            return Reply(text, "no_ai", route.intent, error=why)
+            return Reply(first + text, "no_ai", route.intent, error=why)
         v = got.version or {}
         blocks = (got.record or {}).get("blocks")
         text = (
@@ -520,7 +530,51 @@ class Asker:
             f"({'; '.join(got.changes)}). Say undo to go back."
         )
         card = shell_store.card(self.home, got.build)
-        return Reply(text, "no_ai", route.intent, card=card, error=why)
+        return Reply(first + text, "no_ai", route.intent, card=card, error=why)
+
+    def _designer_revise(
+        self, route: router.Route, ds: str, reasons: list[str]
+    ) -> Reply | str | None:
+        """The live shell designer's revise (D423): a shell job started now, answered at once
+        (the version shows in the Shell workbench when it's done); a sentence saying why it
+        isn't ready (the caller goes on as before); None when none is set or the AI is off for
+        it (Clayton's switch, the credit pause; an Anthropic designer: any reason)."""
+        holder = self.shell_jobs
+        if holder is None or holder.cfg is None or not holder.cfg.shell_designer:
+            return None
+        from gregtec.agents.no_ai import CHOICE, CREDITS
+        from gregtec.build import shell_designer
+
+        if {CHOICE, CREDITS} & set(reasons):
+            return None
+        found = shell_designer.resolve(holder.cfg, holder.path)
+        if (
+            isinstance(found, shell_designer.Ready)
+            and found.spec.provider == "anthropic"
+            and reasons
+        ):
+            return None
+        # e.g. the day cap reached: not ready, so the architect does it (one "ready")
+        found = shell_designer.checked(holder.cfg, holder.store, self.ai, found)
+        if isinstance(found, shell_designer.Ready):
+            if holder.start is None:
+                return (
+                    f"The shell designer {found.label} runs in the core (gos serve), so the "
+                    "architect does it. "
+                )
+            try:
+                job = holder.start(
+                    {"revise": {"design": ds, "words": route.text, "ai": True}}
+                )
+            except ShellJobError as exc:
+                return Reply(f"No shell revision: {exc}.", router.INSTANT, route.intent)
+            text = (
+                f"Asked {found.label} to revise {ds} (job {job['id']}); the new version "
+                "shows in the Shell workbench when it's done."
+            )
+            return Reply(text, router.INSTANT, route.intent)
+        why = found.why if found is not None else shell_designer.UNSET_WHY
+        return f"The shell designer isn't ready ({why}). "
 
     def _shell_undo(self) -> Reply:
         """The current shell design's previous version made current again (no model)."""
@@ -934,6 +988,8 @@ class Agents:
     store: Store | None = None  # closed by close() when setup() opened it
     home: Path | None = None  # GOS_HOME (saved plans' JSON)
     personas: Personas | None = None  # the persona packs (WO-5.6)
+    # the live shell designer's job starter (D423): the core sets its start
+    shell_jobs: ShellJobs | None = None
 
     def lane(self) -> FastLane | None:
         """A fast lane with the stored key (None: no key stored)."""
@@ -957,6 +1013,7 @@ class Agents:
             home=self.home,
             personas=self.personas,
             actions=actions,
+            shell_jobs=self.shell_jobs,
         )
 
     def close(self) -> None:
@@ -993,10 +1050,15 @@ def setup(
         else None
     )
     deep: HandoffRecorder | DeepLaneService
+    shell_jobs = ShellJobs(cfg)  # the core sets its start (D423)
     if fake or not deep_lane:
         deep = HandoffRecorder()
         registry = default_registry(
-            cfg.gos_home, deep=deep, ops=ops, spoiler_default=cfg.spoiler_default
+            cfg.gos_home,
+            deep=deep,
+            ops=ops,
+            spoiler_default=cfg.spoiler_default,
+            shell_jobs=shell_jobs,
         )
     else:
         settings = Settings.from_config(cfg)
@@ -1008,6 +1070,7 @@ def setup(
             ops=ops,
             writer=writer,
             spoiler_default=cfg.spoiler_default,
+            shell_jobs=shell_jobs,
         )
         deep.registry = registry
     personas = Personas(
@@ -1026,6 +1089,7 @@ def setup(
         store=opened,
         home=cfg.gos_home,
         personas=personas,
+        shell_jobs=shell_jobs,
     )
     if fake:
         agents.fast = FastLane(EchoClient(), registry, meter=None, vault=agents.vault)

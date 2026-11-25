@@ -30,7 +30,7 @@ from gregtec.agents.tools import (
 )
 from gregtec.agents.tools.glossary import Glossary
 from gregtec.agents.tools.handoff import HANDOFF_TOOL
-from gregtec.agents.tools.registry import DEEP, Env, Registry, Tool
+from gregtec.agents.tools.registry import DEEP, Env, Registry, ShellJobs, Tool
 from gregtec.agents.tools.tsv import PAGE
 from gregtec.db import access
 from gregtec.vault import fts
@@ -514,8 +514,14 @@ TOOLS = (
         "change. In layout mode (GOS's procedural shell, or mode layout) blocks in a machine's "
         "keep-out, a corridor, a chase or the doorway are removed and said. A tile-entity "
         "block, GT's machine block, a block outside the palette or more than max_blocks is "
-        "refused and nothing is saved. Returns the build id, its geometry (and a site design's "
-        "SITE, NEED, PROGRAM and fit line), the palette manifest and the operations used.",
+        "refused and nothing is saved. mode free with area and no plans is a plan-free "
+        "building (D424): an empty one Clayton furnishes himself, refused unless that much "
+        "roofed floor is joined to a ground door. Returns the build id, its geometry (and a "
+        "site design's SITE, NEED, PROGRAM and fit line, or a plan-free one's floor line), "
+        "the palette manifest and the operations used. While a shell designer is set in "
+        "gos.toml and ready (save false's designer line says so, D423), it draws every new "
+        "design: call with ask_designer true and Clayton's words (a shell job; the version "
+        "shows in the Shell workbench), never with your own design.",
         shells.BUILD_REQUEST_SCHEMA,
         shells.build_request,
         read_only=False,
@@ -534,7 +540,10 @@ TOOLS = (
         "refused revision writes nothing and the current version stays current. Every version "
         "is kept; undo makes the previous one current again. A site build's machines are "
         "fitted into the revised building again (entrance and zones: leave out to keep the "
-        "current version's); its result carries its fit line.",
+        "current version's); its result carries its fit line. A plan-free building keeps its "
+        "area and plot and its floor is checked again. While a shell designer is set and "
+        "ready (save false's designer line, D423), call with ask_designer true and his words "
+        "instead of design_ops.",
         shells.BUILD_REVISE_SCHEMA,
         shells.build_revise,
         read_only=False,
@@ -591,6 +600,7 @@ def build_registry(
     writer: Callable[[], Writer | None] | None = None,
     spoiler_default: int = 0,
     wiki: WikiCache | None = None,
+    shell_jobs: ShellJobs | None = None,
 ) -> Registry:
     """Every tool over the DB at ``db`` and ``vault``, handing off to ``deep``, with the OC
     bridge ``ops``, the planner model ``writer`` for ``plan_explain`` (``key``: the cursor
@@ -606,6 +616,7 @@ def build_registry(
             writer,
             spoiler_default,
             wiki,
+            shell_jobs,
         ),
         key=key,
         page=page,
@@ -621,6 +632,7 @@ def default_registry(
     ops: Ops | None = None,
     writer: Callable[[], Writer | None] | None = None,
     spoiler_default: int = 0,
+    shell_jobs: ShellJobs | None = None,
 ) -> Registry:
     """The tools over ``GOS_HOME/data/gos.sqlite`` and the live vault (its glossary too); a
     note an agent writes is mirrored into ``note_fts`` at once."""
@@ -638,4 +650,5 @@ def default_registry(
         writer=writer,
         spoiler_default=spoiler_default,
         wiki=WikiCache(db),
+        shell_jobs=shell_jobs,
     )

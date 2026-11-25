@@ -16,11 +16,13 @@ always when it starts and ends.
 - **One job per kind** (Designer, power) at a time: a second request gets :class:`Busy`
   naming the running job, never a queue. The kinds share the planner's lock, so a power job
   started during a Designer job's solve waits (``waiting``) and can be cancelled while it does.
-  A power or shell job holds the lock for the whole job; a Designer job doesn't: the Designer's
+  A power job holds the lock for the whole job; a Designer job doesn't: the Designer's
   functions take it themselves, where a cancel is still heard, so a reviewed design's model
   calls run without it and a power job, an accept, a rename or a sync design or pin (the API's
   own endpoints, the CLI, the agent tools) goes ahead meanwhile (D404 (10)); a pin or re-solve
-  as a second Designer job is still :class:`Busy`.
+  as a second Designer job is still :class:`Busy`. A shell job takes it itself too
+  (:func:`planner`): GOS's own generator and reviser for their whole work, the live shell
+  designer (D423) only for the brief and the gate, never while the model answers.
 - **Cancel** (D353) is checked at every checkpoint: between stages, between solver calls, between
   the items the graph builder expands and between the components of the effort walk. Every
   checkpoint comes before ``saving``, so a cancelled job saved nothing (no plan, no vault note,
@@ -42,7 +44,8 @@ import logging
 import secrets
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -53,8 +56,10 @@ from gregtec.vault.io import atomic_write
 log = logging.getLogger("gregtec.planner.design_jobs")
 
 KINDS = ("designer", "power", "shell")  # shell: WO-10.10's workbench (D370)
-# The kinds whose work takes the planner's lock itself (designer._planner, D404 (10)).
-OWN_LOCK = frozenset({"designer"})
+# The kinds whose work takes the planner's lock itself (designer._planner, D404 (10)); a shell
+# job's work holds it only round its own steps, never across a model call (D423: the live
+# shell designer's answer can take minutes).
+OWN_LOCK = frozenset({"designer", "shell"})
 RUNNING, DONE, FAILED, CANCELLED, INTERRUPTED = (
     "running",
     "done",
@@ -80,6 +85,18 @@ Work = Callable[[], dict[str, Any]]
 class Lock(Protocol):
     def acquire(self, blocking: bool = ..., timeout: float = ...) -> bool: ...
     def release(self) -> None: ...
+
+
+@contextmanager
+def planner(lock: Lock) -> Iterator[None]:
+    """Hold the planner's lock, waiting for it in :data:`WAIT_S` steps where a job's cancel is
+    still heard (:func:`gregtec.planner.progress.check`)."""
+    while not lock.acquire(timeout=WAIT_S):
+        progress.check()
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 class Busy(RuntimeError):

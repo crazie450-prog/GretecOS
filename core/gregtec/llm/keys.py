@@ -20,8 +20,9 @@ DISCORD = "discord"  # the Discord bot's token (stored by the setup wizard, WO-2
 ELEVENLABS = "elevenlabs"
 # The secrets `gos key` manages; the setup wizard stores each of them too (WO-2.9).
 NAMES = (ANTHROPIC, DISCORD, ELEVENLABS)
-# OpenAI's key, read only by the shell bake-off when a run names an OpenAI model (WO-10.11,
-# D374). `gos key` manages it; the setup wizard does not ask for it (nothing else uses it).
+# OpenAI's key, read by the shell bake-off when a run names an OpenAI model (WO-10.11, D374)
+# and by the live shell designer when [shell] designer names one (D423). `gos key` manages it;
+# the setup wizard does not ask for it.
 OPENAI = "openai"
 OPTIONAL = (OPENAI,)
 MANAGED = (*NAMES, *OPTIONAL)  # every secret `gos key set|status|delete` knows

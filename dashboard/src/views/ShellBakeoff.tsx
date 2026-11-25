@@ -42,6 +42,16 @@ export function leftToRate(run: BakeoffView): string[] {
   return run.cases.filter((c) => c.pick === null && c.entries.some((e) => e.design !== null)).map((c) => c.id);
 }
 
+/** A case's header after its brief: the theme, its plans' line or a plan-free building's floor
+ * (D424), the plot and the block target its brief states (D425), as the core sends them. */
+export function caseText(c: BakeoffCase): string {
+  const n = (x: number): string => x.toLocaleString("en-US");
+  const houses = c.area != null ? `plan-free, ≥${n(c.area)} floor` : `the ${c.line} line`;
+  const plot = c.plot ? ` · plot ${c.plot.join("×")}` : "";
+  const size = c.target != null ? `aim ~${n(c.target)} blocks (at most ${n(c.max_blocks)})` : `at most ${c.max_blocks} blocks`;
+  return `${c.theme} · ${houses}${plot} · ${size}`;
+}
+
 function entryText(e: BakeoffEntry, which: BakeoffWhich, running: boolean): string {
   if (!e.asked) return running ? "not asked yet: the run is still going" : "not asked: the run stopped before this one";
   const b = e[which];
@@ -262,9 +272,7 @@ export function ShellBakeoff() {
         <div data-testid="bakeoff-case" data-case={current.id}>
           <p data-testid="bakeoff-brief">
             <span className="gos-label">The brief</span> {current.brief || "(no words: the theme alone)"}{" "}
-            <span className="gos-src">
-              · {current.theme} · the {current.line} line · at most {current.max_blocks} blocks
-            </span>
+            <span className="gos-src">· {caseText(current)}</span>
           </p>
           <p data-testid="bakeoff-followup">
             <span className="gos-label">Then</span> {current.followup}

@@ -109,6 +109,11 @@ def clip(text: str, limit: int = MAX_ASKED) -> str:
     return one if len(one) <= limit else one[: limit - 1] + "…"
 
 
+def _area(rec: Mapping[str, Any]) -> dict[str, int]:
+    """A plan-free building's floor area (D424) for its design file, or nothing (plans)."""
+    return {"area": int(rec["fit"]["area"])} if shell_store.free_mode(rec) else {}
+
+
 def _version(
     n: int,
     rec: Mapping[str, Any],
@@ -117,9 +122,13 @@ def _version(
     by: str,
     cost_usd: float | None,
     at: float,
+    designer: str | None = None,
+    rounds: int | None = None,
 ) -> dict[str, Any]:
     if by not in BY:
         raise ValueError(by)
+    # the live shell designer's label and its repair rounds (D423); never a model id
+    drawn = {} if designer is None else {"designer": designer, "rounds": rounds}
     return {
         "n": n,
         "build": rec["id"],
@@ -133,6 +142,7 @@ def _version(
         "theme": rec.get("theme"),
         "headroom": rec["headroom"],
         "max_blocks": rec["max_blocks"],
+        **drawn,
     }
 
 
@@ -154,6 +164,7 @@ def _virtual(home: Path, build: str) -> dict[str, Any]:
         "v": VERSION,
         "id": design_id(build),
         "plans": list(rec.get("plans") or []),
+        **_area(rec),
         "created": v["at"],
         "current": build,
         "versions": [v],
@@ -244,6 +255,7 @@ def summary(d: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "id": d["id"],
         "plans": d["plans"],
+        "area": d.get("area"),  # a plan-free building's floor (D424); None on plans
         "current": d["current"],
         "current_n": cur["n"],
         "versions": len(d["versions"]),
@@ -305,9 +317,12 @@ def start(
     asked: str,
     by: str,
     cost_usd: float | None = None,
+    designer: str | None = None,
+    rounds: int | None = None,
 ) -> dict[str, Any]:
     """A new design whose first version is the saved ``build`` (or, when it is already a
-    design's first version, that design with it made current). It becomes the current design."""
+    design's first version, that design with it made current). It becomes the current design.
+    ``designer`` and ``rounds``: the live shell designer's label and repair rounds (D423)."""
     with _LOCK:
         ds = design_id(build)
         d = _read(home, ds)
@@ -315,13 +330,22 @@ def start(
             rec = shell_store.load(home, build)
             now = time.time()
             v = _version(
-                1, rec, None, asked, by, 0.0 if by == "procedural" else cost_usd, now
+                1,
+                rec,
+                None,
+                asked,
+                by,
+                0.0 if by == "procedural" else cost_usd,
+                now,
+                designer,
+                rounds,
             )
             d = {
                 "schema": SCHEMA,
                 "v": VERSION,
                 "id": ds,
                 "plans": list(rec.get("plans") or []),
+                **_area(rec),
                 "created": v["at"],
                 "current": build,
                 "versions": [v],
@@ -422,6 +446,8 @@ def revise(
     save_it: bool = True,
     entrance: Mapping[str, Any] | str | None = None,
     zones: Sequence[Mapping[str, Any]] | None = None,
+    designer: str | None = None,
+    rounds: int | None = None,
 ) -> Revised:
     """A new version of design ``ds`` (the current design if none) from its current version and
     ``words``: the model's operations (``ops``, ``by`` architect) or GOS's reviser's (``ops``
@@ -436,7 +462,11 @@ def revise(
     parent's layout that still fit when a fresh fit would move them (design §2.7).
     ``entrance`` and ``zones`` (a site build's only; none: the parent's) are the answer's
     door hint and steering boxes; ``entrance`` :data:`AUTO` drops the parent's hint (GOS
-    takes the widest doorway)."""
+    takes the widest doorway).
+
+    A plan-free building (D424) keeps its area and plot (the area is a minimum: more floor
+    fits in the plot; another area is a new design) and its floor is checked again
+    (:func:`gregtec.build.shell_store.gate_free`); it takes an entrance hint, never zones."""
     if by not in BY:
         raise ValueError(by)
     ds = ds or current_id(home)
@@ -447,7 +477,12 @@ def revise(
     rec = shell_store.load(home, parent)
     lay = _layout_of(home, parent)
     site = shell_store.site_mode(rec)
-    if not site and (entrance is not None or zones is not None):
+    free = shell_store.free_mode(rec)
+    if free and zones:
+        raise VersionError(
+            "a plan-free building has no zones (zones steer where machines go)"
+        )
+    if not site and not free and (entrance is not None or zones is not None):
         raise VersionError("an entrance or zones are for a site build")
     if isinstance(entrance, str) and entrance != AUTO:
         raise VersionError(
@@ -508,7 +543,19 @@ def revise(
         changes.append(f"theme {theme.name} ({theme.id}@v{theme.v})")
     line_type = rec.get("line_type", theme_lib.GENERAL)
     try:
-        if site:
+        if free:
+            spec = shell.spec_for_area(
+                int(rec["fit"]["area"]),
+                _site_box(rec, hr),
+                swatches,
+                theme=theme,
+                prompt=rec.get("prompt", ""),
+                line_type=line_type,
+                max_blocks=mb,
+                headroom=hr,
+                relief=rec.get("relief", 0),
+            )
+        elif site:
             _, prog, opts = shell_store._program(home, parent)
             spec = shell.spec_for_site(
                 prog,
@@ -542,15 +589,19 @@ def revise(
         spec = replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
     progress.stage("gate")
     fitted: shell_store.Fitted | None = None
-    if site:
-        info = rec["fit"]
-        door: Mapping[str, Any] | None = (
-            info.get("entrance")
-            if entrance is None
-            else None
-            if isinstance(entrance, str)  # AUTO
-            else entrance
+    gated: shell_store.Gated | None = None
+    if free:
+        gated = shell_store.gate_free(
+            conn,
+            spec,
+            new_ops,
+            source,
+            float(rec["fit"].get("site_factor", shell.SITE_FACTOR)),
+            _door_hint(rec, entrance),
         )
+        spec, outcome, build = gated.spec, gated.outcome, gated.build
+    elif site:
+        info = rec["fit"]
         fitted = shell_store.fit_site(
             conn,
             spec,
@@ -558,7 +609,7 @@ def revise(
             source,
             prog,
             opts,
-            door,
+            _door_hint(rec, entrance),
             (info.get("zones") or ()) if zones is None else zones,
             lay,
             parent,
@@ -600,7 +651,7 @@ def revise(
         brief,
         build,
         None,
-        None if fitted is None else fitted.fit,
+        fitted.fit if fitted is not None else gated.fit if gated is not None else None,
     )
     return _keep(
         home,
@@ -613,7 +664,19 @@ def revise(
         by,
         cost_usd,
         save_it,
+        designer,
+        rounds,
     )
+
+
+def _door_hint(
+    rec: Mapping[str, Any], entrance: Mapping[str, Any] | str | None
+) -> Mapping[str, Any] | None:
+    """A version's door hint: the parent's when none is given, none for :data:`AUTO`."""
+    if entrance is None:
+        got: Mapping[str, Any] | None = rec["fit"].get("entrance")
+        return got
+    return None if isinstance(entrance, str) else entrance
 
 
 def _room(home: Path, ds: str) -> dict[str, Any]:
@@ -627,8 +690,9 @@ def _room(home: Path, ds: str) -> dict[str, Any]:
 
 
 def _site_box(rec: Mapping[str, Any], headroom: int) -> shell_store.layout_lib.Box:
-    """A site version's site: its parent's, as high as its headroom makes it (``site_of``'s
-    height is the machines' height plus the headroom)."""
+    """A site (or plan-free, D424) version's site: its parent's, as high as its headroom
+    makes it (``site_of``'s and ``site_for_area``'s height is a floor height plus the
+    headroom)."""
     box = shell_store.layout_lib.box_of(rec["fit"]["site"])
     top = box.hi[1] - int(rec["headroom"]) + headroom
     return shell_store.layout_lib.Box(box.lo, (box.hi[0], top, box.hi[2]))
@@ -645,6 +709,8 @@ def _keep(
     by: str,
     cost_usd: float | None,
     save_it: bool,
+    designer: str | None = None,
+    rounds: int | None = None,
 ) -> Revised:
     """A version that passed the gate: refused when it is one of the design's versions
     already, else saved (``save_it``) and made current. ``lay`` is the layout a layout-first
@@ -697,6 +763,8 @@ def _keep(
             by,
             0.0 if by == "procedural" else cost_usd,
             time.time(),
+            designer,
+            rounds,
         )
         d["versions"].append(v)
         _history(d, build, f"revised: {v['asked']}")
@@ -747,6 +815,11 @@ def refit(
         )
     d = _room(home, ds)
     rec = shell_store.load(home, build)
+    if shell_store.free_mode(rec):
+        raise VersionError(
+            f"{build} is plan-free: it has no machines to refit. Place them in the game "
+            "yourself, or design on plans."
+        )
     if not shell_store.site_mode(rec):
         raise VersionError(
             f"{build} is a layout-first shell: its machines are laid out, not fitted; "
@@ -885,7 +958,8 @@ def viewer(conn: sqlite3.Connection | None, home: Path, build: str) -> dict[str,
     """One version for the build guide's 3D viewer (D319's drawing): its cells as ``[x, y, z,
     palette index, -1]`` from the shell's min corner, the palette (``registry@meta``, the
     catalog's name and face colours, role, count), per-layer materials, and the floor plan's
-    machines and keep-outs as ghosts in the same frame. The cells come from the build's own
+    machines and keep-outs as ghosts in the same frame (a plan-free building has none: its
+    ``area`` is set instead, D424). The cells come from the build's own
     files (:func:`gregtec.build.shell_store.cells_of`); the catalog (``conn``, none: no DB yet)
     gives only the names and colours."""
     from gregtec.build import guide_data
@@ -961,5 +1035,7 @@ def viewer(conn: sqlite3.Connection | None, home: Path, build: str) -> dict[str,
             for y, m in sorted(layers.items())
         ],
         "ghosts": {"machines": machines, "keepouts": keepouts},
+        # a plan-free building's floor (D424): it has no machines, he places them himself
+        "area": int(rec["fit"]["area"]) if shell_store.free_mode(rec) else None,
         "caveats": caveats,
     }

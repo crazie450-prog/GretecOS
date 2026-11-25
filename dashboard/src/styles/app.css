@@ -3052,7 +3052,8 @@ select.ask-input option {
   background: var(--surface-2, var(--panel));
 }
 
-.shell-version-list button.gos-chip {
+.shell-version-list button.gos-chip,
+.shell-mode button.gos-chip {
   min-height: var(--hit-min, 44px);
   background: transparent;
   color: var(--text);
@@ -3060,7 +3061,8 @@ select.ask-input option {
   font: inherit;
 }
 
-.shell-version-list button.gos-chip[aria-pressed="true"] {
+.shell-version-list button.gos-chip[aria-pressed="true"],
+.shell-mode button.gos-chip[aria-pressed="true"] {
   border-color: var(--primary);
   font-weight: 600;
 }

@@ -3,7 +3,7 @@ and a checker for the subset the tools use (no dependency on a JSON Schema libra
 
 A tool schema is ``{"type": "object", "properties": {...}, "required": [...],
 "additionalProperties": false}``. A property is a string (``enum``, ``minLength``,
-``maxLength``), an integer (``minimum``, ``maximum``), a boolean, or an object whose values are
+``maxLength``), an integer or a number (``minimum``, ``maximum``), a boolean, or an object whose values are
 JSON scalars (``additionalProperties`` with a list of types, ``maxProperties``). Each property
 has a ``description`` and may have a ``default``, which :func:`validate` fills in.
 """
@@ -16,6 +16,7 @@ from typing import Any
 KEYWORDS = {
     "string": {"type", "description", "default", "enum", "minLength", "maxLength"},
     "integer": {"type", "description", "default", "minimum", "maximum"},
+    "number": {"type", "description", "default", "minimum", "maximum"},
     "boolean": {"type", "description", "default"},
     "object": {"type", "description", "additionalProperties", "maxProperties"},
 }
@@ -101,7 +102,7 @@ def _check(name: str, spec: Mapping[str, Any], value: object) -> object:
             )
         if len(value) > spec.get("maxLength", len(value)):
             raise ArgumentError(f"{name} is longer than {spec['maxLength']} characters")
-    if isinstance(value, int) and not isinstance(value, bool):
+    if isinstance(value, int | float) and not isinstance(value, bool):
         if "minimum" in spec and value < spec["minimum"]:
             raise ArgumentError(f"{name} must be at least {spec['minimum']}")
         if "maximum" in spec and value > spec["maximum"]:

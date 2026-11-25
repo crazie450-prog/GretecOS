@@ -31,6 +31,8 @@
 | [budget] task_max_usd    | 2.0 (until `gos eval design-cost`, D253) | deep lane (WO-2.4, D156)    |
 | [budget] day_max_usd     | 10.0, pending Clayton (an alert, D334)   | cost watch (WO-11.2)        |
 | [budget] notice_pct      | [50]: a heads-up, no buttons (D334)      | cost watch (WO-11.2)        |
+| [shell] designer         | none: the architect writes the design    | live shell designer (D423)  |
+| [shell] designer_max_usd | 4.0 a request, every try (0.5 to 20)     | live shell designer (D423)  |
 | [models] orchestrator, planner, architect, analyst, heavy | plan 4.4's models | deep lane (D155) |
 | [models] vision          | claude-sonnet-5-5 (plan 7.7)             | screen lane (WO-8.2, D289)  |
 | [models] use_heavy       | false (planner and architect on heavy)   | deep lane (D155)            |
@@ -59,7 +61,7 @@ three names with ``:<port>``). Every other key in the Appendix C skeleton is ign
 reads it.
 
 **Service keys** (``[core]``, ``[startup]``, ``[budget]``, ``[launch]``, ``[models]``,
-``[mailbox]``, ``[persona]``, ``[policy] spoiler_default`` and ``notices``, ``[alerts]``,
+``[shell]``, ``[mailbox]``, ``[persona]``, ``[policy] spoiler_default`` and ``notices``, ``[alerts]``,
 ``[notify]``) are
 read only by the core, the supervisor and the service commands. A bad one doesn't stop :func:`load`, so ``gos deploy``,
 ``gos doctor`` and the sync and tweak scripts still run (Appendix C's own placeholder tailnet name
@@ -71,6 +73,8 @@ pattern is matched as an exclude pattern is, and must start in ``config/``. Ever
 Appendix C skeleton is ignored until its WO reads it. ``[bakeoff]`` (the shell bake-off's models
 and caps, WO-10.11, D376) is not read here at all: only the bake-off commands read it
 (:func:`gregtec.build.shell_bakeoff.read_settings`), so a mistake in it never stops the core.
+The ``[shell] designer`` label is resolved per request by :mod:`gregtec.build.shell_designer`, so a
+broken ``[bakeoff]`` only makes the designer "not ready".
 """
 
 from __future__ import annotations
@@ -217,6 +221,10 @@ class Config:
     )
     day_max_usd: float = 10.0  # [budget]: a day's spend that raises an alert (D334)
     notice_pct: tuple[int, ...] = (50,)  # [budget]: heads-up percentages (D334)
+    # [shell] (D423): the [[bakeoff.models]] label that draws AI shell designs ("": the
+    # architect writes them) and what one request may spend, every try counted
+    shell_designer: str = ""
+    shell_designer_max_usd: float = 4.0
     # [models] (plan 4.4, Appendix C): the deep lane's orchestrator and subagents (D155)
     model_orchestrator: str = "claude-sonnet-5-5"
     model_planner: str = "claude-opus-5-5"
@@ -565,6 +573,7 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
     maintenance = table("maintenance")
     persona = table("persona")
     policy = table("policy")
+    shell_table = table("shell")
     models = table("models")
     host = soft(lambda: _core_host(core, defaults.core_host), defaults.core_host)
     port = soft(
@@ -637,6 +646,14 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
         ),
         "notice_pct": soft(
             lambda: _notice_pct(budget, defaults.notice_pct), defaults.notice_pct
+        ),
+        "shell_designer": soft(
+            lambda: _shell_designer(shell_table, defaults.shell_designer),
+            defaults.shell_designer,
+        ),
+        "shell_designer_max_usd": soft(
+            lambda: _shell_cap(shell_table, defaults.shell_designer_max_usd),
+            defaults.shell_designer_max_usd,
         ),
         **{
             f"model_{role}": soft(
@@ -751,6 +768,40 @@ def _usd(budget: Mapping[str, Any], key: str, default: float) -> float:
         or value <= 0
     ):
         raise ConfigError(f"gos.toml: [budget] {key} must be a number of USD above 0")
+    return float(value)
+
+
+# A [[bakeoff.models]] label (gregtec.build.shell_bakeoff.LABEL), or a built-in fake's.
+SHELL_DESIGNER = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
+SHELL_CAP = (0.5, 20.0)  # USD a live shell-designer request may spend (D423)
+
+
+def _shell_designer(table: Mapping[str, Any], default: str) -> str:
+    """``[shell] designer``: a label only; which model it names is read per request
+    (:mod:`gregtec.build.shell_designer`), so a bad ``[bakeoff]`` never stops the core."""
+    value = table.get("designer", default)
+    if not isinstance(value, str) or not (
+        value == "" or SHELL_DESIGNER.fullmatch(value)
+    ):
+        raise ConfigError(
+            "gos.toml: [shell] designer must be a [[bakeoff.models]] label (a-z, 0-9, -), "
+            "e.g. 'astra'"
+        )
+    return value
+
+
+def _shell_cap(table: Mapping[str, Any], default: float) -> float:
+    value = table.get("designer_max_usd", default)
+    lo, hi = SHELL_CAP
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or not lo <= value <= hi
+    ):
+        raise ConfigError(
+            f"gos.toml: [shell] designer_max_usd must be a number of USD from {lo} to {hi:g}"
+        )
     return float(value)
 
 

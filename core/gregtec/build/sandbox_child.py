@@ -88,7 +88,7 @@ def _main() -> None:
         *pos, w = args
         _put(_xyz(pos, 3, "set_block"), _what(w))
 
-    def _box(
+    def _corners(
         args: tuple[object, ...], name: str
     ) -> tuple[tuple[int, ...], tuple[int, ...]]:
         if len(args) == 2:
@@ -99,7 +99,27 @@ def _main() -> None:
             raise BuildError(f"{name} takes (x0, y0, z0), (x1, y1, z1) or six numbers")
         lo = tuple(min(a[i], b[i]) for i in range(3))
         hi = tuple(max(a[i], b[i]) for i in range(3))
-        if (hi[0] - lo[0] + 1) * (hi[1] - lo[1] + 1) * (hi[2] - lo[2] + 1) > cap:
+        return lo, hi
+
+    def _volume(lo: tuple[int, ...], hi: tuple[int, ...]) -> int:
+        return (hi[0] - lo[0] + 1) * (hi[1] - lo[1] + 1) * (hi[2] - lo[2] + 1)
+
+    def _outline(dx: int, dz: int) -> int:
+        """The distinct cells of one layer of a box's four walls, dx by dz apart."""
+        return (dx + 1) * (dz + 1) - max(dx - 1, 0) * max(dz - 1, 0)
+
+    def _cap(name: str, places: int) -> None:
+        """A helper is refused up front when it would place more than the cap (D425: by the
+        cells it places, not its box's volume)."""
+        if places > cap:
+            raise BuildError(f"{name}: the shape holds more than {cap} cells")
+
+    def _box(
+        args: tuple[object, ...], name: str
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """A box whose every cell is placed (fill, a solid box): its volume is capped."""
+        lo, hi = _corners(args, name)
+        if _volume(lo, hi) > cap:
             raise BuildError(f"{name}: the box holds more than {cap} cells")
         return lo, hi
 
@@ -120,7 +140,14 @@ def _main() -> None:
         if len(args) in (1, 3):
             _put(_xyz(args, 3, "clear"), None)
             return
-        lo, hi = _box(args, "clear")
+        # it places nothing, so it has no cap (D425): the box's cells or the placed ones,
+        # whichever is fewer
+        lo, hi = _corners(args, "clear")
+        if _volume(lo, hi) > len(cells):
+            gone = [c for c in cells if all(lo[i] <= c[i] <= hi[i] for i in range(3))]
+            for c in gone:
+                del cells[c]
+            return
         for x in range(lo[0], hi[0] + 1):
             for y in range(lo[1], hi[1] + 1):
                 for z in range(lo[2], hi[2] + 1):
@@ -154,7 +181,8 @@ def _main() -> None:
     def ring(lo: object, hi: object, what: object) -> None:
         """The four walls of the box lo..hi (its outline at every height), no top or floor."""
         w = _what(what)
-        a, b = _box((lo, hi), "ring")
+        a, b = _corners((lo, hi), "ring")
+        _cap("ring", _outline(b[0] - a[0], b[2] - a[2]) * (b[1] - a[1] + 1))
         for y in range(a[1], b[1] + 1):
             for x in range(a[0], b[0] + 1):
                 _put((x, y, a[2]), w)
@@ -166,13 +194,22 @@ def _main() -> None:
     def box(lo: object, hi: object, what: object, hollow: bool = False) -> None:
         """A solid box, or with hollow=True only its six faces."""
         w = _what(what)
-        a, b = _box((lo, hi), "box")
+        if not hollow:
+            a, b = _box((lo, hi), "box")
+        else:  # only its faces are placed, and walked
+            a, b = _corners((lo, hi), "box")
+            inner = 1
+            for i in range(3):
+                inner *= max(b[i] - a[i] - 1, 0)
+            _cap("box", _volume(a, b) - inner)
         for x in range(a[0], b[0] + 1):
             for y in range(a[1], b[1] + 1):
-                for z in range(a[2], b[2] + 1):
-                    face = x in (a[0], b[0]) or y in (a[1], b[1]) or z in (a[2], b[2])
-                    if face or not hollow:
-                        _put((x, y, z), w)
+                if hollow and x not in (a[0], b[0]) and y not in (a[1], b[1]):
+                    zs: range | tuple[int, ...] = tuple(sorted({a[2], b[2]}))
+                else:
+                    zs = range(a[2], b[2] + 1)
+                for z in zs:
+                    _put((x, y, z), w)
 
     def cylinder(
         center: object,
@@ -218,10 +255,17 @@ def _main() -> None:
         """A stepped hip roof or spire: from the footprint lo..hi (x and z; y from lo), each
         course one block in on every side, `rise` blocks high, up to hi's y."""
         w = _what(what)
-        a, b = _box((lo, hi), "pyramid")
+        a, b = _corners((lo, hi), "pyramid")
         step = _num(rise, "pyramid: rise")
         if not 1 <= step <= 8:
             raise BuildError("pyramid: rise is 1 to 8")
+        i, y, places = 0, a[1], 0  # its courses' cells, counted first
+        while a[0] + i <= b[0] - i and a[2] + i <= b[2] - i and y <= b[1]:
+            rows = min(step, b[1] - y + 1)
+            places += rows * _outline(b[0] - a[0] - 2 * i, b[2] - a[2] - 2 * i)
+            y += rows
+            i += 1
+        _cap("pyramid", places)
         i, y = 0, a[1]
         while a[0] + i <= b[0] - i and a[2] + i <= b[2] - i and y <= b[1]:
             for _ in range(step):

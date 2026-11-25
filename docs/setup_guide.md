@@ -24,7 +24,7 @@ One document. Every command is written out here. You never have to open a second
 | 10 | The paid bake-off | 30 to 45 minutes |
 | 11 | What you have now and what comes next | reading only |
 
-**What it costs.** Parts 0 to 9 are free, with one exception. The **Test** button for your Anthropic key in the wizard (step 37) makes one tiny call to the cheapest model. That is well under one cent at the price GOS has on file for it. One more thing to know: once a key is stored, GOS's own upkeep may make one small call to that same model for each old week of session logs in your vault. The upkeep runs while the PC is idle. With no old logs it makes none, and by the project record you have none. Part 10 spends real money at two vendors: Anthropic (your key) and OpenAI (a new key, with credit you buy on their site first, in step 76). One bake-off run can never spend more than its cap, which is \$10 unless you change it. Your day limit (also \$10 unless you changed it; the program's messages call it the day cap) holds too. With the prices read on 2026-11-20 the project's own estimate was "likely well under \$1" for the one-request trial and "about \$1 for Claude Opus 5.5 and about \$2.50 to \$3 for GPT-6 Astra" for the full run; since D387 (seven varied requests, each answer a building program) it is about \$3.80 and \$9.45, about \$13 for the run: more than the \$10 cap and day limit, so step 80 says how to raise them for that one run. Prices move. The command prints its own estimate and waits for you to type `yes`. Trust that estimate, not this page. The amount in its question ("up to") is the worst case, not the likely cost: step 79 explains it.
+**What it costs.** Parts 0 to 9 are free, with one exception. The **Test** button for your Anthropic key in the wizard (step 37) makes one tiny call to the cheapest model. That is well under one cent at the price GOS has on file for it. One more thing to know: once a key is stored, GOS's own upkeep may make one small call to that same model for each old week of session logs in your vault. The upkeep runs while the PC is idle. With no old logs it makes none, and by the project record you have none. Part 10 spends real money at two vendors: Anthropic (your key) and OpenAI (a new key, with credit you buy on their site first, in step 76). One bake-off run can never spend more than its cap, which is \$10 unless you change it. Your day limit (also \$10 unless you changed it; the program's messages call it the day cap) holds too. With the prices read on 2026-11-20 the project's own estimate was "likely well under \$1" for the one-request trial and "about \$1 for Claude Opus 5.5 and about \$2.50 to \$3 for GPT-6 Astra" for the full run; since D387 (seven varied requests, each answer a building program) it is about \$3.80 and \$9.45, about \$13 for the run: more than the \$10 cap and day limit, so step 80 says how to raise them for that one run. Prices move. The command prints its own estimate and waits for you to type `yes`. Trust that estimate, not this page. The amount in its question ("up to") is the worst case, not the likely cost: step 79 explains it. Step 85 (four bigger buildings) is optional and dearer, about \$15 likely for both models together; it says how to make room for it.
 
 **Marks.** `$` in a step's title = the step costs money. `LAB` = the Lab game is open. `PLAY` = the step touches Play. In this guide only `$` occurs, on steps 37, 76, 79 and 80. Steps 37, 79 and 80 spend API money. In step 76 you buy credit at OpenAI. **No step is marked LAB or PLAY:** nothing here starts Lab or Play, and nothing writes to Play. Eight steps read Play's files without changing them: `gos doctor` (step 25), the sync (steps 26 and 27), three screens of the wizard (steps 36, 41 and 43), and two one-line looks that show Play was left alone (steps 47 and 51). Each of those steps says so.
 
@@ -1552,7 +1552,7 @@ More detail: [shells.md](runbooks/shells.md), and [shell_bakeoff.md](runbooks/sh
 
 ## Part 9. The free bake-off
 
-A bake-off gives the same seven building requests to several designers and lets you pick the better building without knowing who drew it. The program's own messages call a request a **case**. In this part the designers are small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. This part uses three of them. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it. Two more, `fake-cramped` and `fake-tower`, show the refusals of a hall too small for the machines and of floors too narrow for them; [shell_bakeoff.md](runbooks/shell_bakeoff.md) says more. You do not need them here.
+A bake-off gives the same building requests to several designers and lets you pick the better building without knowing who drew it. Its table holds eleven requests: the first seven, which this part and step 80 run (`--limit 7`), and four bigger ones at the end (step 85). The program's own messages call a request a **case**. In this part the designers are small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. This part uses three of them. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it. Two more, `fake-cramped` and `fake-tower`, show the refusals of a hall too small for the machines and of floors too narrow for them; [shell_bakeoff.md](runbooks/shell_bakeoff.md) says more. You do not need them here.
 
 Each designer builds first, on an empty plot sized for your machines, and GOS then fits the machines inside the building (since D422; the "site mode" in [`runbooks/shells.md`](runbooks/shells.md)). Your own shells from Part 8 are built the other way round, around the machines' floor plan, and stay that way. The fake halls have no lights, so in the marble temple request the follow-up "no lights" changes nothing: GOS refuses it as "nothing changes". That is expected.
 
@@ -1614,8 +1614,10 @@ If not: `Can't read gos.toml: Invalid statement (at line 1, column 1)`: the sett
 ### Step 71. Run the free bake-off
 
 ```powershell
-& $gos shell bakeoff run $plan --models "fake-plain,fake-ornate,fake-sloppy"
+& $gos shell bakeoff run $plan --models "fake-plain,fake-ornate,fake-sloppy" --limit 7
 ```
+
+`--limit 7` asks only the first seven requests of the table; without it the run also asks the four big ones of step 85.
 
 It asks nothing, because it is free.
 
@@ -1911,8 +1913,10 @@ The same day or later. Ctrl+C stops it cleanly: what is finished stays.
 **First, make room for the whole run.** Each answer is now a building program, and the models think hard before they write one: one real answer used 13,184 of its 16,000 output tokens. The estimate for all seven requests is about \$3.80 for Claude Opus 5.5 and \$9.45 for GPT-6 Astra, about \$13 together. That is more than the run's cap (`cap_usd`, \$10) and your day limit (`day_max_usd`, \$10), so with them unchanged the run stops cleanly partway and some requests stay unanswered. To let it finish, open `gos.toml` (`notepad "$gh\config\gos.toml"`), set `cap_usd = 20.0` under `[bakeoff]` and `day_max_usd = 25.0` under `[budget]` (add the line if it is not there), save, and run step 78 again to check the file. Put them back afterwards if you like. Or keep them, and accept a partial run.
 
 ```powershell
-& $gos shell bakeoff run $plan --models "opus,astra"
+& $gos shell bakeoff run $plan --models "opus,astra" --limit 7
 ```
+
+Keep `--limit 7`: without it the run also asks the four big requests of step 85, which cost far more than this page's figures.
 
 You should see: the same kind of estimate, now for 7 cases. The worst case of seven requests is above the cap, so the question now says "up to" the "Hard cap" figure itself. If you already spent something today, the line that starts `Today's limit ([budget] day_max_usd) leaves $<X>:` stands just above the "Hard cap" line again, as in step 79. Step 79 itself counts as such a spend. That is normal. Type `yes`. It then takes a few minutes per model and ends with `Run bo-...: done. <N> calls, $<X>.` If it reaches the cap first, it stops cleanly and says so.
 
@@ -1984,6 +1988,55 @@ After that, rate it and read its report as in steps 81 and 82. The report then s
 If not: `close` answers `was last heard from ... minute(s) ago: it may be going in another window`: it is still running somewhere, or it stopped less than 15 minutes ago. Stop it there with Ctrl+C, or wait and run the line again.
 
 More detail: [shell_bakeoff.md](runbooks/shell_bakeoff.md) (Part 2 and "If something is off").
+
+### Step 84. Make astra your shell designer (optional)
+
+Skip this step to keep things as they are: then the architect (Claude) keeps writing your AI shell designs. With it, the bake-off model labelled `astra` (step 77) draws every new AI shell design and revision instead: the workbench's buttons, chat and the architect all send it the request, and GOS checks its answer exactly as in the bake-off. Planning, chat and everything else stay with Claude.
+
+Open the settings file:
+
+```powershell
+notepad "$gh\config\gos.toml"
+```
+
+Add two lines at the very end, then save: `[shell]` on the first and `designer = "astra"` on the second. A third line `designer_max_usd = 4.0` is optional: it is the most one request may spend, every try counted (from 0.5 to 20; 4 when you leave it out). Your day limit holds too: once today's spend reaches it, the designer says so and spends nothing until tomorrow.
+
+GOS reads the file when it starts, so start it again:
+
+```powershell
+& $gos stop
+& $gos serve --detach
+```
+
+Then ask it for one design at the command line. It prints what one request may cost and waits:
+
+```powershell
+& $gos shell design $plan --ai
+```
+
+You should see: a line `astra · this request's cap $4.00 · one try up to $<amount> · $<amount> left today`, then `Type yes to spend up to $4.00:`. Type `no` to stop here with nothing spent, or `yes` to have astra draw one building (about \$1). With `yes` it prints its stages and ends with a line `v1 sh-... of ds-... by astra: ...` and the next step, `gos shell export`.
+
+If not: `Not run: no shell designer is set ...`: the two lines are not in the file (the command reads `gos.toml` itself, so restarting GOS does not change this message; the restart matters for the dashboard and chat). `Not run: no openai key is stored ...`: go back to step 76, part 3. `Not run: astra has no price in gos.toml ...`: the `input_usd` and `output_usd` lines of step 77 are missing. `Not run: no [[bakeoff.models]] entry is labelled ...`: the label after `designer =` is not the one in step 77. To go back to the architect, delete the two lines, save, and start GOS again as above.
+
+More detail: [shells.md](runbooks/shells.md) ("The live shell designer").
+
+### Step 85. $ Try the four big requests (optional)
+
+Skip this step unless you want to see bigger buildings. The seven requests of step 80 came out at about 2,000 blocks, because their plot is sized from your machines. Four more requests aim at 6,000 to 20,000 blocks: two on your plan with a bigger plot (`big-foundry-hall`, `big-deco-station`) and two **plan-free** buildings with no machines in them (`free-warehouse`, `free-great-hall`), empty halls with at least 2,000 and 3,000 blocks of roofed floor. GOS tells each model the block count to aim for, and the report says which buildings came within 20% of it.
+
+**First, make room for it.** Bigger buildings need longer answers: each answer to these four may use up to 32,000 output tokens. On the project's own test plans the estimate for the four is about \$10.60 for GPT-6 Astra and \$4.20 for Claude Opus 5.5 (worst case about \$55 and \$22). Your day limit (`day_max_usd`, \$10) would stop the run partway. Open `gos.toml` (`notepad "$gh\config\gos.toml"`), set `day_max_usd = 40.0` under `[budget]`, save, and run step 78 again to check the file. Put it back afterwards.
+
+```powershell
+& $gos shell bakeoff run $plan --models "opus,astra" --only "big-foundry-hall,big-deco-station,free-warehouse,free-great-hall" --cap-usd 40
+```
+
+You should see: the estimate for 4 cases, with a line for each big request (`big-foundry-hall aims at about 6,000 blocks: at most 32000 output tokens a call, ...`) and, under each model, each request's share (`of which free-warehouse: likely about $...`). Read it and type `yes`. It takes longer than step 80 per answer. It ends with `Run bo-...: done. <N> calls, $<X>.`
+
+Then put its name into `$run2` with the two lines at the end of step 80, and rate it and read its report as in steps 81 and 82. In the panel the two plan-free buildings show no machines. The report has one more column, **target**: how many of a model's buildings came within 20% of the block count asked for. The table under it says, per request, for example `12,840 / 12,000 hit` or `4,500 / 6,000 miss (-25%, under the band)`.
+
+If not: `Not run: no case ... in the case table`: a request's name after `--only` is mistyped; copy the command again. The run stops with `stopped at the cap` or a `Today's limit` line lowers its cap: `day_max_usd` was not raised, or GOS read the old file. The first answer of a model ends with `stopped (a model could not be asked at all`: that vendor refused the longer answer; do step 83, then run the command again with only the other model after `--models`.
+
+More detail: [shell_bakeoff.md](runbooks/shell_bakeoff.md) (section K, "The big requests").
 
 ---
 

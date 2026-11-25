@@ -130,6 +130,12 @@ def test_a_fake_bake_off_on_the_real_catalog(
         assert "Palette (role, n, block, name, note):" in p.brief
         assert "- wall 0 " in p.brief and "@" in p.brief and "facts: {" in p.brief
         assert p.baseline > 0 and p.max_blocks >= p.baseline
+        # D425's big cases: code states the target; the plan-free ones house no plan
+        if p.case.target is not None:
+            assert p.brief.splitlines()[-1].startswith("TARGET: about ")
+            assert p.plot is not None and p.max_blocks == p.case.target * 5 // 4
+        if p.case.mode == "free":
+            assert p.plans == () and p.machines == 0
     models = [bo.FAKES[n] for n in shell_fakes.NAMES]
     est = bo.estimate(prepared, models, 10.0, 1_000_000)
     assert est.hosts == () and est.worst_usd == 0.0  # fakes only: nothing is contacted

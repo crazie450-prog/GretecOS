@@ -5,15 +5,17 @@ D374-D377; :mod:`gregtec.build.shell_bakeoff`).
   gos.toml's ``[[bakeoff.models]]`` (label, provider, model id, effort, price or "unknown",
   whether its key is stored).
 - ``gos shell bakeoff run PLAN_ID [PLAN_ID ...] --models A,B [--large PLAN_ID[,PLAN_ID]]
-  [--cases FILE] [--limit N] [--cap-usd X] [--cap-tokens N] [--seed N] [--yes]``: every case of
-  ``tests/evals/shell_bakeoff.tsv`` to every model named, around the saved plans (the small
-  cases house ``PLAN_ID``, the large ones ``--large``, default the same). It prints what it will
-  ask, what it can cost and which hosts it contacts, and waits for ``yes`` (``--yes`` skips the
-  question, never the caps). Fake models need no key and cost nothing. Real ones need their
-  key in the keyring (``gos key set anthropic`` / ``gos key set openai``), are refused while the
-  AI is off (No-AI mode) or once today's spend has reached ``[budget] day_max_usd``, get no
-  higher a cap than that day cap still leaves (said before the question), are refused when
-  the cap is less than one answer can cost, and stop at the run's cap with what they have.
+  [--cases FILE] [--only ID[,ID]] [--limit N] [--cap-usd X] [--cap-tokens N] [--seed N]
+  [--yes]``: every case of ``tests/evals/shell_bakeoff.tsv`` (or only the ones ``--only``
+  names, D425) to every model named, around the saved plans (the small cases house
+  ``PLAN_ID``, the large ones ``--large``, default the same; a plan-free case houses none).
+  It prints what it will ask, what it can cost and which hosts it contacts, and waits for
+  ``yes`` (``--yes`` skips the question, never the caps). Fake models need no key and cost
+  nothing. Real ones need their key in the keyring (``gos key set anthropic`` / ``gos key set
+  openai``), are refused while the AI is off (No-AI mode) or once today's spend has reached
+  ``[budget] day_max_usd``, get no higher a cap than that day cap still leaves (said before
+  the question), are refused when the cap is less than one answer can cost, and stop at the
+  run's cap with what they have.
   Ctrl+C stops cleanly too. A model that can't be asked at all (a refused key, a wrong model
   id, no credit) stops the run before more is spent on the others (D378).
 - ``gos shell bakeoff list`` and ``gos shell bakeoff show RUN``: the runs; one run as the rater
@@ -78,6 +80,12 @@ def add_parsers(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> Non
         help="labels from `gos shell bakeoff models`, comma-separated",
     )
     r.add_argument("--cases", type=Path, default=None, help="another case file")
+    r.add_argument(
+        "--only",
+        default=None,
+        metavar="ID[,ID]",
+        help="only these cases, by id, comma-separated (e.g. the big ones, D425)",
+    )
     r.add_argument("--limit", type=int, default=None, help="only the first N cases")
     r.add_argument(
         "--cap-usd", type=float, default=None, help="this run's hard cap in USD"
@@ -266,8 +274,16 @@ def _entry(e: dict[str, Any]) -> str:
 def _show(view: dict[str, Any], out: TextIO) -> int:
     print(_run_line({**view, "cases": len(view["cases"])}), file=out)
     for c in view["cases"]:
+        houses = (
+            f"plan-free, at least {c['area']:,} floor"
+            if c.get("area") is not None
+            else f"{c['line']} line"
+        )
+        aim = (
+            f", aim about {c['target']:,} blocks" if c.get("target") is not None else ""
+        )
         print(
-            f"{c['id']} ({c['theme']}, {c['line']} line, max {c['max_blocks']} blocks)",
+            f"{c['id']} ({c['theme']}, {houses}{aim}, max {c['max_blocks']} blocks)",
             file=out,
         )
         print(f"  brief: {c['brief'] or '(the theme alone)'}", file=out)
@@ -325,15 +341,15 @@ def _rate(home: Path, args: argparse.Namespace, out: TextIO, answer_in: Answer) 
 
 
 def _designers(models: Any, out: TextIO) -> dict[str, Any] | None:  # noqa: ANN401
-    """Each model's designer; None (said) when a key is missing."""
-    from gregtec.build import shell_fakes
-    from gregtec.llm import designers as llm
+    """Each model's designer; None (said) when a key is missing. Built as the live shell
+    designer builds its own (:func:`gregtec.build.shell_designer.build`, D423)."""
+    from gregtec.build import shell_designer
     from gregtec.llm import keys
 
     out_map: dict[str, Any] = {}
     for m in models:
         if m.fake:
-            out_map[m.label] = shell_fakes.FakeDesigner(m.model)
+            out_map[m.label] = shell_designer.build(m, "")
             continue
         try:
             key = keys.get_key(m.provider)
@@ -345,14 +361,7 @@ def _designers(models: Any, out: TextIO) -> dict[str, Any] | None:  # noqa: ANN4
                 f"Not run: the keyring can't be read ({type(exc).__name__}).", file=out
             )
             return None
-        if m.provider == "anthropic":
-            out_map[m.label] = llm.AnthropicDesigner(
-                llm.anthropic_client(key), m.model, m.effort
-            )
-        else:
-            out_map[m.label] = llm.OpenAIDesigner(
-                key, m.model, m.effort, url=llm.OPENAI_URL
-            )
+        out_map[m.label] = shell_designer.build(m, key)
     return out_map
 
 
@@ -439,6 +448,20 @@ def _run(
     except OSError as exc:
         print(f"Can't read the cases: {exc}", file=out)
         return 2
+    if args.only is not None:
+        only = [x.strip() for x in args.only.split(",") if x.strip()]
+        known = {c.id for c in cases}
+        if unknown := [x for x in only if x not in known]:
+            print(
+                f"Not run: no case {', '.join(unknown)} in the case table "
+                f"({', '.join(c.id for c in cases)}). Nothing is spent.",
+                file=out,
+            )
+            return 2
+        if not only:
+            print("Not run: --only names no case. Nothing is spent.", file=out)
+            return 2
+        cases = [c for c in cases if c.id in only]
     if args.limit is not None:
         cases = cases[: max(1, args.limit)]
     large = (

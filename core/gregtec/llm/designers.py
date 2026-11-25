@@ -1,5 +1,6 @@
 """Model providers for one job: a system text and a user text in, one JSON answer out
-(WO-10.11, D374). The shell bake-off (:mod:`gregtec.build.shell_bakeoff`) is the only caller.
+(WO-10.11, D374). The shell bake-off (:mod:`gregtec.build.shell_bakeoff`) and the live shell
+designer (:mod:`gregtec.build.shell_designer`, D423) call it.
 
 A :class:`Designer` has no tools, no conversation and no files: :meth:`Designer.complete` sends
 the two texts and a JSON schema once and returns the answer's text, its token usage and why it
@@ -16,8 +17,8 @@ policy every provider gets.
   ``.failed``, carries the whole response and its ``usage``, which may be null: such an answer
   is :attr:`Reply.measured` false). A redirect is never followed. Built from OpenAI's own API
   reference and guides (Responses "Create a model response", Structured Outputs, Error codes,
-  Rate limits) as read on 2026-11-20; the host is contacted only when a bake-off names an
-  OpenAI model.
+  Rate limits) as read on 2026-11-20; the host is contacted only when a bake-off or
+  ``[shell] designer`` names an OpenAI model.
 
 Neither sends ``tools``. The key is passed in by the caller (from the keyring), never logged,
 and :func:`scrub` takes it out of any error text an API sends back.

@@ -5,7 +5,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BakeoffView, ShellScene } from "../src/api/types";
-import { BAD, REFRESH_MS, ShellBakeoff, TIE, leftToRate, pickText, shownLetters } from "../src/views/ShellBakeoff";
+import { BAD, REFRESH_MS, ShellBakeoff, TIE, caseText, leftToRate, pickText, shownLetters } from "../src/views/ShellBakeoff";
 
 const RUN = "bo-20261120-210000-ab12";
 const build = (n: string) => ({ build: `sh-${n.repeat(12)}`, blocks: 700 + n.charCodeAt(0), types: 5, status: "accepted" as const });
@@ -164,6 +164,14 @@ describe("the bake-off's words", () => {
     expect(leftToRate(v)).toEqual(["marble-small"]);
     v.cases[1].entries[1].design = null; // nothing to look at: nothing to rate
     expect(leftToRate(v)).toEqual([]);
+  });
+  it("heads a case with its line, or a plan-free building's floor, its plot and its block target (D424, D425)", () => {
+    const v = view();
+    expect(caseText(v.cases[0])).toBe("th-foundry · the small line · at most 20000 blocks");
+    const free = { ...v.cases[0], line: "none", mode: "free", area: 2000, plot: [64, 24, 64] as [number, number, number], target: 12000, max_blocks: 15000 };
+    expect(caseText(free)).toBe("th-foundry · plan-free, ≥2,000 floor · plot 64×24×64 · aim ~12,000 blocks (at most 15,000)");
+    const big = { ...v.cases[0], line: "large", mode: "site", area: null, plot: [37, 28, 37] as [number, number, number], target: 10000, max_blocks: 12500 };
+    expect(caseText(big)).toBe("th-foundry · the large line · plot 37×28×37 · aim ~10,000 blocks (at most 12,500)");
   });
 });
 

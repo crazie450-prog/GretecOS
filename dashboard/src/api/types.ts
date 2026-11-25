@@ -322,11 +322,14 @@ export interface ShellVersion {
   theme: string | null;
   headroom: number;
   max_blocks: number;
+  designer?: string | null; // the live shell designer's label that drew it (D423), never a model id
+  rounds?: number | null; // its repair rounds
 }
 
 export interface ShellDesign {
   id: string;
-  plans: string[];
+  plans: string[]; // none for a plan-free building
+  area?: number; // a plan-free building's roofed floor, at least (D424)
   created: number;
   current: string;
   versions: ShellVersion[];
@@ -337,6 +340,7 @@ export interface ShellDesign {
 export interface ShellDesignSummary {
   id: string;
   plans: string[];
+  area?: number | null; // a plan-free building's roofed floor (D424); null on plans
   current: string;
   current_n: number;
   versions: number;
@@ -350,8 +354,36 @@ export interface ShellThemes {
   themes: { id: string; name: string; v: number; summary: string }[];
   line_types: string[];
   limits: Record<"max_blocks" | "headroom", [number, number, number]>; // default, lowest, highest
+  plot?: ShellPlotLimits;
   problems: string[];
 }
+
+/** A plan-free building's floor (lowest, highest) and the plot factor (default, lowest, highest), D424. */
+export interface ShellPlotLimits {
+  area: [number, number];
+  site_factor: [number, number, number];
+}
+
+/** GET /api/shells/plot (D424): the plot the core sizes for a plan-free building's floor. */
+export interface ShellPlot {
+  area: number;
+  factor: number;
+  size: [number, number, number];
+}
+
+/** GET /api/shells/designer (D423): the live shell designer, never a model id. */
+export type ShellDesignerStatus =
+  | { configured: false }
+  | {
+      configured: true;
+      label: string;
+      provider: string | null;
+      ready: boolean;
+      why: string | null;
+      cap_usd: number;
+      day_left_usd: number | null;
+      ai_off: string | null;
+    };
 
 export interface ShellCompareSide {
   build: string;
@@ -386,27 +418,35 @@ export interface ShellScene {
   cells: [number, number, number, number, number][]; // x, y, z, palette index, -1
   layers: { y: number; blocks: number; materials: Record<string, number> }[];
   ghosts: { machines: (ShellBox & { name: string | null; ref: string | null })[]; keepouts: ShellBox[] };
+  area?: number | null; // a plan-free building's roofed floor (D424): no machines, he places them
   caveats: string[];
 }
 
 export type ShellJobBody =
   | {
       design: {
-        plans: string[];
+        plans?: string[]; // none for a plan-free building
+        mode?: "layout" | "site" | "free";
+        area?: number; // plan-free (D424)
+        site_factor?: number;
         theme?: string;
         line_type?: string;
         prompt?: string;
         max_blocks?: number;
         headroom?: number;
+        ai?: boolean; // the live shell designer draws it (D423)
       };
     }
-  | { revise: { design?: string; words: string; theme?: string; max_blocks?: number; headroom?: number } };
+  | { revise: { design?: string; words: string; theme?: string; max_blocks?: number; headroom?: number; ai?: boolean } };
 
 export interface ShellJobResult {
   design?: string;
   build?: string;
   changes?: string[];
   refused?: string[];
+  designer?: string | null; // the live shell designer's label (D423)
+  rounds?: number;
+  cost_usd?: number;
 }
 
 // The shell bake-off (WO-10.11, D374-D377), blind: letters, never a model's name, cost or time.
@@ -438,9 +478,13 @@ export interface BakeoffEntry {
 
 export interface BakeoffCase {
   id: string;
-  line: string;
+  line: string; // "none" for a plan-free case (D425)
   theme: string;
   max_blocks: number;
+  mode?: string; // layout, site or free
+  plot?: [number, number, number] | null; // W×H×D
+  area?: number | null; // a plan-free case's floor
+  target?: number | null; // the block target its brief states
   brief: string;
   followup: string;
   entries: BakeoffEntry[];

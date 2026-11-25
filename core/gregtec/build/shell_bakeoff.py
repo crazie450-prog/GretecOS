@@ -22,6 +22,15 @@ v6's (:mod:`gregtec.build.shell_brief`), its design goes through ``make(mode="si
 report adds the fit's columns: fit ok, rounds to fit, placed of all, spare air, who chose the
 door, and the service runs' length.
 
+**Big and plan-free cases** (WO-10.17, D424, D425): a case may set its plot's ``site_factor``
+(site and plan-free cases), be a plan-free building (line ``none``, mode ``free``, an ``area`` of
+roofed floor and no plans) and state a block ``target``, which code adds to its brief as one
+TARGET line. A case aiming at more than :data:`gregtec.build.shell_brief.BIG_TARGET` blocks is
+asked with the longer output limit and echo (:func:`gregtec.build.shell_brief.out_tokens`,
+:func:`~gregtec.build.shell_brief.echo`; the live designer keeps the standard two). The report
+adds a ``target`` column: the designs within :data:`BAND` of their target. ``gos shell bakeoff
+run --only`` runs only the named cases.
+
 **Where it is kept.** ``GOS_HOME/data/bakeoff/<run-id>/``: ``run.json`` (everything above, the
 seed, the ratings) and, per case and per **blind label**, a small GOS_HOME of its own
 (``entries/<case>/<A|B|...>/data/build/...``) holding that answer's shell builds and its design
@@ -81,6 +90,7 @@ from gregtec.build import (
     shell_brief,
     shell_eval,
     shell_fakes,
+    shell_rounds,
     shell_store,
 )
 from gregtec.build import shell_versions as versions
@@ -113,20 +123,38 @@ COLUMNS = (
 )
 # optional last columns, in this order: the case's headroom and relief ("default" or a number;
 # WO-10.13, D386) and its own palette ("role registry@meta, ..." for a case without a theme, or
-# extra entries for one with a theme; WO-10.14, D387), the layout planner's options (D389) and
-# the case's mode (site, the default, or layout; D422)
+# extra entries for one with a theme; WO-10.14, D387), the layout planner's options (D389),
+# the case's mode (site, the default, layout, or free: a plan-free building; D422, D424), its
+# plot's site factor, a plan-free case's floor area and the block target its brief states
+# ("default" or a number each; D425)
 HEADROOM_COLUMN = "headroom"
-OPTIONAL = ("headroom", "relief", "palette", "layout", "mode")
+OPTIONAL = (
+    "headroom",
+    "relief",
+    "palette",
+    "layout",
+    "mode",
+    "site_factor",
+    "area",
+    "target",
+)
 MODES = shell_brief.MODES
 NEW_MODE = "site"  # a case table's default (D422: every new AI design is a site design)
-LINES = ("small", "large")
+FREE = "free"
+NONE_LINE = "none"  # a plan-free case's line: it houses no plans (D424)
+LINES = ("small", "large", NONE_LINE)
+# A case's block target (D425): stated in its brief, at most its max_blocks; the report calls
+# an answer within BAND of it a hit.
+TARGETS = (1_000, shell.MAX_BLOCKS)
+BAND = 0.2
 RUN_ID = re.compile(r"bo-\d{8}-\d{6}-[0-9a-f]{4}")
 CASE_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 LABEL = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 LETTERS = "ABCDEFGH"
 MAX_MODELS = len(LETTERS)
 MAX_CASES = 24
-REPAIR_ROUNDS = 2  # after the first answer, for every model and every step
+# after the first answer, for every model and every step (the live designer's too, D423)
+REPAIR_ROUNDS = shell_rounds.REPAIR_ROUNDS
 TIGHT = 1.10  # a "tight" case allows this share of GOS's own procedural shell's blocks
 DEFAULT_CAP_USD = 10.0
 DEFAULT_CAP_TOKENS = 1_000_000
@@ -419,8 +447,13 @@ class Case:
     # the machines are arranged, so the cases don't all wrap the same rows
     layout: tuple[str, ...] = ()
     # site: the building first, the machines fitted into it (D422; a case table's default);
-    # layout: the shell round the planner's layout (every run saved before D422)
+    # layout: the shell round the planner's layout (every run saved before D422); free: a
+    # plan-free building (D424)
     mode: str = "layout"
+    # the plot's factor, None for shell.SITE_FACTOR (site and plan-free cases, D425)
+    site_factor: float | None = None
+    area: int | None = None  # a plan-free case's roofed floor (D424)
+    target: int | None = None  # the blocks its brief aims at (D425)
 
     def layout_options(self) -> layout_lib.Options:
         return case_options(self.layout, self.mode)
@@ -490,6 +523,9 @@ def load_cases(path: Path = CASES) -> list[Case]:
         mb = r["max_blocks"]
         if mb not in ("default", "tight") and not mb.isdigit():
             raise BakeoffError(f"{where}: max_blocks is default, tight or a number")
+        factor, area, target = _big(r, f"{r['id']} ({where})", mode)
+        if mode == FREE and arrangement:
+            raise BakeoffError(f"{where}: a plan-free case has no layout options")
         if (
             len(r["brief"]) > theme_lib.MAX_TEXT * 5
             or not 0 < len(r["followup"]) <= 400
@@ -520,6 +556,9 @@ def load_cases(path: Path = CASES) -> list[Case]:
                 tuple(own),
                 arrangement,
                 mode,
+                factor,
+                area,
+                target,
             )
         )
     if not out or len(out) > MAX_CASES:
@@ -527,6 +566,75 @@ def load_cases(path: Path = CASES) -> list[Case]:
     if len({c.id for c in out}) != len(out):
         raise BakeoffError(f"{path.name}: case ids repeat")
     return out
+
+
+def _number(text: str | None) -> str | None:
+    """A cell's value: None for an empty cell or ``default``."""
+    text = (text or "").strip()
+    return None if text in ("", "default") else text
+
+
+def _big(
+    r: Mapping[str, str | None], case: str, mode: str
+) -> tuple[float | None, int | None, int | None]:
+    """A case row's site factor, floor area and block target (D424, D425), each refused in a
+    sentence naming the case: line none, mode free and an area go together; a site factor is
+    for a site or plan-free case; a target is within :data:`TARGETS` and at most max_blocks."""
+    line, mb = r["line"], str(r["max_blocks"])
+    factor_text, area_text = _number(r.get("site_factor")), _number(r.get("area"))
+    target_text = _number(r.get("target"))
+    if (line == NONE_LINE) != (mode == FREE) or (mode == FREE) != (
+        area_text is not None
+    ):
+        raise BakeoffError(
+            f"{case}: a plan-free case has line none, mode free and an area; any other case "
+            "has none of them"
+        )
+    area = None
+    if area_text is not None:
+        lo_a, hi_a = shell.AREA
+        if not area_text.isdigit() or not lo_a <= int(area_text) <= hi_a:
+            raise BakeoffError(
+                f"{case}: area is a whole number from {lo_a:,} to {hi_a:,}"
+            )
+        area = int(area_text)
+    factor = None
+    if factor_text is not None:
+        lo_f, hi_f = shell.SITE_FACTORS
+        if mode not in ("site", FREE):
+            raise BakeoffError(f"{case}: a site factor is for a site or plan-free case")
+        try:
+            factor = float(factor_text)
+        except ValueError:
+            factor = math.nan
+        if not lo_f <= factor <= hi_f:  # nan fails too
+            raise BakeoffError(
+                f"{case}: site_factor is default or from {lo_f} to {hi_f}"
+            )
+    target = None
+    if target_text is not None:
+        lo_t, hi_t = TARGETS
+        if not target_text.isdigit() or not lo_t <= int(target_text) <= hi_t:
+            raise BakeoffError(
+                f"{case}: target is default or from {lo_t:,} to {hi_t:,}"
+            )
+        target = int(target_text)
+        if mb == "tight":
+            raise BakeoffError(f"{case}: a case with a target states its max_blocks")
+        most = shell.LIMITS["max_blocks"][0] if mb == "default" else int(mb)
+        if target > most:
+            raise BakeoffError(f"{case}: target {target} is above max_blocks {most}")
+    return factor, area, target
+
+
+def target_line(target: int, max_blocks: int) -> str:
+    """The line code adds to a case's brief when it has a target (D425): the same words for
+    every case, so no case's own words carry a number."""
+    lo, hi = round(target * (1 - BAND)), round(target * (1 + BAND))
+    return (
+        f"TARGET: about {target:,} blocks (aim for {lo:,} to {hi:,}); max_blocks is "
+        f"{max_blocks:,}."
+    )
 
 
 @dataclass(frozen=True)
@@ -539,40 +647,7 @@ class Prepared:
     baseline: int  # blocks of GOS's own procedural shell for this case (for the report)
     brief: str  # the user text (the same for every model)
     machines: int = 0  # a site case's machines to fit (its program's instances)
-
-
-def _preview(
-    conn: sqlite3.Connection,
-    home: Path,
-    vault: VaultIO | None,
-    case: Case,
-    ids: Sequence[str],
-    max_blocks: int | None,
-) -> shell_store.Made:
-    """GOS's own procedural shell for the case, never saved: its record gives the sizes, the
-    palette and the doorways every model's brief states (a site case's: the procedural building
-    with the machines fitted, whose SITE and NEED the brief states)."""
-    return shell_store.make(
-        conn,
-        home,
-        vault,
-        list(ids),
-        theme_id=None if case.theme == "none" else case.theme,
-        prompt=case.brief,
-        line_type=case.line_type,
-        max_blocks=max_blocks,
-        headroom=case.headroom,
-        relief=case.relief,
-        extra=case.palette,
-        layout_options=case.layout_options(),
-        save_it=False,
-        mode=case.mode,
-    )
-
-
-def _fit_refused(made: shell_store.Made) -> bool:
-    """A site design refused by the fit itself (its palette and size passed)."""
-    return made.spec.mode == "site" and "fit" in (made.fit or {})
+    plot: tuple[int, int, int] | None = None  # a site or plan-free case's SITE: W, H, D
 
 
 def prepare(
@@ -586,27 +661,32 @@ def prepare(
     that can't be laid out (a plan that isn't saved, no such theme) refuses the whole run."""
     out = []
     for case in cases:
-        ids = tuple(plans.get(case.line) or ())
-        if not ids:
+        ids = () if case.line == NONE_LINE else tuple(plans.get(case.line) or ())
+        if not ids and case.line != NONE_LINE:
             raise BakeoffError(f"case {case.id} needs the {case.line} line's plans")
+        req = shell_brief.DesignRequest(
+            ids,
+            case.brief,
+            mode=case.mode,
+            theme=None if case.theme == "none" else case.theme,
+            line_type=case.line_type,
+            headroom=case.headroom,
+            relief=case.relief,
+            extra=case.palette,
+            layout_options=None if case.mode == FREE else case.layout_options(),
+            area=case.area,
+            site_factor=case.site_factor,
+        )
         try:
-            loaded = [plan_store.load(home, pid) for pid in ids]
-            opts = case.layout_options()
-            if case.mode == "site":  # the brief states the program, never a layout
-                lay = layout_lib.program(conn, loaded).to_json(opts)
-            else:
-                lay = layout_lib.plan_layout(conn, loaded, opts)
-
-            made = _preview(conn, home, vault, case, ids, None)
+            got = shell_brief.prepare_design(conn, home, vault, req)
+            made, lay = got.preview, got.facts
             if made.outcome.ok:
                 baseline = len(made.outcome.cells)
-            elif _fit_refused(made):
+            else:
                 # a site case's procedural building whose machines didn't pack: its SITE,
                 # NEED and palette are still what the brief states, and its blocks the
                 # baseline (the fitter's limits are the models' to work round, D422)
                 baseline = len(shell.compile_ops(made.spec, made.ops).cells)
-            else:
-                raise BakeoffError(" | ".join(made.outcome.reasons))
             if case.max_blocks != "default":
                 # the record's sizes are what the brief states; the gate judges each answer
                 limit = (
@@ -614,15 +694,11 @@ def prepare(
                     if case.max_blocks == "tight"
                     else int(case.max_blocks)
                 )
-                made = _preview(conn, home, vault, case, ids, limit)
-            rec = made.record
-            brief = shell_brief.design_brief(
-                rec,
-                lay,
-                shell_brief.names_of(conn, rec),
-                case.brief,
-                made.spec.theme_rules,
-            )
+                got = shell_brief.prepare_design(
+                    conn, home, vault, replace(req, max_blocks=limit), check=False
+                )
+                made = got.preview
+            rec, brief = made.record, got.brief
         except (
             OSError,
             ValueError,
@@ -631,7 +707,16 @@ def prepare(
         ) as exc:
             raise BakeoffError(f"case {case.id} can't be set up: {exc}") from None
         machines = len(lay["instances"]) if case.mode == "site" else 0
-        out.append(Prepared(case, ids, rec["max_blocks"], baseline, brief, machines))
+        if case.target is not None:
+            brief += "\n" + target_line(case.target, rec["max_blocks"])
+        plot = None
+        if isinstance(rec.get("fit"), Mapping):  # a site or plan-free case's SITE
+            box = rec["fit"]["site"]
+            w, h, d = (box["hi"][i] - box["lo"][i] + 1 for i in range(3))
+            plot = (w, h, d)
+        out.append(
+            Prepared(case, ids, rec["max_blocks"], baseline, brief, machines, plot)
+        )
     return out
 
 
@@ -650,12 +735,17 @@ OVERHEADS = {m: _bound(json.dumps(shell_brief.schema(m))) + 1_000 for m in MODES
 
 
 def _most(
-    system: str, model: ModelSpec, user: str, mode: str = "layout"
+    system: str,
+    model: ModelSpec,
+    user: str,
+    mode: str = "layout",
+    out_tokens: int = shell_brief.MAX_OUTPUT_TOKENS,
 ) -> tuple[float, int]:
     """The most one try of a call can cost: (USD, tokens). Its input counted as one token a
-    byte plus the mode's :data:`OVERHEADS`, the whole output limit, the dearest input rate."""
+    byte plus the mode's :data:`OVERHEADS`, the whole output limit (``out_tokens``: a big
+    case's is longer, D425), the dearest input rate."""
     tokens_in = _bound(system) + _bound(user) + OVERHEADS[mode]
-    tokens_out = shell_brief.MAX_OUTPUT_TOKENS
+    tokens_out = out_tokens
     p = model.price
     if p is None:
         return 0.0, tokens_in + tokens_out
@@ -675,7 +765,13 @@ def first_call(
     for m in models:
         if m.fake:
             continue
-        one_usd, one_tokens = _most(system, m, first.brief, first.case.mode)
+        one_usd, one_tokens = _most(
+            system,
+            m,
+            first.brief,
+            first.case.mode,
+            shell_brief.out_tokens(first.case.target),
+        )
         if m.price is None:
             tokens = max(tokens, one_tokens)
         else:
@@ -708,21 +804,31 @@ def estimate(
     }
     steps = 2 * len(prepared)
     most = steps * (1 + REPAIR_ROUNDS)
-    in_typical = sum(
-        2 * (len(systems[p.case.mode]) + len(p.brief)) // 3 for p in prepared
-    )  # characters / 3: a generous count of tokens
-    in_worst = sum(
-        2
-        * (1 + REPAIR_ROUNDS)
-        * (
-            _bound(systems[p.case.mode])
-            + _bound(p.brief)
-            + shell_brief.MAX_ECHO
-            + OVERHEADS[p.case.mode]
+
+    def typical(p: Prepared) -> int:  # characters / 3: a generous count of tokens
+        return 2 * (len(systems[p.case.mode]) + len(p.brief)) // 3
+
+    def worst_in(p: Prepared) -> int:
+        return (
+            2
+            * (1 + REPAIR_ROUNDS)
+            * (
+                _bound(systems[p.case.mode])
+                + _bound(p.brief)
+                + shell_brief.echo(p.case.target)
+                + OVERHEADS[p.case.mode]
+            )
         )
-        for p in prepared
-    )
+
+    def outs(p: Prepared) -> int:  # the output limit of one case's two steps
+        return 2 * shell_brief.out_tokens(p.case.target)
+
+    in_typical = sum(typical(p) for p in prepared)
+    in_worst = sum(worst_in(p) for p in prepared)
+    # the output limits of every step (steps x the limit when all cases have the same one)
+    out_likely = sum(outs(p) for p in prepared)
     out_limit = shell_brief.MAX_OUTPUT_TOKENS
+    big = [p for p in prepared if shell_brief.out_tokens(p.case.target) != out_limit]
     lines = [
         (
             f"Bake-off: {len(prepared)} cases x {len(models)} models, a design and a follow-up "
@@ -732,6 +838,13 @@ def estimate(
         (
             f"Each call: at most {out_limit} output tokens (thinking included); the briefs are "
             f"about {in_typical // max(1, steps)} tokens each."
+        ),
+        *(
+            f"  {p.case.id} aims at about {p.case.target:,} blocks: at most "
+            f"{shell_brief.out_tokens(p.case.target)} output tokens a call, and up to "
+            f"{shell_brief.echo(p.case.target):,} characters of a refused answer sent back"
+            for p in big
+            if p.case.target is not None
         ),
         *(
             f"Designer prompt v{shell_brief.PROMPT_VERSIONS[m]}"
@@ -759,17 +872,26 @@ def estimate(
             )
             continue
         p = m.price
-        likely = (
-            in_typical * p.input + steps * out_limit * LIKELY_OUTPUT * p.output
-        ) / 1e6
+        likely = (in_typical * p.input + out_likely * LIKELY_OUTPUT * p.output) / 1e6
         top = (
-            in_worst * max(p.input, p.cache_write) + most * out_limit * p.output
+            in_worst * max(p.input, p.cache_write)
+            + (1 + REPAIR_ROUNDS) * out_likely * p.output
         ) / 1e6
         worst += top
         lines.append(
             f"{who}: ${p.input:.2f} in / ${p.output:.2f} out per million tokens: likely "
             f"about ${likely:.2f}, worst case ${top:.2f}"
         )
+        for b in big:  # each big case's share of those (D425)
+            b_likely = (typical(b) * p.input + outs(b) * LIKELY_OUTPUT * p.output) / 1e6
+            b_top = (
+                worst_in(b) * max(p.input, p.cache_write)
+                + (1 + REPAIR_ROUNDS) * outs(b) * p.output
+            ) / 1e6
+            lines.append(
+                f"    of which {b.case.id}: likely about ${b_likely:.2f}, worst case "
+                f"${b_top:.2f}"
+            )
     hosts = tuple(dict.fromkeys(HOSTS[m.provider] for m in models if not m.fake))
     if hosts:
         lines.append(
@@ -978,6 +1100,14 @@ def create(
                 "palette": [list(e) for e in p.case.palette],
                 "layout": list(p.case.layout),
                 "mode": p.case.mode,
+                # D425: the plot's factor, a plan-free case's floor, the target its brief
+                # states, its SITE (W, H, D) and the limits its calls had
+                "site_factor": p.case.site_factor,
+                "area": p.case.area,
+                "target": p.case.target,
+                "plot": None if p.plot is None else list(p.plot),
+                "max_output_tokens": shell_brief.out_tokens(p.case.target),
+                "echo": shell_brief.echo(p.case.target),
                 "baseline_blocks": p.baseline,
                 "brief": p.case.brief,
                 "followup": p.case.followup,
@@ -1108,9 +1238,19 @@ class _Step:
 def fit_score(made: shell_store.Made) -> dict[str, Any]:
     """A site design's score columns (D422 §2.8) from what the gate made of it: whether its
     machines fit, how many of them, the spare air, who chose the door and the service runs'
-    length (the Manhattan sum of every service's ends; informational only)."""
+    length (the Manhattan sum of every service's ends; informational only). A plan-free
+    design's (D424): whether its floor held, its spare floor and who chose the door."""
     st = (made.fit or {}).get("fit") or {}
     service_len = None
+    if made.spec.mode == FREE:  # D424: no machines, no services; fit ok: the floor held
+        return {
+            "fit_ok": made.outcome.ok,
+            "placed": None,
+            "of": None,
+            "spare_pct": st.get("spare_pct"),
+            "entrance_from": st.get("entrance_from"),
+            "service_len": None,
+        }
     if made.saved is not None:
         lay = json.loads((made.saved / "layout.json").read_text(encoding="utf-8"))
         service_len = service_length(lay)
@@ -1147,38 +1287,6 @@ Say = Callable[[str], None]
 
 
 @dataclass
-class _Capped:
-    """A model's designer inside the run's caps: every try (:func:`gregtec.llm.designers.call`
-    retries) passes the runner's guard first, and a try that broke off is counted."""
-
-    runner: Runner
-    spec: ModelSpec
-    inner: llm.Designer
-
-    @property
-    def provider(self) -> str:
-        return self.inner.provider
-
-    @property
-    def model(self) -> str:
-        return self.inner.model
-
-    def complete(
-        self, system: str, user: str, schema: Mapping[str, Any], max_output_tokens: int
-    ) -> llm.Reply:
-        self.runner._guard(self.spec, user)
-        try:
-            reply = self.inner.complete(system, user, schema, max_output_tokens)
-        except llm.ProviderError as exc:
-            if exc.maybe_billed:
-                self.runner._broke(self.spec, user)
-            raise
-        if not reply.measured:  # answered, but the vendor sent no token count with it
-            self.runner._broke(self.spec, user)
-        return reply
-
-
-@dataclass
 class Runner:
     """One run's work. ``designers`` maps a model label to its :class:`~gregtec.llm.designers.
     Designer`; ``meter`` (the live ``llm_usage``) records every real call; ``cancel`` is asked
@@ -1201,6 +1309,9 @@ class Runner:
         self.models = {m["label"]: ModelSpec.from_json(m) for m in self.run["models"]}
         self.mode = "layout"  # the case in hand's (D422; set per case by _one)
         self.system = shell_brief.system_prompt()
+        # the case in hand's output limit and echo (D425: a big case's are longer)
+        self.out_tokens = shell_brief.MAX_OUTPUT_TOKENS
+        self.echo = shell_brief.MAX_ECHO
         self.beside = False  # said once: the record is being kept beside run.json
 
     # -- the record ---------------------------------------------------------------------------
@@ -1230,7 +1341,7 @@ class Runner:
     # -- one call, inside the caps ------------------------------------------------------------
 
     def _most(self, model: ModelSpec, user: str) -> tuple[float, int]:
-        return _most(self.system, model, user, self.mode)
+        return _most(self.system, model, user, self.mode, self.out_tokens)
 
     def _guard(self, model: ModelSpec, user: str) -> None:
         """Asked before every try, a retry too: Cancel, the record (saved, so the run is seen
@@ -1281,11 +1392,15 @@ class Runner:
         beat = _Heartbeat(self.say, self.heartbeat_s)
         try:
             reply = llm.call(
-                _Capped(self, model, self.designers[model.label]),
+                shell_rounds.Capped(
+                    self.designers[model.label],
+                    lambda text: self._guard(model, text),
+                    lambda text: self._broke(model, text),
+                ),
                 self.system,
                 user,
                 shell_brief.schema(self.mode),
-                shell_brief.MAX_OUTPUT_TOKENS,
+                self.out_tokens,
                 sleep=self.sleep,
             )
         except llm.ProviderError as exc:
@@ -1339,34 +1454,21 @@ class Runner:
     ) -> None:
         """The first answer and at most REPAIR_ROUNDS more, each read for the case's mode and
         through ``gate`` (which saves an accepted design and returns None, or says why it
-        refused)."""
-        user = brief
-        for attempt in range(REPAIR_ROUNDS + 1):
-            step.rounds = attempt
-            got = self._ask(model, user, step)
-            if isinstance(got, str):
-                step.refuse(got)
-                return
-            if got.stop == llm.REFUSAL:
-                step.refuse(got.detail or "the model declined")
-                return
-            if got.stop == llm.MAX_TOKENS:
-                why = (
-                    f"the answer was cut off at the output limit "
-                    f"({shell_brief.MAX_OUTPUT_TOKENS} tokens): use fewer operations"
-                )
-            else:
-                try:
-                    said = shell_brief.read(got.text, self.mode)
-                except shell_brief.BriefError as exc:
-                    why = str(exc)
-                else:
-                    refused = gate(said)
-                    if refused is None:
-                        return
-                    why = refused
-            step.refuse(why)
-            user = shell_brief.repair_brief(brief, got.text, why)
+        refused): :func:`gregtec.build.shell_rounds.rounds`, the live designer's too."""
+
+        def on_round(n: int) -> None:
+            step.rounds = n
+
+        shell_rounds.rounds(
+            lambda user: self._ask(model, user, step),
+            brief,
+            self.mode,
+            gate,
+            step.refuse,
+            on_round,
+            self.out_tokens,
+            self.echo,
+        )
 
     # -- the two steps ------------------------------------------------------------------------
 
@@ -1390,15 +1492,19 @@ class Runner:
                     headroom=case.get("headroom"),
                     relief=case.get("relief"),
                     extra=[tuple(e) for e in case.get("palette") or ()],
-                    layout_options=case_options(case.get("layout") or (), self.mode),
+                    layout_options=None
+                    if self.mode == FREE
+                    else case_options(case.get("layout") or (), self.mode),
                     ops=said.ops,
                     mode=self.mode,
                     entrance=said.entrance,
                     zones=said.zones,
+                    area=case.get("area"),
+                    site_factor=case.get("site_factor"),
                 )
             except (shell.ShellError, palette.CatalogError) as exc:
                 return f"no shell: {exc}"
-            if self.mode == "site":
+            if self.mode in ("site", FREE):
                 step.fit = fit_score(made)
             if not made.outcome.ok:
                 return " | ".join(made.outcome.reasons)
@@ -1426,19 +1532,17 @@ class Runner:
         ds: str,
     ) -> tuple[_Step, dict[str, str]]:
         step = _Step()
-        first = versions.get(where, ds)["current"]
-        old = shell_store.load(where, first)
-        lay = (
-            json.loads(
-                (shell_store.folder(where, first) / "program.json").read_text("utf-8")
-            )
-            if shell_store.site_mode(old)
-            else versions._layout_of(where, first)
-        )
-        brief = shell_brief.revise_brief(
-            old, lay, shell_brief.names_of(self.conn, old), case["followup"]
-        )
         checks = {"asked": "-", "kept": "-", "why": ""}
+        try:
+            brief, old = shell_brief.prepare_revise(
+                self.conn, where, ds, case["followup"]
+            )
+        except shell_brief.BriefError as exc:
+            # a big design too long to send back (D425): refused, the run goes on
+            step.refuse(f"no revision: {exc}")
+            return step, checks
+        if case.get("target") is not None:  # the same aim as its first design (D425)
+            brief += "\n" + target_line(case["target"], case["max_blocks"])
 
         def gate(said: shell_brief.Answer) -> str | None:
             try:
@@ -1460,7 +1564,7 @@ class Runner:
                             else said.entrance,
                             "zones": said.zones,
                         }
-                        if shell_store.site_mode(old)
+                        if shell_store.site_mode(old) or shell_store.free_mode(old)
                         else {}
                     ),
                 )
@@ -1496,6 +1600,11 @@ class Runner:
         model = self.models[label]
         self.mode = case.get("mode") or "layout"  # a run saved before D422: layout
         self.system = shell_brief.system_prompt(self.mode)
+        # a run saved before D425: the standard two
+        self.out_tokens = int(
+            case.get("max_output_tokens") or shell_brief.MAX_OUTPUT_TOKENS
+        )
+        self.echo = int(case.get("echo") or shell_brief.MAX_ECHO)
         where = entry_home(self.home, self.run["id"], case["id"], letter)
         result: dict[str, Any] = {
             "case": case["id"],
@@ -1519,12 +1628,13 @@ class Runner:
                 where.parent.rmdir()
             raise
         result["design"], result["design_id"] = step.to_json(), ds
-        if self.mode == "site" and "fit" not in result["design"]:
-            # no answer reached the fit: it still counts, none of its machines placed
+        if self.mode in ("site", FREE) and "fit" not in result["design"]:
+            # no answer reached the fit: it still counts, none of its machines placed (a
+            # plan-free case has none to place)
             result["design"]["fit"] = {
                 "fit_ok": False,
-                "placed": 0,
-                "of": spec.machines,
+                "placed": 0 if self.mode == "site" else None,
+                "of": spec.machines if self.mode == "site" else None,
                 "spare_pct": None,
                 "entrance_from": None,
                 "service_len": None,
@@ -1744,12 +1854,18 @@ def blind(run: Mapping[str, Any]) -> dict[str, Any]:
                 }
             )
         rating = run["ratings"].get(c["id"])
+        big = c.get("target") is not None or c.get("area") is not None
         cases.append(
             {
                 "id": c["id"],
                 "line": c["line"],
                 "theme": c["theme"],
                 "max_blocks": c["max_blocks"],
+                # D424, D425: a big or plan-free case's plot, floor and target (the header)
+                "mode": c.get("mode") or "layout",
+                "plot": c.get("plot") if big else None,
+                "area": c.get("area"),
+                "target": c.get("target"),
                 "brief": c["brief"],
                 "followup": c["followup"],
                 "entries": entries,
@@ -1899,13 +2015,46 @@ SITE_COLS = (
 )
 
 
+# A run with a case that states a block target (D425) adds how many of a model's designs for
+# those cases came within BAND of it.
+TARGET_COL = "target"
+
+
 def site_run(run: Mapping[str, Any]) -> bool:
-    """Whether a run has a site case (D422; a case saved without a mode is layout)."""
-    return any(c.get("mode") == "site" for c in run["cases"])
+    """Whether a run has a site or plan-free case (D422, D424; a case saved without a mode is
+    layout)."""
+    return any(c.get("mode") in ("site", FREE) for c in run["cases"])
+
+
+def target_run(run: Mapping[str, Any]) -> bool:
+    """Whether a run has a case with a block target (D425)."""
+    return any(c.get("target") is not None for c in run["cases"])
 
 
 def columns(run: Mapping[str, Any]) -> tuple[str, ...]:
-    return COLS + SITE_COLS if site_run(run) else COLS
+    return (
+        COLS
+        + (SITE_COLS if site_run(run) else ())
+        + ((TARGET_COL,) if target_run(run) else ())
+    )
+
+
+def on_target(blocks: int, target: int) -> bool:
+    """Whether a design's blocks are within :data:`BAND` of its case's target (D425)."""
+    return abs(blocks - target) <= BAND * target
+
+
+def target_text(step: Mapping[str, Any] | None, target: int) -> str:
+    """One design against its case's target: "12,840 / 12,000 hit", or "4,500 / 6,000 miss
+    (-25%, under the band)"; "-" for no design."""
+    if not step or not step.get("ok"):
+        return "-"
+    blocks = int(step["blocks"])
+    if on_target(blocks, target):
+        return f"{blocks:,} / {target:,} hit"
+    pct = round(100 * (blocks - target) / target)
+    side = "under" if blocks < target else "over"
+    return f"{blocks:,} / {target:,} miss ({pct:+d}%, {side} the band)"
 
 
 def _mean(values: Sequence[float]) -> str:
@@ -1918,6 +2067,7 @@ def _stats(run: Mapping[str, Any]) -> list[dict[str, Any]]:
         for c in run["cases"]
         for letter, label in c["letters"].items()
     }
+    target = {c["id"]: c.get("target") for c in run["cases"]}
     rows = []
     for m in run["models"]:
         label = m["label"]
@@ -1941,6 +2091,11 @@ def _stats(run: Mapping[str, Any]) -> list[dict[str, Any]]:
             usd = None if usd is None or s["usd"] is None else usd + s["usd"]
         checks = [r["checks"] for r in mine if r["checks"]]
         fits = [r["design"]["fit"] for r in mine if r["design"].get("fit")]
+        aims = [
+            (r["design"], target[r["case"]])
+            for r in mine
+            if target.get(r["case"]) is not None
+        ]
         rows.append(
             {
                 "label": label,
@@ -1972,6 +2127,10 @@ def _stats(run: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "fake": m["provider"] == shell_fakes.PROVIDER,
                 "seconds": sum(s["seconds"] for s in steps),
                 "fits": fits,
+                "hits": sum(
+                    1 for d, t in aims if d["ok"] and on_target(int(d["blocks"]), t)
+                ),
+                "aimed": len(aims),
             }
         )
     rows.sort(
@@ -1993,6 +2152,17 @@ def _cost_text(s: Mapping[str, Any]) -> str:
     return "unknown (no price)" if s["usd"] is None else f"${s['usd']:.2f}"
 
 
+def _placed(fits: Sequence[Mapping[str, Any]]) -> str:
+    """Machines placed of all asked, over a model's site designs ("-" when its fits are all
+    plan-free: they have none, D424)."""
+    asked = [f for f in fits if f.get("of") is not None]
+    if fits and not asked:
+        return "-"
+    return (
+        f"{sum(f.get('placed') or 0 for f in asked)} of {sum(f['of'] for f in asked)}"
+    )
+
+
 def _fit_cells(fits: Sequence[Mapping[str, Any]]) -> list[str]:
     """The SITE_COLS of one model's site designs."""
     done = [f for f in fits if f.get("fit_ok")]
@@ -2004,7 +2174,7 @@ def _fit_cells(fits: Sequence[Mapping[str, Any]]) -> list[str]:
     return [
         f"{len(done)} of {len(fits)}",
         _mean([float(f["rounds_to_fit"]) for f in done]),
-        f"{sum(f.get('placed') or 0 for f in fits)} of {sum(f.get('of') or 0 for f in fits)}",
+        _placed(fits),
         _mean([float(f["spare_pct"]) for f in done if f.get("spare_pct") is not None]),
         ", ".join(f"{k} {n}" for k, n in sorted(doors.items())) or "-",
         _mean(
@@ -2013,7 +2183,9 @@ def _fit_cells(fits: Sequence[Mapping[str, Any]]) -> list[str]:
     ]
 
 
-def _table(stats: Sequence[Mapping[str, Any]], site: bool = False) -> list[list[str]]:
+def _table(
+    stats: Sequence[Mapping[str, Any]], site: bool = False, aims: bool = False
+) -> list[list[str]]:
     return [
         [
             s["label"],
@@ -2032,6 +2204,7 @@ def _table(stats: Sequence[Mapping[str, Any]], site: bool = False) -> list[list[
             _cost_text(s),
             f"{s['seconds']:.0f}",
             *(_fit_cells(s["fits"]) if site else []),
+            *([f"{s['hits']} of {s['aimed']} hit"] if aims else []),
         ]
         for s in stats
     ]
@@ -2063,7 +2236,7 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
         run["revealed"] = round(time.time(), 3)
         run["reveal_unrated"] = bool(left)
     stats = _stats(run)
-    rows = _table(stats, site_run(run))
+    rows = _table(stats, site_run(run), target_run(run))
     cols = columns(run)
     notes = [f"Order: {ORDER}.", FEW]
     if run["status"] != DONE:
@@ -2112,9 +2285,12 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
     lines += ["", "| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     lines += ["| " + " | ".join(r) + " |" for r in rows]
     lines += ["", *[f"- {n}" for n in notes], "", "## Per case", ""]
+    aims = target_run(run)
     lines += [
-        "| case | your pick | letter | model | design | follow-up | asked | kept | why refused |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| case | your pick | letter | model | design | follow-up | asked | kept | "
+        + ("target | " if aims else "")
+        + "why refused |",
+        "|---|---|---|---|---|---|---|---|---|" + ("---|" if aims else ""),
     ]
     for c in run["cases"]:
         pick = (run["ratings"].get(c["id"]) or {}).get("pick", "-")
@@ -2123,13 +2299,21 @@ def report(home: Path, run_id: str, *, reveal_unrated: bool = False) -> Report:
             if r is None:
                 lines.append(
                     f"| {c['id']} | {pick} | {letter} | {label} | not asked | | | | |"
+                    + (" |" if aims else "")
                 )
                 continue
             d, v, k = r["design"], r["revise"], r["checks"] or {}
             why = " / ".join([*_refusals("design", d), *_refusals("follow-up", v)])
+            aim = ""
+            if aims:
+                aim = (
+                    "- | "
+                    if c.get("target") is None
+                    else f"{target_text(d, c['target'])} | "
+                )
             lines.append(
                 f"| {c['id']} | {pick} | {letter} | {label} | {_step_text(d)} | "
-                f"{_step_text(v)} | {k.get('asked', '-')} | {k.get('kept', '-')} | {why} |"
+                f"{_step_text(v)} | {k.get('asked', '-')} | {k.get('kept', '-')} | {aim}{why} |"
             )
     text = "\n".join(lines) + "\n"
     path = home / REPORTS / f"shell-bakeoff-{run['id']}.md"

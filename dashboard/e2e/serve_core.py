@@ -13,7 +13,9 @@ What the dashboard reads from the desktop comes from files the tests write in ``
 "AI offline") and ``design_delay`` (seconds each design stage waits before it goes on, so the
 design-job tests (WO-3.9) can watch the stages and cancel on these small made-up exports, which
 design in well under a second) and ``review_delay`` (seconds a reviewed design's review waits,
-outside the planner lock, D411 (6)); the core polls them every second. Test-only: production code never reads these
+outside the planner lock, D411 (6)) and ``shell_designer`` (the live shell designer's label as
+``[shell] designer`` names it, read per request: a fake's, a label with no model, or none, D423);
+the core polls them every second. Test-only: production code never reads these
 files. Its gos.toml marks setup done, so the shell shows.
 
 Ores (WO-6.6, :func:`load_ores`): WO-1.6's made-up ore mixes and Lab world (tests/unit/test_ores.py)
@@ -573,6 +575,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         return SlowReviewer
 
     plan_routes.reviewer_for = slow_reviewer_for
+    # ``shell_designer`` (WO-10.17, D423): the live shell designer's label, as ``[shell] designer``
+    # names it (a fake's, e.g. fake-plain; a label with no model: not ready; empty or no file:
+    # none is set), read per request, so shell_designer.spec.ts sees all three on one core.
+    from gregtec.api import shell_routes
+    from gregtec.build import shell_designer
+
+    def with_designer(cfg: Config) -> Config:
+        label = _read(controls / "shell_designer") or ""
+        return dataclasses.replace(cfg, shell_designer=label)
+
+    real_status = shell_designer.status
+
+    def designer_status(cfg: Config, *a: Any, **kw: Any) -> dict[str, Any]:  # noqa: ANN401
+        return real_status(with_designer(cfg), *a, **kw)
+
+    shell_designer.status = designer_status
+    real_designer_ctx = shell_routes.designer_ctx
+
+    def designer_ctx(core: Any) -> Callable[[], Any]:  # noqa: ANN401
+        make = real_designer_ctx(core)
+
+        def made() -> Any:  # noqa: ANN401
+            ctx = make()
+            return dataclasses.replace(ctx, cfg=with_designer(ctx.cfg))
+
+        return made
+
+    shell_routes.designer_ctx = designer_ctx
     if not args.fresh:  # --fresh: the real check, against the file keyring
         keys.has_key = has_key
     # Poll every second, so a test sees a change at once (the core waits 30 s and 5 s).

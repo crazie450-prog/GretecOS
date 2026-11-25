@@ -569,6 +569,7 @@ def test_build_revise_is_the_architects_and_deep_lane_only(reg: Any) -> None:  #
         "entrance",  # a site build's door hint and steering boxes (D422), as data
         "zones",
         "save",
+        "ask_designer",  # the live shell designer's job (D423), never operations
     }
     assert tool.input_schema["additionalProperties"] is False
 

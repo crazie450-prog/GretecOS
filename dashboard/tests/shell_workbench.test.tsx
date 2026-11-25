@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShellDesign, ShellScene } from "../src/api/types";
 import { stageText } from "../src/state/jobs";
-import { ShellWorkbench, byText, costText, ghostsOf, jobBody } from "../src/views/ShellWorkbench";
+import { ShellWorkbench, byText, costText, designerText, ghostsOf, housesText, jobBody, plotText } from "../src/views/ShellWorkbench";
 import { boxEdges, DEFAULT_VIEW } from "../src/views/guideMesh";
 
 const V1 = "sh-aaaaaaaaaaaa";
@@ -173,6 +173,50 @@ describe("the workbench's job bodies", () => {
     expect(byText({ by: "architect" })).toBe("the architect");
     expect(stageText({ kind: "shell", stage: "gate", k: null, n: null, sub: null })).toBe("Checking it (the gate)");
   });
+  it("designs a plan-free building from its floor area, with no plans (D424)", () => {
+    const plot = { area: [25, 6000] as [number, number], site_factor: [2, 1.25, 6] as [number, number, number] };
+    const free = { ...form, free: true, area: "1500", theme: "th-foundry" };
+    expect(jobBody("design", free, null, false, plot)).toEqual({
+      design: { mode: "free", area: 1500, theme: "th-foundry", line_type: "general" },
+    });
+    expect(jobBody("design", { ...free, area: "" }, null, false, plot)).toBe("Give the floor area (25 to 6,000)");
+    expect(jobBody("design", { ...free, area: "7000" }, null, false, plot)).toBe("Give the floor area (25 to 6,000)");
+    expect(jobBody("design", { ...free, area: "12.5" }, null, false, plot)).toBe("Give the floor area (25 to 6,000)");
+    expect(jobBody("design", { ...free, area: "" }, null)).toBe("Give the floor area (whole blocks)");
+    expect(jobBody("design", { ...free, siteFactor: "3" }, null, false, plot)).toEqual({
+      design: { mode: "free", area: 1500, site_factor: 3, theme: "th-foundry", line_type: "general" },
+    });
+    expect(jobBody("design", { ...free, siteFactor: "9" }, null, false, plot)).toBe("The plot size factor is from 1.25 to 6");
+    // on plans a plot size factor makes it a site design
+    expect(jobBody("design", { ...form, siteFactor: "4" }, null, false, plot)).toEqual({
+      design: { plans: ["pl-steel"], mode: "site", site_factor: 4, line_type: "general" },
+    });
+  });
+  it("asks the live shell designer with the ai flag, and it revises from words alone (D423)", () => {
+    expect(jobBody("design", { ...form, words: "tall windows" }, null, true)).toEqual({
+      design: { plans: ["pl-steel"], line_type: "general", prompt: "tall windows", ai: true },
+    });
+    expect(jobBody("design", { ...form, free: true, area: "800" }, null, true)).toEqual({
+      design: { mode: "free", area: 800, line_type: "general", ai: true },
+    });
+    expect(jobBody("revise", { ...form, words: " add a tower " }, DS, true)).toEqual({ revise: { design: DS, words: "add a tower", ai: true } });
+    expect(jobBody("revise", form, DS, true)).toBe("Say what to change first");
+    expect(jobBody("revise", { ...form, words: "x", theme: "th-foundry" }, DS, true)).toMatch(/your words alone/);
+  });
+  it("names the designer that drew a version, what a design houses, the plot and the status line", () => {
+    expect(byText({ by: "architect", designer: "astra" })).toBe("AI (astra)");
+    expect(byText({ by: "architect", designer: null })).toBe("the architect");
+    expect(costText({ cost_usd: 0.4213, by: "architect" })).toBe("$0.42");
+    expect(housesText({ plans: ["pl-steel", "pl-power"] })).toBe("plans pl-steel, pl-power");
+    expect(housesText({ plans: [], area: 1500 })).toBe("plan-free · ≥1,500 floor");
+    expect(plotText({ area: 1500, factor: 2, size: [55, 16, 55] })).toBe("plot about 55 × 55 at factor 2.0");
+    expect(plotText({ area: 1500, factor: 2.5, size: [62, 16, 62] })).toBe("plot about 62 × 62 at factor 2.5");
+    const status = { configured: true as const, label: "astra", provider: "openai", ready: true, why: null, cap_usd: 4, day_left_usd: 7.6, ai_off: null };
+    expect(designerText(status)).toBe("Designer: astra · up to $4.00 a request · $7.60 left today");
+    expect(designerText({ ...status, day_left_usd: null })).toBe("Designer: astra · up to $4.00 a request");
+    expect(designerText({ ...status, ready: false, why: "no openai key is stored" })).toBe("Designer: astra · not ready: no openai key is stored");
+    expect(designerText({ configured: false })).toBeNull();
+  });
   it("draws ghosts as box edges", () => {
     const g = ghostsOf(scene(V1));
     expect(g.map((x) => x.kind)).toEqual(["keepout", "machine"]);
@@ -287,5 +331,128 @@ describe("ShellWorkbench", () => {
     render(<ShellWorkbench />);
     expect(await screen.findByTestId("shells-empty")).toBeTruthy();
     expect((screen.getByTestId("shell-revise") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("ShellWorkbench with the live shell designer and plan-free buildings (D423, D424)", () => {
+  const ready = { configured: true, label: "astra", provider: "openai", ready: true, why: null, cap_usd: 4, day_left_usd: 7.6, ai_off: null };
+
+  it("with none set keeps today's buttons: no status line, no Design with the architect", async () => {
+    routes["GET /api/shells/designer"] = () => ({ status: 200, body: { configured: false } });
+    render(<ShellWorkbench />);
+    await screen.findByTestId("shell-version-list");
+    await waitFor(() => expect(calls.some((c) => c.url === "/api/shells/designer")).toBe(true));
+    expect(screen.queryByTestId("shell-designer")).toBeNull();
+    expect(screen.queryByTestId("shell-ai-design")).toBeNull();
+  });
+
+  it("shows the designer's cap, names it on its versions, and asks it to revise the picked design as a job", async () => {
+    routes["GET /api/shells/designer"] = () => ({ status: 200, body: ready });
+    design = { ...design, versions: [version(1, V1), version(2, V2, { by: "architect", cost_usd: 0.4213, designer: "astra", rounds: 1 })] };
+    render(<ShellWorkbench />);
+    expect((await screen.findByTestId("shell-designer")).textContent).toContain("Designer: astra · up to $4.00 a request · $7.60 left today");
+    await waitFor(() => expect(screen.getByTestId("shell-version-list").querySelectorAll("tbody tr")).toHaveLength(2));
+    const newest = screen.getByTestId("shell-version-list").querySelector('tr[data-version="2"]') as HTMLElement;
+    expect(newest.textContent).toContain("AI (astra)");
+    expect(screen.getByTestId("shell-cost-2").textContent).toBe("$0.42");
+    fireEvent.change(screen.getByTestId("shell-words"), { target: { value: "add a clock tower" } });
+    await waitFor(() => expect((screen.getByTestId("shell-ask") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId("shell-ask"));
+    await screen.findByTestId("shell-job-stage");
+    expect(calls.find((c) => c.url === "/api/shells/jobs")?.body).toEqual({ revise: { design: DS, words: "add a clock tower", ai: true } });
+    expect(calls.some((c) => c.url === "/api/ask")).toBe(false);
+    await act(async () => {
+      jobState = { ...jobState, status: "done", result: { design: DS, build: V2, changes: ["a tower"], designer: "astra", rounds: 1, cost_usd: 0.31 } };
+      await new Promise((r) => setTimeout(r, 1100));
+    });
+    await waitFor(() => expect(screen.getByTestId("shell-notice").textContent).toBe("New version: a tower Drawn by astra, $0.31, 1 repair."));
+    // what today leaves is read again after the designer's spend
+    expect(calls.filter((c) => c.url === "/api/shells/designer").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("a refusal from the designer says who was asked and what it cost", async () => {
+    routes["GET /api/shells/designer"] = () => ({ status: 200, body: ready });
+    render(<ShellWorkbench />);
+    await screen.findByTestId("shell-designer");
+    fireEvent.change(screen.getByTestId("shell-words"), { target: { value: "add a clock tower" } });
+    await waitFor(() => expect((screen.getByTestId("shell-ask") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByTestId("shell-ask"));
+    await screen.findByTestId("shell-job-stage");
+    await act(async () => {
+      jobState = { ...jobState, status: "done", result: { refused: ["short by 40 columns"], designer: "astra", cost_usd: 0.9 } };
+      await new Promise((r) => setTimeout(r, 1100));
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("shell-notice").textContent).toBe(
+        "Refused, nothing written; the current version stays (asked astra, $0.90): short by 40 columns",
+      ),
+    );
+  });
+
+  it("designs with the architect from the form", async () => {
+    routes["GET /api/shells/designer"] = () => ({ status: 200, body: ready });
+    render(<ShellWorkbench />);
+    const button = await screen.findByTestId("shell-ai-design");
+    await waitFor(() => expect((screen.getByTestId("shell-plan") as HTMLSelectElement).value).toBe("pl-steel"));
+    fireEvent.click(button);
+    await screen.findByTestId("shell-job-stage");
+    expect(calls.find((c) => c.url === "/api/shells/jobs")?.body).toEqual({ design: { plans: ["pl-steel"], line_type: "general", ai: true } });
+  });
+
+  it("set but not ready: both AI buttons are off and the status line says why", async () => {
+    const why = "no [[bakeoff.models]] entry is labelled astra";
+    routes["GET /api/shells/designer"] = () => ({ status: 200, body: { ...ready, ready: false, why } });
+    render(<ShellWorkbench />);
+    expect((await screen.findByTestId("shell-designer")).textContent).toContain(`not ready: ${why}`);
+    await screen.findByTestId("shell-version-list");
+    expect((screen.getByTestId("shell-ai-design") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("shell-ask") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("shell-ask").getAttribute("title")).toBe(why);
+  });
+
+  it("plan-free: the floor instead of plans, the core's plot note, and a design job with the area", async () => {
+    routes["GET /api/shells/plot"] = (_b, url) => {
+      const q = new URL(url, "http://x").searchParams;
+      if (q.get("area") === "9000") return { status: 400, body: { error: "the area must be a whole number from 25 to 6,000 (blocks of roofed floor)" } };
+      return { status: 200, body: { area: Number(q.get("area")), factor: 2, size: [55, 16, 55] } };
+    };
+    render(<ShellWorkbench />);
+    await screen.findByTestId("shell-version-list");
+    fireEvent.click(screen.getByTestId("shell-mode-free"));
+    expect(screen.getByTestId("shell-mode-free").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByTestId("shell-plan")).toBeNull();
+    fireEvent.change(screen.getByTestId("shell-area"), { target: { value: "1500" } });
+    expect((await screen.findByTestId("shell-plot", {}, { timeout: 2000 })).textContent).toBe("plot about 55 × 55 at factor 2.0");
+    expect(calls.find((c) => c.url.startsWith("/api/shells/plot"))?.url).toBe("/api/shells/plot?area=1500");
+    fireEvent.change(screen.getByTestId("shell-area"), { target: { value: "9000" } });
+    await waitFor(() => expect(screen.getByTestId("shell-plot").textContent).toContain("the area must be"), { timeout: 2000 });
+    fireEvent.change(screen.getByTestId("shell-area"), { target: { value: "1500" } });
+    fireEvent.click(screen.getByTestId("shell-design"));
+    await screen.findByTestId("shell-job-stage");
+    expect(calls.find((c) => c.url === "/api/shells/jobs")?.body).toEqual({ design: { mode: "free", area: 1500, line_type: "general" } });
+  });
+
+  it("a plan-free design says so in its list and its viewer, with no machines to show", async () => {
+    design = { ...design, plans: [], area: 1500 };
+    routes["GET /api/shells/designs"] = () => ({
+      status: 200,
+      body: {
+        designs: [
+          { id: DS, plans: [], area: 1500, current: V2, current_n: 2, versions: 2, asked: "a hall", theme: null, blocks: 750, touched: 1 },
+          { id: "ds-222222222222", plans: ["pl-steel"], area: null, current: V1, current_n: 1, versions: 1, asked: "a foundry", theme: null, blocks: 714, touched: 0 },
+        ],
+        current: DS,
+      },
+    });
+    routes[`GET /api/shells/${V2}/view`] = () => ({ status: 200, body: { ...scene(V2), ghosts: { machines: [], keepouts: [] }, area: 1500 } });
+    render(<ShellWorkbench />);
+    const pick = await screen.findByTestId("shell-design-pick");
+    expect(Array.from(pick.querySelectorAll("option")).map((o) => o.textContent)).toEqual([
+      `${DS} · a hall · v2 of 2 · plan-free · ≥1,500 floor`,
+      "ds-222222222222 · a foundry · v1 of 1 · plans pl-steel",
+    ]);
+    expect((await screen.findByTestId("shell3d-plan-free")).textContent).toContain("plan-free: no machines");
+    expect(screen.queryByTestId("shell3d-ghosts")).toBeNull();
+    expect(screen.getByTestId("shell-versions").textContent).toContain("plan-free · ≥1,500 floor · 2 kept");
   });
 });

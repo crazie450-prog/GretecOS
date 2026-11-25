@@ -100,3 +100,28 @@ def test_measure_agrees_with_the_fit() -> None:
     # 13 x 9 inside, 5 high (the cap: a keep-out 4 high, the corridor and chase 5), and
     # the door's three columns 3 high under its lintel
     assert got["volume"] == 13 * 9 * 5 + 3 * 3
+
+
+def test_a_plan_free_need_measures_the_same_in_the_sandbox() -> None:
+    """A plan-free building's NEED (D424) goes through floor.measure and the sandbox's copy
+    of it alike, and its floor is the floor check's for a building in one piece."""
+    from gregtec.build import sandbox_child, shell
+
+    from .test_build_fit import door
+
+    need = shell.need_for_area(80, layout.Options())
+    assert need["floor_required"] == need["floor_area"] == 80
+    assert need["required"] == 240 and need["keepout_volume"] == 0
+    rng = random.Random(424)
+    for _ in range(100):
+        cells = {
+            (rng.randint(-2, 13), rng.randint(0, 11), rng.randint(-2, 13)): "wall"
+            for _ in range(rng.randint(0, 300))
+        }
+        assert sandbox_child.measure(cells, SITE.to_json(), need) == floor.measure(
+            cells, SITE, need
+        )
+    one = door(hall(0, 0, 10, 10, 4), "west", 0, 4)
+    got = floor.measure(one, SITE, need)
+    assert got["floor"] == fit.floor_check(one, SITE, 80).stats["floor"] == 9 * 9 + 3
+    assert got["need_floor"] == 80

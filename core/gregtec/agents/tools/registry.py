@@ -70,6 +70,27 @@ class ToolError(Exception):
     """A message for the model: the call failed, nothing was changed."""
 
 
+class ShellJobError(RuntimeError):
+    """A shell job that wasn't started: the sentence says why (a bad request, no designer
+    ready, another shell job running)."""
+
+
+@dataclass
+class ShellJobs:
+    """How the agents start a live-designer shell job (D423): gos.toml (and its path), which
+    say whether a designer is set, and ``start`` (a job body in, the started job out), which
+    the core sets once its job registry exists (as ``deep.registry`` is set late). Outside the
+    core (``gos ask`` in a terminal) ``start`` stays None."""
+
+    cfg: Any = None  # gregtec.config.Config
+    path: Path | None = None
+    start: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    # the core's Store and AiMode, which say whether the designer may start now (the day cap,
+    # the AI off: shell_designer.held); None outside the core
+    store: Any = None
+    ai: Any = None
+
+
 @dataclass(frozen=True)
 class Env:
     """What every tool call can read."""
@@ -85,6 +106,8 @@ class Env:
         0  # [policy] spoiler_default, the one global level (D72, WO-6.4)
     )
     wiki: WikiCache | None = None  # the wiki cache for wiki_fetch (WO-8.3)
+    # the live shell designer's job starter (WO-10.17, D423); None: no designer here
+    shell_jobs: ShellJobs | None = None
 
 
 @dataclass

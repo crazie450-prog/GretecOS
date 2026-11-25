@@ -4,7 +4,7 @@
 |---------------------|-----------------------|----------------------------------------------------------|
 | GET /api/shells     | admin, client, device | the saved shell builds, newest first (summaries)          |
 | GET /api/shells/{id}| admin, client, device | ``{"card": shell card}``: preview, manifest, paste steps |
-| POST /api/shells    | admin, device         | ``{"plans": [ids], "theme"?, "line_type"?}``: the procedural shell (No-AI mode), saved unless refused; ``{"card"}`` |
+| POST /api/shells    | admin, device         | ``{"plans": [ids], "theme"?, "line_type"?, "mode"?, "site_factor"?}`` or ``{"mode": "free", "area": N, ...}`` (a plan-free building, D424): the procedural shell (No-AI mode), saved unless refused; ``{"card"}`` |
 
 The workbench (WO-10.10, D367-D370):
 
@@ -13,7 +13,9 @@ The workbench (WO-10.10, D367-D370):
 | GET  /api/shells/designs                | admin, client, device | ``{"designs": [...], "current": ds}``: every design, the one touched last first |
 | GET  /api/shells/designs/{ds}           | admin, client, device | ``{"design"}``: its versions (parent, asked, by, time, cost, blocks) and the current one |
 | POST /api/shells/designs/{ds}/current   | admin, device         | ``{"build"}``: make that version current (undo is an older one); nothing is deleted |
-| POST /api/shells/jobs                   | admin, device         | ``{"design": {plans, theme?, line_type?, prompt?, max_blocks?, headroom?}}`` or ``{"revise": {design?, words, theme?, max_blocks?, headroom?}}``: a shell job (stages, Cancel; one at a time), GOS's own generator or reviser, no model |
+| POST /api/shells/jobs                   | admin, device         | ``{"design": {plans, theme?, line_type?, prompt?, max_blocks?, headroom?, mode?, site_factor?, ai?}}`` (``mode`` layout by default, or site; ``{mode: "free", area, ...}`` with no plans is a plan-free building, D424) or ``{"revise": {design?, words, theme?, max_blocks?, headroom?, ai?}}``: a shell job (stages, Cancel; one at a time), GOS's own generator or reviser, no model; with ``ai: true`` the live shell designer draws it (D423: ``[shell] designer``; a design's mode is then site by default; a revise takes words only), a 409 with the why when none is set or it isn't ready |
+| GET  /api/shells/designer               | admin, client, device | the live shell designer (D423): ``{"configured": false}``, or its label, provider, ready and why not, this request's cap and what today leaves (never a model id) |
+| GET  /api/shells/plot?area=&factor=&headroom= | admin, client, device | a plan-free building's plot (D424): ``{"area", "factor", "size": [x, y, z]}`` from :func:`gregtec.build.shell.site_for_area`, or a 400 with the sentence (the workbench's note; it never computes the plot itself) |
 | GET  /api/shells/compare?a=&b=          | admin, client, device | two versions' materials and block counts side by side |
 | GET  /api/shells/{id}/view              | admin, client, device | the 3D viewer's data: cells, palette with the catalog's colours, layers, the floor plan's machines and keep-outs as ghosts |
 
@@ -48,6 +50,8 @@ from gregtec.api.security import Principal
 
 if TYPE_CHECKING:
     from gregtec.api.app import Core
+    from gregtec.build import shell_brief, shell_designer
+    from gregtec.planner.design_jobs import Lock
 
 JsonBody = Callable[[Request], Awaitable[dict[str, Any]]]
 
@@ -67,8 +71,57 @@ def shown(home: Path, build: str) -> dict[str, Any]:
         raise HTTPException(404, str(exc)) from None
 
 
+def _mode_of(
+    req: dict[str, Any], headroom: int | None = None
+) -> tuple[str, list[str], int | None, float | None]:
+    """A design request's mode, plans, area and site factor (D424), checked: a plan-free
+    building (mode free) takes an area and no plans, the others 1 to 3 plans and no area; a
+    site factor is for site or free. A 400 with the sentence when wrong."""
+    from gregtec.build import shell, shell_store
+
+    mode, plans = req.get("mode", "layout"), req.get("plans")
+    area, factor = req.get("area"), req.get("site_factor")
+    if mode not in shell_store.MODES:
+        raise HTTPException(400, f"mode is one of {', '.join(shell_store.MODES)}")
+    try:
+        if factor is not None:
+            if mode == "layout":
+                raise shell.ShellError("a site factor is for a site or plan-free build")
+            factor = shell.check_factor(factor)
+        if mode == "free":
+            if plans or area is None:
+                raise shell.ShellError(
+                    "a plan-free building takes an area and no plans"
+                )
+            if req.get("zones"):
+                raise shell.ShellError(
+                    "a plan-free building has no zones (zones steer where machines go)"
+                )
+            shell.site_for_area(
+                shell.check_area(area),
+                None,
+                headroom,
+                shell.SITE_FACTOR if factor is None else factor,
+            )
+            return mode, [], area, factor
+        if area is not None:
+            raise shell.ShellError(
+                "an area is only for a plan-free building (mode free)"
+            )
+    except shell.ShellError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if (
+        not isinstance(plans, list)
+        or not 1 <= len(plans) <= shell.MAX_PLANS
+        or not all(isinstance(p, str) and len(p) <= 64 for p in plans)
+    ):
+        raise HTTPException(400, "name 1 to 3 saved plans (plan ids)")
+    return mode, plans, None, factor
+
+
 def designed(home: Path, body: dict[str, Any]) -> dict[str, Any]:
-    """The procedural shell for the plans (no model): saved, or refused with the reasons."""
+    """The procedural shell for the plans (no model), or a plan-free building (D424): saved,
+    or refused with the reasons."""
     from gregtec.build import palette, shell, shell_store
     from gregtec.build import themes as theme_lib
     from gregtec.db import access
@@ -78,13 +131,12 @@ def designed(home: Path, body: dict[str, Any]) -> dict[str, Any]:
     theme = body.get("theme")
     line_type = body.get("line_type", theme_lib.GENERAL)
     if (
-        not isinstance(plans, list)
-        or not plans
-        or not all(isinstance(p, str) and len(p) <= 64 for p in plans)
+        not (body.get("mode") == "free" or isinstance(plans, list))
         or not (theme is None or isinstance(theme, str))
         or not isinstance(line_type, str)
     ):
         raise HTTPException(400, "send plans (a list of plan ids), theme and line_type")
+    mode, plans, area, factor = _mode_of(body)
     db = access.db_path(home)
     if not db.is_file():
         raise HTTPException(503, "no recipe DB: run gos db build")
@@ -97,6 +149,9 @@ def designed(home: Path, body: dict[str, Any]) -> dict[str, Any]:
             plans,
             theme_id=theme,
             line_type=line_type,
+            mode=mode,
+            area=area,
+            site_factor=factor,
         )
     except (shell.ShellError, palette.CatalogError) as exc:
         raise HTTPException(400, str(exc)) from None
@@ -123,30 +178,107 @@ def _int_or_none(body: dict[str, Any], key: str) -> int | None:
     return v
 
 
-def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
-    """(title, work) for a workbench job, its request checked now (a 400 when it is wrong)."""
-    from gregtec.build import palette, shell, shell_store
+def plotted(area: int, factor: float | None, headroom: int | None) -> dict[str, Any]:
+    """A plan-free building's plot for ``area`` (D424), as the design job will size it."""
+    from gregtec.build import shell
+
+    try:
+        f = shell.SITE_FACTOR if factor is None else shell.check_factor(factor)
+        box = shell.site_for_area(shell.check_area(area), None, headroom, f)
+    except shell.ShellError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"area": area, "factor": f, "size": list(box.size)}
+
+
+def designer_ctx(core: "Core") -> "Callable[[], shell_designer.Ctx]":
+    """The live shell designer's context on the core's gos.toml, meter, store and AI mode, made
+    when a job with ``ai: true`` is asked for (D423), as ``plan_routes.reviewer_for`` makes the
+    route reviewer's."""
+
+    def make() -> "shell_designer.Ctx":
+        import secrets
+
+        from gregtec.api import job_routes
+        from gregtec.build import shell_designer
+
+        return shell_designer.Ctx(
+            core.cfg,
+            core.cfg.gos_home,
+            store=core.store,
+            meter=core.meter,
+            ai=core.ai,
+            lock=job_routes.registry(core).planner_lock,
+            path=core.config_path,
+            task=f"shell-{secrets.token_hex(4)}",
+        )
+
+    return make
+
+
+def _ready(ctx: "shell_designer.Ctx") -> str:
+    """The configured designer's label, or a 409 with why there is none ready (no job)."""
+    from gregtec.build import shell_designer
+
+    ready = shell_designer.resolve(ctx.cfg, ctx.path)
+    if ready is None:
+        raise HTTPException(409, shell_designer.UNSET_WHY)
+    if isinstance(ready, shell_designer.NotReady):
+        raise HTTPException(409, ready.why)
+    return ready.label
+
+
+def shell_job(
+    home: Path,
+    body: dict[str, Any],
+    lock: "Lock | None" = None,
+    designer: "Callable[[], shell_designer.Ctx] | None" = None,
+) -> tuple[str, Any]:
+    """(title, work) for a workbench job, its request checked now (a 400 when it is wrong).
+    ``lock``: the planner's (default :data:`gregtec.planner.designer._LOCK`), which GOS's own
+    generator and reviser hold for their whole work; ``designer``: the live shell designer's
+    context, for ``ai: true`` (D423; None: refused)."""
+    from gregtec.build import palette, shell, shell_designer, shell_store
     from gregtec.build import shell_versions as versions
     from gregtec.build import themes as theme_lib
     from gregtec.db import access
+    from gregtec.planner import design_jobs, progress
     from gregtec.vault.io import VaultIO
 
+    if lock is None:
+        from gregtec.planner.designer import _LOCK as lock
     if set(body) not in ({"design"}, {"revise"}):
         raise HTTPException(400, "send design or revise")
     db = access.db_path(home)
     if not db.is_file():
         raise HTTPException(503, "no recipe DB: run gos db build")
+    which = body.get("design", body.get("revise"))
+    ai = which.get("ai", False) if isinstance(which, dict) else False
+    if not isinstance(ai, bool):
+        raise HTTPException(400, "ai is true or false")
+    ctx = None
+    if ai:
+        if designer is None:
+            raise HTTPException(409, "the shell designer runs in the core (gos serve)")
+        ctx = designer()
+        label = _ready(ctx)
     if "design" in body:
         req = body["design"]
         if not isinstance(req, dict):
             raise HTTPException(400, "design is an object")
+        if ai:  # D422: a new AI design is a site design unless it says otherwise
+            req = {"mode": "site", **req}
         plans, theme = req.get("plans"), req.get("theme")
         line_type = req.get("line_type", theme_lib.GENERAL)
         prompt = req.get("prompt", "")
         if (
-            not isinstance(plans, list)
-            or not 1 <= len(plans) <= shell.MAX_PLANS
-            or not all(isinstance(p, str) and len(p) <= 64 for p in plans)
+            not (
+                req.get("mode") == "free"
+                or (
+                    isinstance(plans, list)
+                    and 1 <= len(plans) <= shell.MAX_PLANS
+                    and all(isinstance(p, str) and len(p) <= 64 for p in plans)
+                )
+            )
             or not (theme is None or isinstance(theme, str))
             or line_type not in theme_lib.LINE_TYPES
             or not isinstance(prompt, str)
@@ -161,8 +293,27 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
             )
         except shell.ShellError as exc:
             raise HTTPException(400, str(exc)) from None
+        mode, plans, area, factor = _mode_of(req, hr)
+        if ctx is not None:
+            ask = shell_brief_request(
+                plans, prompt, mode, theme, line_type, mb, hr, area, factor
+            )
+
+            def drawn() -> dict[str, Any]:
+                return shell_designer.design(ctx, ask, progress.stage).result
+
+            if area is not None:
+                return (
+                    f"Shell: {label} designs a plan-free building (≥{area:,} floor)",
+                    drawn,
+                )
+            return f"Shell: {label} designs around {', '.join(plans)}", drawn
 
         def design() -> dict[str, Any]:
+            with design_jobs.planner(lock):
+                return _designed()
+
+        def _designed() -> dict[str, Any]:
             conn = access.connect(db, readonly=True)
             try:
                 made = shell_store.make(
@@ -175,6 +326,9 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
                     line_type=line_type,
                     max_blocks=mb,
                     headroom=hr,
+                    mode=mode,
+                    area=area,
+                    site_factor=factor,
                 )
             except (shell.ShellError, palette.CatalogError) as exc:
                 raise HTTPException(400, str(exc)) from None
@@ -187,6 +341,8 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
             )
             return {"design": d["id"], "build": made.build}
 
+        if area is not None:
+            return f"Shell: a plan-free building (≥{area:,} floor)", design
         return f"Shell: design around {', '.join(plans)}", design
     req = body["revise"]
     if not isinstance(req, dict):
@@ -210,10 +366,28 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
         raise HTTPException(
             404 if "no shell design" in str(exc) else 400, str(exc)
         ) from None
+    if ctx is not None:
+        if mb is not None or hr is not None or theme is not None:
+            raise HTTPException(
+                400,
+                "the architect revises from your words alone: change the theme or a size "
+                "with Revise (GOS's reviser)",
+            )
+        if not words.strip():
+            raise HTTPException(400, "say what to change")
+
+        def redrawn() -> dict[str, Any]:
+            return shell_designer.revise(ctx, target, words, progress.stage).result
+
+        return f"Shell: {label} revises {target}: {words[:80]}", redrawn
     if not words.strip() and mb is None and hr is None and theme is None:
         raise HTTPException(400, "say what to change, or change the theme or a size")
 
     def revise() -> dict[str, Any]:
+        with design_jobs.planner(lock):
+            return _revised()
+
+    def _revised() -> dict[str, Any]:
         conn = access.connect(db, readonly=True)
         try:
             got = versions.revise(
@@ -235,6 +409,53 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
         return {"design": target, "build": got.build, "changes": list(got.changes)}
 
     return f"Shell: revise {target}: {words[:80]}", revise
+
+
+def shell_brief_request(
+    plans: list[str],
+    prompt: str,
+    mode: str,
+    theme: str | None,
+    line_type: str,
+    max_blocks: int | None,
+    headroom: int | None,
+    area: int | None,
+    factor: float | None,
+) -> "shell_brief.DesignRequest":
+    """A workbench design job's request as the live designer's brief takes it."""
+    from gregtec.build import shell_brief
+
+    return shell_brief.DesignRequest(
+        tuple(plans),
+        prompt,
+        mode=mode,
+        theme=theme,
+        line_type=line_type,
+        max_blocks=max_blocks,
+        headroom=headroom,
+        area=area,
+        site_factor=factor,
+    )
+
+
+def start_job(core: "Core", body: dict[str, Any]) -> dict[str, Any]:
+    """Start a shell job for the agents (the architect's ``ask_designer``, a chat revise):
+    checked and started as ``POST /api/shells/jobs`` starts it; refused as
+    :class:`gregtec.agents.tools.registry.ShellJobError` with the sentence."""
+    from gregtec.agents.tools.registry import ShellJobError
+    from gregtec.api import job_routes
+    from gregtec.build import shell
+
+    jobs = job_routes.registry(core)
+    try:
+        title, work = shell_job(
+            core.cfg.gos_home, body, jobs.planner_lock, designer_ctx(core)
+        )
+        return jobs.start("shell", title, work).as_dict(result=False)
+    except HTTPException as exc:
+        raise ShellJobError(str(exc.detail)) from None
+    except (shell.ShellError, job_routes.Busy) as exc:
+        raise ShellJobError(str(exc)) from None
 
 
 def viewed(home: Path, build: str) -> dict[str, Any]:
@@ -351,6 +572,11 @@ def add_routes(
                 "themes": rows,
                 "line_types": list(theme_lib.LINE_TYPES),
                 "limits": {k: list(v) for k, v in shell.LIMITS.items()},
+                # a plan-free building's floor and the plot factor (D424): lowest, highest
+                "plot": {
+                    "area": list(shell.AREA),
+                    "site_factor": [shell.SITE_FACTOR, *shell.SITE_FACTORS],
+                },
                 "problems": [str(p) for p in problems][:20],
             }
 
@@ -377,12 +603,33 @@ def add_routes(
     @app.post("/api/shells/jobs")
     async def shell_job_start(request: Request, who: Trusted) -> dict[str, Any]:
         body = await json_body(request)
-        title, work = await asyncio.to_thread(chain, lambda: shell_job(home(), body))
+        jobs = job_routes.registry(core)
+        title, work = await asyncio.to_thread(
+            chain,
+            lambda: shell_job(home(), body, jobs.planner_lock, designer_ctx(core)),
+        )
         try:
-            job = job_routes.registry(core).start("shell", title, work)
+            job = jobs.start("shell", title, work)
         except job_routes.Busy as exc:
             raise HTTPException(409, str(exc)) from None
         return {"job": job.as_dict()}
+
+    @app.get("/api/shells/designer")
+    async def shell_designer_status(who: Anyone) -> dict[str, Any]:
+        from gregtec.build import shell_designer
+
+        return await asyncio.to_thread(
+            shell_designer.status, core.cfg, core.store, core.ai, core.config_path
+        )
+
+    @app.get("/api/shells/plot")
+    async def shell_plot(
+        area: int,
+        who: Anyone,
+        factor: float | None = None,
+        headroom: int | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(plotted, area, factor, headroom)
 
     @app.get("/api/shells/compare")
     async def shell_compare(a: str, b: str, who: Anyone) -> dict[str, Any]:

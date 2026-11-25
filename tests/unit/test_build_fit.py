@@ -736,3 +736,116 @@ def test_sixty_machines_on_a_wide_site_in_good_time() -> None:
     r = fit.fit(prog, cells, Box((0, 0, 0), (63, 10, 63)), OPTS)
     assert r.ok, r.reasons
     assert time.monotonic() - start < 30  # about 1 s on a dev box
+
+
+# --- plan-free buildings: the floor check (WO-10.17, D424) -----------------------------------
+
+
+def _hall_with_door() -> tuple[set[Cell], Box]:
+    """A 10 x 10 hall, 4 high, a door three wide in its west wall at z 3..5: 8 x 8 inside
+    and the doorway's three columns (3 high under the lintel)."""
+    cells = door(building(rect(0, 0, 9, 9), 4), "west", 0, 3)
+    return cells, Box((0, 0, 0), (21, 7, 21))
+
+
+def test_floor_check_passes_with_the_door_and_its_entrance() -> None:
+    cells, site = _hall_with_door()
+    got = fit.floor_check(cells, site, 60)
+    assert got.ok and got.reasons == []
+    assert got.stats == {
+        "floor": 67,
+        "need_floor": 60,
+        "spare_pct": 12,
+        "unjoined": 0,
+        "door": {"side": "west", "at": [0, 3]},
+        "entrance_from": "auto",
+    }
+    assert got.door == {"side": "west", "at": [0, 3]}
+    assert got.entrance == Box((0, 0, 3), (0, 2, 5))
+    # exactly the area passes; one more is short by one
+    assert fit.floor_check(cells, site, 67).ok
+    assert not fit.floor_check(cells, site, 68).ok
+
+
+def test_floor_check_says_how_short_and_what_is_not_joined() -> None:
+    cells, site = _hall_with_door()
+    closed = building(rect(14, 1, 17, 4), 4)  # a closed room: 2 x 2 roofed, no door
+    got = fit.floor_check(cells | closed, site, 100)
+    assert not got.ok and got.door is None and got.entrance is None
+    assert got.reasons == [
+        (
+            "the roofed floor joined to the west door has 67 columns at least 3 high; it "
+            "needs 100: add at least 33 (another 4 roofed columns aren't joined to the "
+            "door)"
+        )
+    ]
+    assert got.stats["unjoined"] == 4 and got.stats["spare_pct"] == -33
+    big = fit.floor_check(cells, site, 1500)
+    assert "it needs 1,500: add at least 1,433" in big.reasons[0]
+    assert "aren't joined" not in big.reasons[0]
+
+
+def test_floor_check_names_a_solid_floor_under_the_roof() -> None:
+    cells, site = _hall_with_door()
+    slab = {(x, 0, z) for x in range(1, 9) for z in range(6, 9)}
+    got = fit.floor_check(cells | slab, site, 60)
+    assert not got.ok
+    assert got.reasons[0].startswith(
+        "the roofed floor joined to the west door has 43 columns"
+    )
+    assert got.reasons[0].endswith(
+        ". y 0 is solid in 24 columns under your roof, e.g. [1,0,6]: the floor is y 0; "
+        "leave it air"
+    )
+    assert "machine" not in got.reasons[0]
+
+
+def test_floor_check_without_a_door() -> None:
+    got = fit.floor_check(
+        building(rect(0, 0, 9, 9), 4), Box((0, 0, 0), (12, 6, 12)), 25
+    )
+    assert not got.ok and got.reasons[0].startswith("no doorway: ")
+
+
+def test_floor_check_takes_the_answers_door_and_says_why_not() -> None:
+    cells, site = _hall_with_door()
+    cells = door(cells, "east", 9, 5)  # a second door, on the east
+    got = fit.floor_check(cells, site, 60, hint={"side": "east", "at": [9, 6]})
+    assert got.ok and got.door == {"side": "east", "at": [9, 5]}
+    assert got.stats["entrance_from"] == "answer"
+    assert got.entrance == Box((9, 0, 5), (9, 2, 7))
+    bad = fit.floor_check(cells, site, 60, hint={"side": "north", "at": [1, 1]})
+    assert not bad.ok and "no straight way out" in bad.reasons[0]
+    shape = fit.floor_check(cells, site, 60, hint={"side": "north"})
+    assert shape.reasons == [
+        "the entrance is not {side: north|east|south|west, at: [x, z]}"
+    ]
+
+
+def test_floor_check_ranks_doors_as_the_fit_does() -> None:
+    cells, site = _hall_with_door()
+    cells = door(
+        cells, "south", 9, 3, width=5
+    )  # a wider door on the south: ranked first
+    prog = program_of(ONE)
+    r = fit.fit(prog, cells, site, OPTS)  # refused later (no chase), its door chosen
+    got = fit.floor_check(cells, site, 30)
+    assert got.ok
+    assert got.door == r.stats["door"] == {"side": "south", "at": [4, 9]}
+
+
+def test_a_porch_door_loses_to_the_halls() -> None:
+    site = Box((0, 0, 0), (22, 6, 22))
+    hall = door(building(rect(0, 0, 11, 11), 4), "west", 0, 4)
+    # a porch apart from the hall with a wider doorway (5 on its south): ranked first, but
+    # its floor is too small, so the hall's door (the one holding the area) is taken
+    porch = door(building(rect(14, 0, 20, 4), 4), "south", 4, 15, width=5)
+    got = fit.floor_check(hall | porch, site, 100)
+    assert got.ok, got.reasons
+    assert got.door == {"side": "west", "at": [0, 4]}
+    assert got.stats["floor"] == 103 and got.stats["unjoined"] == 20
+    # too big for either: the door that joins the most is named
+    short = fit.floor_check(hall | porch, site, 500)
+    assert short.reasons[0].startswith(
+        "the roofed floor joined to the west door has 103"
+    )
