@@ -99,5 +99,8 @@ def rounds(
                     return True
                 why = refused
         on_refuse(why)
-        user = shell_brief.repair_brief(brief, got.text, why, echo=echo)
+        try:
+            user = shell_brief.repair_brief(brief, got.text, why, echo=echo)
+        except shell_brief.BriefError:  # no room left to ask again: the refusal stands
+            return False
     return False

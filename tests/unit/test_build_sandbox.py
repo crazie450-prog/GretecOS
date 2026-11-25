@@ -1054,6 +1054,24 @@ def test_hollow_helpers_are_capped_by_what_they_place() -> None:
         )
 
 
+def test_a_thin_ring_or_pyramid_is_capped_by_its_distinct_cells() -> None:
+    """A wall one block thick is counted once, not twice (it passed before D425's caps)."""
+    ring = sandbox.run("ring((0, 0, 0), (0, 9, 59), 'wall')", FACTS, 800)
+    assert len(ring.cells) == 600
+    spire = sandbox.run("pyramid((0, 0, 0), (0, 7, 59), 'roof', 8)", FACTS, 800)
+    assert len(spire.cells) == 480
+    square = sandbox.run("ring((0, 0, 0), (9, 0, 9), 'wall')", FACTS, 36)
+    assert len(square.cells) == 36
+    with pytest.raises(sandbox.ScriptError, match="ring: the shape holds more than 35"):
+        sandbox.run("ring((0, 0, 0), (9, 0, 9), 'wall')", FACTS, 35)
+    hip = sandbox.run("pyramid((0, 0, 0), (9, 9, 9), 'roof')", FACTS, 100)
+    assert len(hip.cells) == 36 + 28 + 20 + 12 + 4
+    with pytest.raises(
+        sandbox.ScriptError, match="pyramid: the shape holds more than 99"
+    ):
+        sandbox.run("pyramid((0, 0, 0), (9, 9, 9), 'roof')", FACTS, 99)
+
+
 @pytest.mark.serial
 def test_clearing_a_huge_box_walks_only_what_was_placed() -> None:
     import time

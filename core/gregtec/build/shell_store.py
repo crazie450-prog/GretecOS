@@ -425,7 +425,7 @@ def _make_area(
         out = shell.Outcome(
             "refused", source, {}, {}, ("every operation is an object",)
         )
-        build = shell.build_id(spec, design_ops, entrance=hint)
+        build = shell.build_id(spec, design_ops, entrance=hint, factor=factor)
         return Made(spec, design_ops, out, brief, build, None, None)
     gated = gate_free(conn, spec, design_ops, source, factor, entrance)
     made = Made(
@@ -471,7 +471,7 @@ def gate_free(
     assert spec.mode == "free" and spec.site is not None
     area = int((spec.need or {})["floor_required"])
     hint = None if entrance is None else dict(entrance)
-    build = shell.build_id(spec, ops, entrance=hint)
+    build = shell.build_id(spec, ops, entrance=hint, factor=factor)
     info: dict[str, Any] = {
         "mode": "free",
         "site": spec.site.to_json(),

@@ -233,6 +233,7 @@ def run(
     if (holder := getattr(agents, "shell_jobs", None)) is not None:
         # the live shell designer's jobs (D423), once the job registry and AiMode exist
         holder.path = config_path
+        holder.store, holder.ai = store, ai
         holder.start = lambda body: shell_routes.start_job(core, body)
     core.personas = agents.personas
     persona_routes.wire(core)

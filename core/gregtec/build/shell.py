@@ -1624,6 +1624,7 @@ def build_id(
     entrance: Mapping[str, Any] | None = None,
     zones: Sequence[Mapping[str, Any]] = (),
     prior: str | None = None,
+    factor: float | None = None,
 ) -> str:
     """``sh-`` + 12 hex: the same layout, palette, options and operations give the same id.
 
@@ -1631,7 +1632,8 @@ def build_id(
     answer's entrance and zones instead of the layout, which is derived from them, and, when
     its machines were fitted keeping an earlier version's places, that layout's id
     (``prior``); a layout build's payload is unchanged. A plan-free build (D424) is named by
-    its site, its area and the answer's entrance instead."""
+    its site, its area, the answer's entrance and the site ``factor`` it records (two factors
+    can give one plot) instead."""
     payload: dict[str, Any] = {
         "layout": spec.layout,
         "theme": spec.theme,
@@ -1668,6 +1670,8 @@ def build_id(
             "area": (spec.need or {}).get("floor_required"),
             "entrance": None if entrance is None else dict(entrance),
         }
+        if factor is not None:
+            payload["site_factor"] = factor
     text = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )

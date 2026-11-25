@@ -49,8 +49,9 @@ Since D422 every bake-off request is a **site** design: the model builds first, 
    ```
 9. Run it (a minute or two; it prints "Contacts: nothing" and asks nothing, because it is free):
    ```powershell
-   & $gos shell bakeoff run <plan-id> --models fake-plain,fake-ornate,fake-sloppy
+   & $gos shell bakeoff run <plan-id> --models fake-plain,fake-ornate,fake-sloppy --limit 7
    ```
+   `--limit 7` asks the table's first seven requests; without it the run asks all eleven, the four big ones of section K too.
    If you also have a power plan for that line, add `--large <plan-id>,<power-plan-id>` so four of the seven requests get a bigger building.
    The last lines name the run (it looks like `bo-20261121-193000-ab12`). Below, `<run>` means that name.
 10. In the dashboard's **Build** view scroll down to **Shell bake-off**. The panel shows up by itself a few seconds after the run starts, also when the Build view was already open: you do not need to reload the page. (If you look while the run is still going, it says "running" and the buildings fill in as they are made.) You see the first request, what was asked next ("Then"), and the answers side by side as **A**, **B**, **C**. Which model is which letter is hidden, and it is shuffled for every request.
@@ -155,9 +156,9 @@ Since D385 (designer prompt v2, freeform build scripts) every call also carries 
     Read what it prints: how many answers it will ask for, each model's likely and worst-case cost, "Contacts: api.anthropic.com, api.openai.com", and the hard cap. Type `yes` and press Enter to spend it; anything else stops with nothing spent.
 26. Then the full seven, the same day or later (add `--large <plan-id>,<power-plan-id>` if you have a power plan, and `--cap-usd 6` if you want a lower limit for this run):
     ```powershell
-    & $gos shell bakeoff run <plan-id> --models opus,astra
+    & $gos shell bakeoff run <plan-id> --models opus,astra --limit 7
     ```
-    It takes a few minutes per model. **Ctrl+C** stops it cleanly: what is finished stays, nothing is left half-written. If it reaches the cap it stops the same way and says so.
+    Keep `--limit 7`: without it the run also asks the four big requests (section K), which cost far more. It takes a few minutes per model. **Ctrl+C** stops it cleanly: what is finished stays, nothing is left half-written. If it reaches the cap it stops the same way and says so.
     If you already spent something today (step 25 did), it prints "Today's limit ([budget] day_max_usd) leaves $9.55: this run's cap is lowered from $10.00 to that" just above the "Hard cap for this run" line. That is fine: the run can never take the day over your day limit, and the six requests likely cost far less. Type `yes` as before.
     If the connection drops in the middle of an answer, GOS tries that answer again (at most twice). The vendor may still charge for the broken one, and GOS can't see how much, so it counts each at the most it could have cost against the cap and tells you at the end ("... call(s) broke off after they were sent ... or came back without their token count"). The same goes for an answer that arrives without its token count. Your bill on the vendor's site is the last word.
     **If one model can't be asked at all** (its key is refused, its model id is wrong, the account is out of credit), the run stops at that request instead of paying for the other model's remaining requests with nothing to compare them with. The last line then says "stopped (a model could not be asked at all ...)". It does not say which model, so that what was already made can still be rated blind; "If something is off" below has the steps.

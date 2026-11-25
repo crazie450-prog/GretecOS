@@ -279,13 +279,15 @@ def _free_head(made: Any) -> list[tuple[str, object]]:  # noqa: ANN401 - shell_s
 
 
 def _designer(call: Call) -> Any:  # noqa: ANN401 - shell_designer.Ready | NotReady | None
-    """The live shell designer set in gos.toml (D423), read now; None when none is set."""
+    """The live shell designer set in gos.toml (D423), read now; None when none is set. Not
+    ready when it may not start now (the day cap reached, the AI off for it)."""
     holder = call.env.shell_jobs
     if holder is None or holder.cfg is None or not holder.cfg.shell_designer:
         return None
     from gregtec.build import shell_designer
 
-    return shell_designer.resolve(holder.cfg, holder.path)
+    found = shell_designer.resolve(holder.cfg, holder.path)
+    return shell_designer.checked(holder.cfg, holder.store, holder.ai, found)
 
 
 def _designer_line(found: Any) -> str:  # noqa: ANN401

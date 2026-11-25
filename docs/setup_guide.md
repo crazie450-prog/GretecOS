@@ -1552,7 +1552,7 @@ More detail: [shells.md](runbooks/shells.md), and [shell_bakeoff.md](runbooks/sh
 
 ## Part 9. The free bake-off
 
-A bake-off gives the same seven building requests to several designers and lets you pick the better building without knowing who drew it. The program's own messages call a request a **case**. In this part the designers are small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. This part uses three of them. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it. Two more, `fake-cramped` and `fake-tower`, show the refusals of a hall too small for the machines and of floors too narrow for them; [shell_bakeoff.md](runbooks/shell_bakeoff.md) says more. You do not need them here.
+A bake-off gives the same building requests to several designers and lets you pick the better building without knowing who drew it. Its table holds eleven requests: the first seven, which this part and step 80 run (`--limit 7`), and four bigger ones at the end (step 85). The program's own messages call a request a **case**. In this part the designers are small programs inside GOS, the "fake models". Nothing leaves the PC and nothing is spent. This part uses three of them. `fake-plain` draws a simple hall. `fake-ornate` draws a fancier one, with a small building program for chimney stacks or a dome. `fake-sloppy` gets its first answer wrong on purpose, so you can see GOS's check refuse it and the repair round fix it. Two more, `fake-cramped` and `fake-tower`, show the refusals of a hall too small for the machines and of floors too narrow for them; [shell_bakeoff.md](runbooks/shell_bakeoff.md) says more. You do not need them here.
 
 Each designer builds first, on an empty plot sized for your machines, and GOS then fits the machines inside the building (since D422; the "site mode" in [`runbooks/shells.md`](runbooks/shells.md)). Your own shells from Part 8 are built the other way round, around the machines' floor plan, and stay that way. The fake halls have no lights, so in the marble temple request the follow-up "no lights" changes nothing: GOS refuses it as "nothing changes". That is expected.
 
@@ -1614,8 +1614,10 @@ If not: `Can't read gos.toml: Invalid statement (at line 1, column 1)`: the sett
 ### Step 71. Run the free bake-off
 
 ```powershell
-& $gos shell bakeoff run $plan --models "fake-plain,fake-ornate,fake-sloppy"
+& $gos shell bakeoff run $plan --models "fake-plain,fake-ornate,fake-sloppy" --limit 7
 ```
+
+`--limit 7` asks only the first seven requests of the table; without it the run also asks the four big ones of step 85.
 
 It asks nothing, because it is free.
 
@@ -1911,8 +1913,10 @@ The same day or later. Ctrl+C stops it cleanly: what is finished stays.
 **First, make room for the whole run.** Each answer is now a building program, and the models think hard before they write one: one real answer used 13,184 of its 16,000 output tokens. The estimate for all seven requests is about \$3.80 for Claude Opus 5.5 and \$9.45 for GPT-6 Astra, about \$13 together. That is more than the run's cap (`cap_usd`, \$10) and your day limit (`day_max_usd`, \$10), so with them unchanged the run stops cleanly partway and some requests stay unanswered. To let it finish, open `gos.toml` (`notepad "$gh\config\gos.toml"`), set `cap_usd = 20.0` under `[bakeoff]` and `day_max_usd = 25.0` under `[budget]` (add the line if it is not there), save, and run step 78 again to check the file. Put them back afterwards if you like. Or keep them, and accept a partial run.
 
 ```powershell
-& $gos shell bakeoff run $plan --models "opus,astra"
+& $gos shell bakeoff run $plan --models "opus,astra" --limit 7
 ```
+
+Keep `--limit 7`: without it the run also asks the four big requests of step 85, which cost far more than this page's figures.
 
 You should see: the same kind of estimate, now for 7 cases. The worst case of seven requests is above the cap, so the question now says "up to" the "Hard cap" figure itself. If you already spent something today, the line that starts `Today's limit ([budget] day_max_usd) leaves $<X>:` stands just above the "Hard cap" line again, as in step 79. Step 79 itself counts as such a spend. That is normal. Type `yes`. It then takes a few minutes per model and ends with `Run bo-...: done. <N> calls, $<X>.` If it reaches the cap first, it stops cleanly and says so.
 
@@ -2012,7 +2016,7 @@ Then ask it for one design at the command line. It prints what one request may c
 
 You should see: a line `astra · this request's cap $4.00 · one try up to $<amount> · $<amount> left today`, then `Type yes to spend up to $4.00:`. Type `no` to stop here with nothing spent, or `yes` to have astra draw one building (about \$1). With `yes` it prints its stages and ends with a line `v1 sh-... of ds-... by astra: ...` and the next step, `gos shell export`.
 
-If not: `Not run: no shell designer is set ...`: the two lines are not in the file, or GOS was not started again. `Not run: no openai key is stored ...`: go back to step 76, part 3. `Not run: astra has no price in gos.toml ...`: the `input_usd` and `output_usd` lines of step 77 are missing. `Not run: no [[bakeoff.models]] entry is labelled ...`: the label after `designer =` is not the one in step 77. To go back to the architect, delete the two lines, save, and start GOS again as above.
+If not: `Not run: no shell designer is set ...`: the two lines are not in the file (the command reads `gos.toml` itself, so restarting GOS does not change this message; the restart matters for the dashboard and chat). `Not run: no openai key is stored ...`: go back to step 76, part 3. `Not run: astra has no price in gos.toml ...`: the `input_usd` and `output_usd` lines of step 77 are missing. `Not run: no [[bakeoff.models]] entry is labelled ...`: the label after `designer =` is not the one in step 77. To go back to the architect, delete the two lines, save, and start GOS again as above.
 
 More detail: [shells.md](runbooks/shells.md) ("The live shell designer").
 

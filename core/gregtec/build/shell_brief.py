@@ -120,6 +120,9 @@ MAX_OUTPUT_TOKENS = (
 MAX_BRIEF_CHARS = 60_000
 MAX_LISTED = 120  # machines, keep-outs, corridors or chases named in one brief
 MAX_ECHO = 16_000  # characters of a refused answer sent back (room for a build script)
+MAX_WHY = (
+    4_000  # characters of the code's refusal sent back (its reasons can be very long)
+)
 # A bake-off case that aims at more blocks than BIG_TARGET (D425) gets a longer answer and a
 # longer echo: the whole sandbox script (gregtec.build.sandbox.MAX_SCRIPT_CHARS). The live
 # designer and every other case keep the standard two (D423).
@@ -479,7 +482,7 @@ def free_prompt() -> str:
         "- At least AREA columns of roofed floor (a column with a block somewhere above it "
         "and at least NEED.door_height of air from y 0), 4-joined to the lobby of one ground "
         "doorway at least NEED.door_height high and 3 wide with a straight way out at y 0 to "
-        "the edge of SITE. Check it with covered()['floor'] against NEED.floor_required "
+        "the edge of SITE and on through the relief zone (keep it clear there too). Check it with covered()['floor'] against NEED.floor_required "
         "(AREA): covered() counts every roofed column, so it is an upper bound; only the "
         "columns joined to the door count.\n"
         "Columns, inner walls, arcades, light wells and courtyards are fine while the floor "
@@ -955,6 +958,13 @@ def fit_refused(made: Any) -> bool:  # noqa: ANN401 - a shell_store.Made
     return bool(made.spec.mode == "site" and "fit" in (made.fit or {}))
 
 
+def size_refused(made: Any) -> bool:  # noqa: ANN401 - a shell_store.Made
+    """A preview refused only for its size: GOS's procedural building on a big plot can pass
+    max_blocks, which the brief states and the model draws within."""
+    f = made.outcome.findings
+    return bool(f is not None and f.over and len(made.outcome.reasons) == 1)
+
+
 def prepare_design(
     conn: sqlite3.Connection,
     home: Path,
@@ -966,8 +976,9 @@ def prepare_design(
     """The brief for a new design and GOS's own procedural preview it is sized from (never
     saved): the preview's record gives the sizes, palette and doorways, its layout the facts
     (a site design's program, D422; nothing for a plan-free building, D424). ``check``: a
-    preview refused for anything but the fit itself (whose machines the model works round) is
-    a :class:`gregtec.build.shell.ShellError` with the gate's reasons. Shared by the bake-off
+    preview refused for anything but the fit itself (whose machines the model works round) or
+    its size alone (a big plot's procedural building, :func:`size_refused`) is a
+    :class:`gregtec.build.shell.ShellError` with the gate's reasons. Shared by the bake-off
     and the live designer (WO-10.17, D423)."""
     from gregtec.build import layout as layout_lib  # late: layout's chain reaches here
     from gregtec.build import shell_store
@@ -999,7 +1010,12 @@ def prepare_design(
         area=req.area,
         site_factor=req.site_factor,
     )
-    if check and not made.outcome.ok and not fit_refused(made):
+    if (
+        check
+        and not made.outcome.ok
+        and not fit_refused(made)
+        and not size_refused(made)
+    ):
         raise shell.ShellError(" | ".join(made.outcome.reasons))
     rec = made.record
     brief = design_brief(
@@ -1034,11 +1050,14 @@ def prepare_revise(
 
 def repair_brief(brief: str, answer: str, why: str, *, echo: int = MAX_ECHO) -> str:
     """The brief again after a refused answer: the answer (clipped to ``echo`` characters) and
-    why the code refused it, in the words ``build_request`` gives the architect. The answer is
+    why the code refused it (clipped to :data:`MAX_WHY`), in the words ``build_request`` gives
+    the architect. The answer is
     clipped shorter when the whole would pass :data:`MAX_BRIEF_CHARS` (a big case's long brief
     and long echo, D425)."""
     # a site brief's NEED again, next to the refusal (D422: a fit refusal is about it)
     need = [x for x in brief.splitlines() if x.startswith("NEED: ")][:1]
+    if len(why) > MAX_WHY:  # e.g. thousands of unknown states, each named
+        why = why[:MAX_WHY] + " ...(cut)"
     # the framing lines take under 200 characters
     room = MAX_BRIEF_CHARS - len(brief) - len(why) - sum(len(x) for x in need) - 200
     echo = max(0, min(echo, room))

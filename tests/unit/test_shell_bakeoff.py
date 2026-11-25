@@ -3563,6 +3563,23 @@ def test_a_plan_free_case_is_prepared_with_no_plans_and_code_states_its_target(
     assert "TARGET" not in plain.brief and plain.max_blocks == 20_000
 
 
+def test_a_big_plot_whose_procedural_building_passes_max_blocks_is_still_briefed(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    # GOS's own building on a 127-wide plot is 22,672 blocks: over the default 20,000, so its
+    # preview is refused for size alone. The brief is still written, at the case's max_blocks.
+    vault = VaultIO(home / "vault")
+    case = free_case(
+        id="big-free", area=4_000, site_factor=4.0, max_blocks="25000", target=20_000
+    )
+    (big,) = bo.prepare(conn, home, vault, [case], {})
+    assert big.plot == (127, 16, 127) and big.max_blocks == 25_000
+    assert big.baseline == 22_672
+    assert big.brief.endswith(
+        "TARGET: about 20,000 blocks (aim for 16,000 to 24,000); max_blocks is 25,000."
+    )
+
+
 def test_a_big_site_case_gets_the_bigger_plot_and_still_fits_the_machines(
     conn: sqlite3.Connection, home: Path
 ) -> None:
@@ -3811,6 +3828,32 @@ def test_a_repair_is_clipped_to_the_brief_limit() -> None:
             "NEED: x",
         ]
     )
+
+
+def test_a_long_refusal_is_clipped_and_a_repair_with_no_room_ends_the_rounds() -> None:
+    from gregtec.build import shell_rounds
+
+    # the gate names every unknown state: a refusal of 60,000+ characters
+    why = " | ".join(
+        f"zz:block_number_{i}@0: not in this build's palette" for i in range(1_500)
+    )
+    assert len(why) > shell_brief.MAX_BRIEF_CHARS
+    again = shell_brief.repair_brief("NEED: x\nbrief", "{}", why)
+    assert len(again) <= shell_brief.MAX_BRIEF_CHARS
+    assert why[: shell_brief.MAX_WHY] + " ...(cut)" in again
+    # a brief with no room left for a repair: the refusal stands, no BriefError, no 2nd ask
+    asked: list[str] = []
+    refused: list[str] = []
+
+    def ask(user: str) -> llm.Reply:
+        asked.append(user)
+        return llm.Reply("not json", llm.Usage())
+
+    brief = "b" * (shell_brief.MAX_BRIEF_CHARS - 100)
+    ok = shell_rounds.rounds(
+        ask, brief, "layout", lambda _: None, refused.append, lambda _: None
+    )
+    assert not ok and asked == [brief] and len(refused) == 1
 
 
 def test_gos_shell_bakeoff_run_only_names_its_cases(home: Path, tmp_path: Path) -> None:

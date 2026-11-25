@@ -104,6 +104,10 @@ def _main() -> None:
     def _volume(lo: tuple[int, ...], hi: tuple[int, ...]) -> int:
         return (hi[0] - lo[0] + 1) * (hi[1] - lo[1] + 1) * (hi[2] - lo[2] + 1)
 
+    def _outline(dx: int, dz: int) -> int:
+        """The distinct cells of one layer of a box's four walls, dx by dz apart."""
+        return (dx + 1) * (dz + 1) - max(dx - 1, 0) * max(dz - 1, 0)
+
     def _cap(name: str, places: int) -> None:
         """A helper is refused up front when it would place more than the cap (D425: by the
         cells it places, not its box's volume)."""
@@ -178,7 +182,7 @@ def _main() -> None:
         """The four walls of the box lo..hi (its outline at every height), no top or floor."""
         w = _what(what)
         a, b = _corners((lo, hi), "ring")
-        _cap("ring", max(2 * (b[0] - a[0] + b[2] - a[2]), 1) * (b[1] - a[1] + 1))
+        _cap("ring", _outline(b[0] - a[0], b[2] - a[2]) * (b[1] - a[1] + 1))
         for y in range(a[1], b[1] + 1):
             for x in range(a[0], b[0] + 1):
                 _put((x, y, a[2]), w)
@@ -258,7 +262,7 @@ def _main() -> None:
         i, y, places = 0, a[1], 0  # its courses' cells, counted first
         while a[0] + i <= b[0] - i and a[2] + i <= b[2] - i and y <= b[1]:
             rows = min(step, b[1] - y + 1)
-            places += rows * 2 * (b[0] - a[0] - 2 * i + b[2] - a[2] - 2 * i + 2)
+            places += rows * _outline(b[0] - a[0] - 2 * i, b[2] - a[2] - 2 * i)
             y += rows
             i += 1
         _cap("pyramid", places)

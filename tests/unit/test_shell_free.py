@@ -26,6 +26,7 @@ import sqlite3
 import sys
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -698,3 +699,99 @@ def test_a_bigger_site_on_plans_is_replayed_as_saved(
     spec, out = shell_store.rebuild(conn, home, big.build)
     assert len(out.cells) == rec["blocks"] and spec.site == big.spec.site
     shell_store.check_layout(conn, home, rec)
+
+
+def test_a_big_plot_is_briefed_though_gos_own_building_passes_max_blocks(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    # the live designer's brief (D423): GOS's procedural building on this plot is over the
+    # default max_blocks, which the brief states and the model draws within
+    req = shell_brief.DesignRequest(
+        (), "a big hall", mode="free", theme="th-foundry", area=4_000, site_factor=4.0
+    )
+    got = shell_brief.prepare_design(conn, home, VaultIO(home / "vault"), req)
+    assert got.preview.outcome.reasons == (
+        "22672 blocks: more than max_blocks (20000)",
+    )
+    assert shell_brief.size_refused(got.preview)
+    assert "max_blocks: 20000." in got.brief.splitlines()
+    assert "SITE: lo [0, 0, 0] hi [126, 15, 126]" in got.brief
+    # any other refusal is still GOS's problem, never the model's
+    with pytest.raises(shell.ShellError, match="no such theme|theme"):
+        shell_brief.prepare_design(
+            conn, home, VaultIO(home / "vault"), replace(req, theme="th-nope")
+        )
+
+
+def test_a_door_walled_shut_in_the_relief_zone_is_refused(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    made = free(conn, home, 400, save_it=False)
+    assert made.fit is not None and made.fit["fit"]["door"]["at"] == [0, 13]
+    shut = {"op": "fill", "role": "wall", "lo": [-3, 0, 10], "hi": [-1, 5, 16]}
+    got = free(conn, home, 400, ops=[*made.ops, shut], save_it=False)
+    assert got.outcome.status == "refused" and got.saved is None
+    assert got.outcome.reasons[0].startswith("no doorway: ")
+    hint = free(
+        conn,
+        home,
+        400,
+        ops=[*made.ops, shut],
+        entrance={"side": "west", "at": [0, 13]},
+        save_it=False,
+    )
+    assert hint.outcome.reasons == (
+        (
+            "entrance at [0,13] on the west: its way out is blocked in the relief zone "
+            "outside SITE at y 0..2: keep it clear"
+        ),
+    )
+    # a wall in the relief zone above the doorway, or beside it, leaves the way out open
+    above = {"op": "fill", "role": "wall", "lo": [-3, 3, 10], "hi": [-1, 5, 16]}
+    beside = {"op": "fill", "role": "wall", "lo": [-3, 0, 0], "hi": [-1, 2, 11]}
+    for op in (above, beside):
+        ok = free(conn, home, 400, ops=[*made.ops, op], save_it=False)
+        assert ok.outcome.ok, (op, ok.outcome.reasons)
+        assert ok.fit is not None and ok.fit["fit"]["door"]["at"] == [0, 13]
+
+
+def test_a_plan_free_door_is_as_wide_as_the_brief_says(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    def hall(z0: int, z1: int, **kw: Any) -> shell_store.Made:  # noqa: ANN401
+        ops = [
+            {
+                "op": "walls",
+                "role": "wall",
+                "y": [0, 3],
+                "lo": [0, 0, 0],
+                "hi": [28, 3, 28],
+            },
+            {"op": "roof", "role": "roof", "lo": [0, 4, 0], "hi": [28, 4, 28]},
+            {"op": "clear", "lo": [0, 0, z0], "hi": [0, 2, z1]},
+        ]
+        return free(conn, home, 400, ops=ops, save_it=False, **kw)
+
+    why = (
+        "no doorway 3 wide: the widest ground opening at least 3 high with a straight way "
+        "out, at [0,14] on the west, is 1 wide; widen it to 3"
+    )
+    assert hall(14, 14).outcome.reasons == (why,)
+    named = hall(14, 14, entrance={"side": "west", "at": [0, 14]})
+    assert named.outcome.reasons == (why,)
+    wide = hall(13, 15)
+    assert wide.outcome.ok and wide.fit is not None
+    assert wide.fit["fit"]["door"] == {"side": "west", "at": [0, 13]}
+
+
+def test_two_site_factors_with_one_plot_are_two_builds(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    low = free(conn, home, 100, site_factor=1.25)
+    high = free(conn, home, 100, site_factor=1.9)
+    assert (
+        low.spec.site == high.spec.site
+    )  # side = max(ceil(sqrt(f*area)), sqrt(area)+4)
+    assert low.build != high.build
+    for made, factor in ((low, 1.25), (high, 1.9)):
+        assert shell_store.load(home, made.build)["fit"]["site_factor"] == factor

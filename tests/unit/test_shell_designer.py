@@ -613,6 +613,46 @@ def test_the_guard_stops_before_a_try_past_the_cap_with_the_figures(
         assert len(astra.requests) == 1  # nothing more was sent
 
 
+def test_the_day_cap_is_read_again_before_every_try(
+    home: Path, toml: Path, store: Store, astra: FakeResponsesAPI
+) -> None:
+    UsageMeter(store, 100.0, (80, 100)).record(
+        "fast", "claude-opus-5-5", Usage(), usd=8.0, task="x"
+    )
+    sloppy = fakes.FakeDesigner(fakes.SLOPPY)
+
+    def policy(body: dict[str, Any]) -> Answer:
+        if (
+            len(astra.requests) == 1
+        ):  # another process (the CLI, a bake-off) spends meanwhile
+            other = Store(access.db_path(home))
+            try:
+                UsageMeter(other, 100.0, (80, 100)).record(
+                    "bakeoff", "x", Usage(), usd=2.5, task="other"
+                )
+            finally:
+                other.close()
+        return Answer(
+            text=sloppy.complete("", body["input"], {}, 0).text,
+            input_tokens=2000,
+            output_tokens=400,
+        )
+
+    astra.policy = policy
+    ctx = ctx_of(home, toml, "astra", store, ai=AiMode())
+    got = shell_designer.design(ctx, site_ask(), lambda _s: None)
+    (why,) = got.result["refused"]
+    one = (2000 * 10 + 400 * 50) / 1e6
+    assert why.startswith(
+        f"stopped before try 2: today's AI spend is ${8.0 + 2.5 + one:.2f} and the next try "
+    )
+    assert why.endswith(
+        f"over the day cap $10.00 ([budget] day_max_usd). ${one:.2f} spent on this "
+        "request; nothing was saved."
+    )
+    assert len(astra.requests) == 1
+
+
 @pytest.mark.parametrize(
     "answer",
     [
@@ -993,6 +1033,42 @@ def test_the_architect_asks_the_designer_and_may_not_write_operations(
         a.registry, "build_request", {"plans": "pl-steel", "ask_designer": True}
     )
     assert out.is_error and "runs in the core (gos serve)" in out.text
+
+
+def test_at_the_day_cap_chat_and_the_architect_see_the_designer_as_not_ready(
+    conn: sqlite3.Connection,
+    home: Path,
+    toml: Path,
+    store: Store,
+    astra: FakeResponsesAPI,
+) -> None:
+    from gregtec.agents import router
+
+    UsageMeter(store, 100.0, (80, 100)).record(
+        "fast", "claude-opus-5-5", Usage(), usd=10.5, task="x"
+    )
+    why = (
+        "today's AI spend $10.50 has reached the day cap $10.00 ([budget] day_max_usd): "
+        "the shell designer is off until tomorrow, or raise day_max_usd"
+    )
+    st = shell_designer.status(cfg_of(home, "astra"), store, AiMode(), toml)
+    assert not st["ready"] and st["why"] == why
+    ds = first(conn, home)
+    started: list[dict[str, Any]] = []
+    a, deep = _asker(home, toml, "astra", AiMode(), started)
+    assert a.shell_jobs is not None
+    a.shell_jobs.store = store  # as the core sets it
+    # chat: why first, then the architect (no job that would refuse at once)
+    reply = a.ask("make the roof steeper")
+    assert reply.lane == router.DEEP and started == []
+    assert reply.text.startswith(f"The shell designer isn't ready ({why}). ")
+    assert deep.recent()[-1].request == "make the roof steeper"
+    # the architect: the head says why, and it may write the operations itself
+    look = _call(a.registry, "build_request", {"plans": "pl-steel", "save": False})
+    assert parse(look.text).head["designer"] == f"astra (not ready: {why})"
+    hand = _call(a.registry, "build_revise", {"words": "taller", "design_ops": "[]"})
+    assert "ask_designer=true" not in hand.text
+    assert versions.get(home, ds)["id"] == ds and astra.requests == []
 
 
 # --- the CLI ---------------------------------------------------------------------------------------

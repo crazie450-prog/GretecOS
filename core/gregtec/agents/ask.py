@@ -548,9 +548,15 @@ class Asker:
         if {CHOICE, CREDITS} & set(reasons):
             return None
         found = shell_designer.resolve(holder.cfg, holder.path)
+        if (
+            isinstance(found, shell_designer.Ready)
+            and found.spec.provider == "anthropic"
+            and reasons
+        ):
+            return None
+        # e.g. the day cap reached: not ready, so the architect does it (one "ready")
+        found = shell_designer.checked(holder.cfg, holder.store, self.ai, found)
         if isinstance(found, shell_designer.Ready):
-            if found.spec.provider == "anthropic" and reasons:
-                return None
             if holder.start is None:
                 return (
                     f"The shell designer {found.label} runs in the core (gos serve), so the "

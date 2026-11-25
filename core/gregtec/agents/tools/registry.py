@@ -85,6 +85,10 @@ class ShellJobs:
     cfg: Any = None  # gregtec.config.Config
     path: Path | None = None
     start: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    # the core's Store and AiMode, which say whether the designer may start now (the day cap,
+    # the AI off: shell_designer.held); None outside the core
+    store: Any = None
+    ai: Any = None
 
 
 @dataclass(frozen=True)

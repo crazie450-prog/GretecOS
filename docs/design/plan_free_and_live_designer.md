@@ -362,6 +362,7 @@ Plan-free has no zones, so `region = joined`.
 - "the roofed floor joined to the west door has 1,212 columns at least 3 high; it needs 1,500: add at least 288 (another 248 roofed columns aren't joined to the door)". The unjoined count is `len(tall) - len(joined)`.
 - The existing "y 0 is solid in N columns under your roof, e.g. [x,0,z]: the floor is y 0; leave it air" hint (:704-711, reworded without "machine").
 - The `_door` refusals as they are ("no doorway: …", the hint's own sentences).
+- Review fixes (WO-10.17): a door's way out must also be clear past SITE's edge, through the relief zone, at y 0..door_height-1 (`_door`'s `beyond` columns; nothing else keeps a plan-free door's approach clear): "entrance at [x,z] on the {side}: its way out is blocked in the relief zone outside SITE at y 0..2: keep it clear". And the door is `corridor_width` (3) wide, as the prompt and brief say: "no doorway 3 wide: the widest ground opening at least 3 high with a straight way out, at [x,z] on the {side}, is 1 wide; widen it to 3".
 
 **Stats:** `{"floor": n, "need_floor": area, "spare_pct": round(100*(n-area)/area), "unjoined": m, "door": {"side", "at"}, "entrance_from": "auto"|"answer"}`. `fit_line` and the bake-off read these.
 

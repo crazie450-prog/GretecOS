@@ -213,22 +213,49 @@ def _runs(cands: Sequence[tuple[str, Column]]) -> list[tuple[str, list[Column]]]
 
 
 def _door(
-    floor: Floor, tall: set[Column], opts: Options, hint: Mapping[str, Any] | None
+    floor: Floor,
+    tall: set[Column],
+    opts: Options,
+    hint: Mapping[str, Any] | None,
+    beyond: frozenset[Column] = frozenset(),
 ) -> tuple[list[_Door], list[str]]:
     """The answer's door (one, validated), or every candidate door in rank order: per run of
     openings (widest first, ties west, south, east, north, then the lowest), its
-    ``corridor_width``-wide window nearest the run's middle with a full lobby behind it."""
+    ``corridor_width``-wide window nearest the run's middle with a full lobby behind it.
+    ``beyond``: the columns outside SITE with a block at y 0..corridor_height-1 (a plan-free
+    building's relief zone, D424); a door's way out must not cross one."""
     ch, cw = opts.corridor_height, opts.corridor_width
     site = floor.site
 
     def inside(c: Column) -> bool:
         return site.lo[0] <= c[0] <= site.hi[0] and site.lo[2] <= c[1] <= site.hi[2]
 
+    # how far past SITE's edge a block of ``beyond`` stands, at most
+    far = max(
+        (
+            max(site.lo[0] - x, x - site.hi[0], site.lo[2] - z, z - site.hi[2])
+            for x, z in beyond
+        ),
+        default=0,
+    )
+
     def way_out(col: Column, side: str) -> bool:
         dx, dz = SIDES[side]
         c = (col[0] + dx, col[1] + dz)
         while inside(c):
             if c not in tall and c not in floor.empty:
+                return False
+            c = (c[0] + dx, c[1] + dz)
+        return True
+
+    def clear_beyond(col: Column, side: str) -> bool:
+        """No block of ``beyond`` on the way out past SITE's edge."""
+        dx, dz = SIDES[side]
+        c = (col[0] + dx, col[1] + dz)
+        while inside(c):
+            c = (c[0] + dx, c[1] + dz)
+        for _ in range(far):
+            if c in beyond:
                 return False
             c = (c[0] + dx, c[1] + dz)
         return True
@@ -260,7 +287,7 @@ def _door(
         (side, col)
         for col in sorted(tall)
         for side in SIDES
-        if edge(col, side) and way_out(col, side)
+        if edge(col, side) and way_out(col, side) and clear_beyond(col, side)
     ]
     runs = _runs(cands)
     if hint is not None:
@@ -284,6 +311,9 @@ def _door(
         if not way_out(col, side):
             way = f"there is no straight way out to the site's {side} edge at y 0..{ch - 1}"
             return [], [f"{head}: {way}"]
+        if not clear_beyond(col, side):
+            way = f"its way out is blocked in the relief zone outside SITE at y 0..{ch - 1}"
+            return [], [f"{head}: {way}: keep it clear"]
         run = next(r for s, r in runs if s == side and col in r)
         for cols in windows(run, run.index(col)):
             if col in cols and (door := found(side, cols)) is not None:
@@ -989,24 +1019,47 @@ def floor_check(
     hint: Mapping[str, Any] | None = None,
 ) -> Floored:
     """A plan-free building's rule (D424): at least ``area`` columns of roofed floor at least
-    ``corridor_height`` high, 4-joined to the lobby of one ground doorway, with site mode's own
-    door rule (:func:`_door`: the answer's ``hint``, else the ranked doorways). The first door
+    ``corridor_height`` high, 4-joined to the lobby of one ground doorway ``corridor_width``
+    wide, with site mode's own door rule (:func:`_door`: the answer's ``hint``, else the ranked
+    doorways) and its way out clear through the relief zone too. The first door
     in rank order whose joined floor holds the area, else the one joining the most (as
     :func:`fit` picks its door). No machines, no zones, no keep-outs."""
     opts = opts or Options()
     if site.lo[1] != 0:
         raise lay_lib.LayoutError("a site's floor is y 0")
     ch = opts.corridor_height
-    floor = derive(sorted(set(cells)), site)
+    got = sorted(set(cells))
+    floor = derive(got, site)
     tall = {c for c, v in floor.h.items() if v >= ch}
     stats: dict[str, Any] = {"floor": 0, "need_floor": area}
+    # the relief zone's blocks in a doorway's height: nothing keeps a plan-free door's
+    # approach clear but this (D424)
+    beyond = frozenset(
+        (x, z)
+        for x, y, z in got
+        if 0 <= y < ch
+        and not (site.lo[0] <= x <= site.hi[0] and site.lo[2] <= z <= site.hi[2])
+    )
 
     def refuse(*why: str) -> Floored:
         return Floored(False, list(why), stats, None, None)
 
-    doors, why = _door(floor, tall, opts, hint)
+    doors, why = _door(floor, tall, opts, hint, beyond)
     if not doors:
         return refuse(*why)
+    # the door is as wide as the brief says (corridor_width): site mode's narrower fallback
+    # window is not a plan-free door (D424)
+    cw = opts.corridor_width
+    wide = [d for d in doors if len(d.cols) >= cw]
+    if not wide:
+        d = doors[0]
+        x, z = d.cols[0]
+        return refuse(
+            f"no doorway {cw} wide: the widest ground opening at least {ch} high with a "
+            f"straight way out, at [{x},{z}] on the {d.side}, is {len(d.cols)} wide; "
+            f"widen it to {cw}"
+        )
+    doors = wide
     door, joined = doors[0], set(_flood(tall, doors[0].lobby))
     for d in doors[1:]:
         if len(joined) >= area:

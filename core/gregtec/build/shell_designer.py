@@ -200,6 +200,21 @@ def held(
     return None, min(cap, left)
 
 
+def checked(
+    cfg: Config,
+    store: Store | None,
+    ai: AiMode | None,
+    found: Ready | NotReady | None,
+) -> Ready | NotReady | None:
+    """:func:`resolve`'s designer as :class:`NotReady` when :func:`held` says a request may not
+    start now (the AI off for it, the day cap reached): the one "ready" that the status, chat
+    and the architect's tools share."""
+    if not isinstance(found, Ready):
+        return found
+    why, _ = held(cfg, store, ai, found)
+    return found if why is None else NotReady(found.label, why)
+
+
 def status(
     cfg: Config,
     store: Store | None = None,
@@ -312,7 +327,8 @@ class _Run:
         return bo._most(self.system, self.ready.spec, user, self.mode)[0]
 
     def guard(self, user: str) -> None:
-        """Before every try, a retry too: a Cancel first, then the cap."""
+        """Before every try, a retry too: a Cancel first, then the cap, then the day cap read
+        again (another process, the CLI or a bake-off, may have spent since the start)."""
         progress.check()
         n, most = self.tries + 1, self.bound(user)
         if self.spent + most > self.cap + 1e-9:
@@ -320,6 +336,13 @@ class _Run:
                 f"stopped before try {n}: ${self.spent:.2f} spent and the next try could "
                 f"cost up to ${most:.2f}, over this request's cap ${self.cap:.2f}. Nothing "
                 "was saved."
+            )
+        day = _day(self.ctx.cfg, self.ctx.store) if most else None
+        if day is not None and day[0] + most > day[1] + 1e-9:
+            raise _Stop(
+                f"stopped before try {n}: today's AI spend is ${day[0]:.2f} and the next try "
+                f"could cost up to ${most:.2f}, over the day cap ${day[1]:.2f} ([budget] "
+                f"day_max_usd). ${self.spent:.2f} spent on this request; nothing was saved."
             )
         self.tries = n
 
