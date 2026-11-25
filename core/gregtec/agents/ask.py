@@ -554,7 +554,7 @@ class Asker:
             and reasons
         ):
             return None
-        # e.g. the day cap reached: not ready, so the architect does it (one "ready")
+        # e.g. the AI switched off for it: not ready, so the architect does it (one "ready")
         found = shell_designer.checked(holder.cfg, holder.store, self.ai, found)
         if isinstance(found, shell_designer.Ready):
             if holder.start is None:

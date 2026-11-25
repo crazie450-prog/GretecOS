@@ -123,16 +123,17 @@ MAX_ECHO = 16_000  # characters of a refused answer sent back (room for a build 
 MAX_WHY = (
     4_000  # characters of the code's refusal sent back (its reasons can be very long)
 )
-# A bake-off case that aims at more blocks than BIG_TARGET (D425) gets a longer answer and a
-# longer echo: the whole sandbox script (gregtec.build.sandbox.MAX_SCRIPT_CHARS). The live
-# designer and every other case keep the standard two (D423).
+# A request that aims at more blocks than BIG_TARGET gets a longer answer and a longer echo:
+# the whole sandbox script (gregtec.build.sandbox.MAX_SCRIPT_CHARS). A bake-off case aims at
+# its target (D425); a live designer request at its preview's size (big_request, D429). Every
+# other request keeps the standard two (D423).
 BIG_TARGET = 5_000
 BIG_OUTPUT_TOKENS = 32_000
 BIG_ECHO = 40_000
 
 
 def out_tokens(target: int | None) -> int:
-    """The output limit of a bake-off case aiming at ``target`` blocks (D425)."""
+    """The output limit of a request aiming at ``target`` blocks (D425, D429)."""
     return (
         BIG_OUTPUT_TOKENS
         if target is not None and target > BIG_TARGET
@@ -141,8 +142,32 @@ def out_tokens(target: int | None) -> int:
 
 
 def echo(target: int | None) -> int:
-    """How much of a refused answer goes back to a bake-off case aiming at ``target`` (D425)."""
+    """How much of a refused answer goes back to a request aiming at ``target`` (D425, D429)."""
     return BIG_ECHO if target is not None and target > BIG_TARGET else MAX_ECHO
+
+
+# A live request has no target (D429): it is large when GOS's own procedural building for it
+# passes BIG_PREVIEW blocks (the plot, sized from the machines or the floor area, is what makes
+# a building big, D425). On the bake-off's cases the standard ones' previews are 1,131 to 1,483
+# blocks and the four big cases' 2,399 to 9,771 (test_shell_bakeoff checks the split).
+BIG_PREVIEW = 2_000
+
+
+def big_request(blocks: int, max_blocks: int) -> bool:
+    """A live designer request is large (D429) when GOS's own procedural building for it (a new
+    design's preview, :func:`baseline`), or the version it revises, has more than
+    :data:`BIG_PREVIEW` blocks and its max_blocks allows more than :data:`BIG_TARGET` (as a big
+    bake-off case's target is at most its max_blocks, D425)."""
+    return blocks > BIG_PREVIEW and max_blocks > BIG_TARGET
+
+
+def baseline(made: Any) -> int:  # noqa: ANN401 - a shell_store.Made
+    """Blocks of GOS's own procedural building in a preview: a site preview whose machines
+    didn't pack still counts its building (its SITE, NEED and palette are what the brief
+    states; the fitter's limits are the model's to work round, D422)."""
+    if made.outcome.ok:
+        return len(made.outcome.cells)
+    return len(shell.compile_ops(made.spec, made.ops).cells)
 
 
 # Site mode (D422): how much air a building is asked to give, in NEED.required. The fitter

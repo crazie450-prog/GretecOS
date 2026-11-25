@@ -62,7 +62,7 @@ Answer to the last question today: **no**. Every shell needs 1 to 3 saved plans 
 - **G1:** With `[shell] designer` unset, every existing path behaves exactly as at e9d48ae. The existing tests pass unchanged, except the bake-off case count (7 → 11).
 - **G2:** With `[shell] designer = "astra"` set and ready, every new AI shell design and revision is drawn by that model through `shell_brief` + `llm.designers`:
   - the same gate as the bake-off, and at most 2 repair rounds after the first answer;
-  - every try metered (lane `designer`) and held to a per-request cap and to the day cap;
+  - every try metered (lane `designer`) and held to a per-request cap and to the day cap (answered 2026-11-25, D429: the day cap only warns);
   - the version records the real cost and the designer's label, never a model id.
 - **G3:** A plan-free building ("free" mode) can be designed, revised, viewed and exported from the workbench, the CLI, the architect and the bake-off. It has no plans, no program and no fit, and it is checked by the door-joined roofed-floor rule.
 - **G4:** The bake-off has 4 new cases (2 on plans at site factor 4.0 and 6.0; 2 plan-free) with code-stated targets of 6,000-20,000 blocks, and its report shows hit or miss per target. Nothing about the 7 existing cases changes: the same prompt text, the same output limit and the same echo.
@@ -149,6 +149,7 @@ The engine's interface:
    - If `left <= 0`: "today's AI spend $10.12 has reached the day cap $10.00 ([budget] day_max_usd): the shell designer is off until tomorrow, or raise day_max_usd".
    - Otherwise the request's cap is `min(designer_max_usd, left)`.
    - This departs from D334 (the day cap is alert-only for the other lanes) the same way the bake-off already does. It is recorded in D423 and asked about in §9.
+   - **Answered (D429, 2026-11-25): only alert.** The refusal and the lowered cap are gone; the guard no longer reads the day cap; D334's cost watch alerts as for every lane.
 5. **One try:** if the cap is less than one try's bound (`shell_bakeoff._most(system, spec, brief, mode)`), refuse: "one try of astra can cost up to $0.97; this request's cap is $0.50: raise [shell] designer_max_usd". This runs after the brief is built, because the bound depends on it.
 
 **The guard before every try** (retries and repairs included):
@@ -163,7 +164,7 @@ The engine's interface:
 
 **The call:**
 - `llm.call(Capped(...), shell_brief.system_prompt(mode), user, shell_brief.schema(mode), shell_brief.MAX_OUTPUT_TOKENS)`.
-- The live designer uses the standard 16,000-token output limit and the standard 16,000-character echo. These are the bake-off's measured settings. The big limits (§4.4) are bake-off-only until Clayton decides (§9 Q1).
+- The live designer uses the standard 16,000-token output limit and the standard 16,000-character echo. These are the bake-off's measured settings. The big limits (§4.4) are bake-off-only until Clayton decides (§9 Q1). **Answered (D429, 2026-11-25):** a large request (`shell_brief.big_request`: its preview, or the version it revises, over 2,000 blocks and max_blocks over 5,000) uses 32,000 tokens and the 40,000-character echo, with the cap `designer_big_max_usd` (6.0, or `designer_max_usd` when higher).
 
 **Meter:**
 - Each answered try: `meter.record("designer", spec.model, reply.usage, usd=cost(spec, usage), task=f"designer:{job or 'cli'}")`.
@@ -557,7 +558,7 @@ With Astra at $10 in / $50 out per million (setup_guide.md:1836), the site/free 
 |---|---|---|---|
 | Live designer per-request cap | `[shell] designer_max_usd`, default 4.0, 0.5-20 | config.py | new (D423) |
 | Why 4.0 | worst request ≈ 0.97 + 1.13 + 1.13 = $3.23 at 16k out; a $2 cap (`task_max_usd`) stops before the 2nd repair (spent ≈ $1.5 + next ≈ $1.13 > $2) | §2.3 | — |
-| Live output limit / echo | 16,000 tokens / 16,000 chars | shell_brief | unchanged |
+| Live output limit / echo | 16,000 tokens / 16,000 chars | shell_brief | unchanged (D429: 32,000 / 40,000 for a large request) |
 | Bake-off big-case output / echo | 32,000 / 40,000 when target > 5,000 | shell_brief.out_tokens/echo | new (D425) |
 | Repair rounds | 2 after the first answer | shell_rounds (moved) | unchanged |
 | Plan-free area | 25 to 6,000 columns | shell.AREA | new (D424) |
@@ -565,7 +566,7 @@ With Astra at $10 in / $50 out per million (setup_guide.md:1836), the site/free 
 | Plan-free plot height | max(ch+chh, 12) + headroom (16 default, 28 max) | shell.site_for_area | new |
 | Site factor | 1.25-6.0, default 2.0 (site and free) | shell.SITE_FACTORS | existing, now plumbed |
 | Helper caps | placed cells ≤ 4 × max_blocks; clear has no cap | sandbox_child | changed (D425) |
-| Day cap | refuses designer requests at 0 left | shell_designer.held | new behaviour (D423, §9 Q2) |
+| Day cap | refuses designer requests at 0 left | shell_designer.held | new behaviour (D423, §9 Q2); D429: only alerts |
 | Meter lane | `designer`, task `designer:<job>` (`:bound` for unmeasured tries) | usage | new |
 | Shell job lock | planner lock only around non-model steps | design_jobs | changed |
 | Bake-off cases | 11 (MAX_CASES 24) | tsv | +4 |
@@ -850,7 +851,7 @@ The workbench UI for plan-free and the live designer indication, plus e2e. Compo
 - **D423:**
   - `[shell] designer` names a priced `[[bakeoff.models]]` label. That model draws every new AI shell design and revision through `shell_brief` + `llm.designers`: workbench jobs (`ai: true`), CLI `--ai`, chat revise, and the architect's `ask_designer`. The architect may not hand-write operations while one is set.
   - Same gate, 2 repair rounds (shared engine).
-  - The per-request cap is `designer_max_usd` (4.0). It refuses at the day cap (a departure from D334, as the bake-off does).
+  - The per-request cap is `designer_max_usd` (4.0). It refuses at the day cap (a departure from D334, as the bake-off does). (D429: large requests capped by `designer_big_max_usd`, 6.0; the day cap only alerts.)
   - Meter lane `designer`; unmeasured tries are metered at their bound.
   - CHOICE/CREDITS are honoured; Anthropic-only No-AI reasons are ignored for other providers; designer errors never trip No-AI.
   - Unset = unchanged. Shell jobs take the planner lock only around non-model steps.
@@ -903,4 +904,6 @@ The workbench UI for plan-free and the live designer indication, plus e2e. Compo
 These go in the PR's Questions section. Everything else is decided above.
 
 1. **Bigger answers for the live designer?** The live designer keeps the 16,000-token answer limit the bake-off measured. The big bake-off cases use 32,000. After the big-case run, should the live designer also use 32,000 for large requests? At Astra's price that is up to about $0.80 more per try, and the per-request cap would go to about $6.
+   **Answered (Clayton, 2026-11-25, D429): yes,** 32,000 tokens for large requests with a cap of about $6 (`[shell] designer_big_max_usd`, 6.0); smaller requests keep 16,000 and $4.
 2. **Day cap.** The live designer refuses once today's AI spend reaches `[budget] day_max_usd`, as the bake-off does. Every other lane only alerts at the day cap (D334). Keep the refusal, or only alert?
+   **Answered (Clayton, 2026-11-25, D429): only alert,** as the other lanes; the per-request cap still holds.

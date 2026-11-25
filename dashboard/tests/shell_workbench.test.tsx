@@ -211,9 +211,13 @@ describe("the workbench's job bodies", () => {
     expect(housesText({ plans: [], area: 1500 })).toBe("plan-free · ≥1,500 floor");
     expect(plotText({ area: 1500, factor: 2, size: [55, 16, 55] })).toBe("plot about 55 × 55 at factor 2.0");
     expect(plotText({ area: 1500, factor: 2.5, size: [62, 16, 62] })).toBe("plot about 62 × 62 at factor 2.5");
-    const status = { configured: true as const, label: "astra", provider: "openai", ready: true, why: null, cap_usd: 4, day_left_usd: 7.6, ai_off: null };
-    expect(designerText(status)).toBe("Designer: astra · up to $4.00 a request · $7.60 left today");
-    expect(designerText({ ...status, day_left_usd: null })).toBe("Designer: astra · up to $4.00 a request");
+    const status = { configured: true as const, label: "astra", provider: "openai", ready: true, why: null, cap_usd: 4, big_cap_usd: 6, day_left_usd: 7.6, ai_off: null };
+    expect(designerText(status)).toBe("Designer: astra · up to $4.00 a request ($6.00 a large one) · $7.60 left today");
+    expect(designerText({ ...status, day_left_usd: null })).toBe("Designer: astra · up to $4.00 a request ($6.00 a large one)");
+    expect(designerText({ ...status, day_left_usd: -0.5 })).toBe(
+      "Designer: astra · up to $4.00 a request ($6.00 a large one) · past today's day cap (a warning only)",
+    );
+    expect(designerText({ ...status, big_cap_usd: 4 })).toBe("Designer: astra · up to $4.00 a request · $7.60 left today");
     expect(designerText({ ...status, ready: false, why: "no openai key is stored" })).toBe("Designer: astra · not ready: no openai key is stored");
     expect(designerText({ configured: false })).toBeNull();
   });
@@ -335,7 +339,7 @@ describe("ShellWorkbench", () => {
 });
 
 describe("ShellWorkbench with the live shell designer and plan-free buildings (D423, D424)", () => {
-  const ready = { configured: true, label: "astra", provider: "openai", ready: true, why: null, cap_usd: 4, day_left_usd: 7.6, ai_off: null };
+  const ready = { configured: true, label: "astra", provider: "openai", ready: true, why: null, cap_usd: 4, big_cap_usd: 6, day_left_usd: 7.6, ai_off: null };
 
   it("with none set keeps today's buttons: no status line, no Design with the architect", async () => {
     routes["GET /api/shells/designer"] = () => ({ status: 200, body: { configured: false } });
@@ -350,7 +354,7 @@ describe("ShellWorkbench with the live shell designer and plan-free buildings (D
     routes["GET /api/shells/designer"] = () => ({ status: 200, body: ready });
     design = { ...design, versions: [version(1, V1), version(2, V2, { by: "architect", cost_usd: 0.4213, designer: "astra", rounds: 1 })] };
     render(<ShellWorkbench />);
-    expect((await screen.findByTestId("shell-designer")).textContent).toContain("Designer: astra · up to $4.00 a request · $7.60 left today");
+    expect((await screen.findByTestId("shell-designer")).textContent).toContain("Designer: astra · up to $4.00 a request ($6.00 a large one) · $7.60 left today");
     await waitFor(() => expect(screen.getByTestId("shell-version-list").querySelectorAll("tbody tr")).toHaveLength(2));
     const newest = screen.getByTestId("shell-version-list").querySelector('tr[data-version="2"]') as HTMLElement;
     expect(newest.textContent).toContain("AI (astra)");

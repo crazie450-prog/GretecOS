@@ -1999,7 +1999,7 @@ Open the settings file:
 notepad "$gh\config\gos.toml"
 ```
 
-Add two lines at the very end, then save: `[shell]` on the first and `designer = "astra"` on the second. A third line `designer_max_usd = 4.0` is optional: it is the most one request may spend, every try counted (from 0.5 to 20; 4 when you leave it out). Your day limit holds too: once today's spend reaches it, the designer says so and spends nothing until tomorrow.
+Add two lines at the very end, then save: `[shell]` on the first and `designer = "astra"` on the second. A third line `designer_max_usd = 4.0` is optional: it is the most one request may spend, every try counted (from 0.5 to 20; 4 when you leave it out). A fourth, `designer_big_max_usd = 6.0`, is optional too: the most a large request (a big plot, which may answer at twice the length) may spend (from 0.5 to 20; 6 when you leave it out; the third line's figure when that is higher). Your day limit only warns, as for the other AI work: past it the designer still runs, each request held to its own cap.
 
 GOS reads the file when it starts, so start it again:
 
@@ -2014,7 +2014,7 @@ Then ask it for one design at the command line. It prints what one request may c
 & $gos shell design $plan --ai
 ```
 
-You should see: a line `astra · this request's cap $4.00 · one try up to $<amount> · $<amount> left today`, then `Type yes to spend up to $4.00:`. Type `no` to stop here with nothing spent, or `yes` to have astra draw one building (about \$1). With `yes` it prints its stages and ends with a line `v1 sh-... of ds-... by astra: ...` and the next step, `gos shell export`.
+You should see: a line `astra · this request's cap $4.00 · one try up to $<amount> · $<amount> left today`, then `Type yes to spend up to $4.00:` (`$6.00` when your plan's plot is big enough to count as a large request; past your day limit the first line ends `past today's day cap (a warning only)` instead of what is left). Type `no` to stop here with nothing spent, or `yes` to have astra draw one building (about \$1). With `yes` it prints its stages and ends with a line `v1 sh-... of ds-... by astra: ...` and the next step, `gos shell export`.
 
 If not: `Not run: no shell designer is set ...`: the two lines are not in the file (the command reads `gos.toml` itself, so restarting GOS does not change this message; the restart matters for the dashboard and chat). `Not run: no openai key is stored ...`: go back to step 76, part 3. `Not run: astra has no price in gos.toml ...`: the `input_usd` and `output_usd` lines of step 77 are missing. `Not run: no [[bakeoff.models]] entry is labelled ...`: the label after `designer =` is not the one in step 77. To go back to the architect, delete the two lines, save, and start GOS again as above.
 

@@ -210,7 +210,7 @@ No dashboard or TS changes: layout.json and the ghost shapes are unchanged. The 
   - The cap stops a 40-high vault counting air no machine can use.
   - Uncapped Vr is reported alongside for Clayton's literal reading (Q2).
 - **Gate**: V ≥ M. The volume rule is necessary but not sufficient; the packing is the proof. Aisles, the lobby and chases come out of the 25%.
-- **Floor gate (added in build, D422 (2)):** |R| ≥ F = ceil((1 + buffer/100) × Σ keep-out x·z). H is usually one block taller than a keep-out (corridor 3 + chase 2 = 5 against a 4-high keep-out), so air counted up to H can make up for a floor smaller than the keep-outs themselves: a probe of plain halls sized just past V ≥ M was refused for packing about half the time. The machines stand on the floor (ground floor only), so the 25% is asked of the floor too. NEED and `covered()` carry `floor_required` / `need_floor`.
+- **Floor gate (added in build, D422 (2)):** |R| ≥ F = ceil((1 + buffer/100) × Σ keep-out x·z). H is usually one block taller than a keep-out (corridor 3 + chase 2 = 5 against a 4-high keep-out), so air counted up to H can make up for a floor smaller than the keep-outs themselves: a probe of plain halls sized just past V ≥ M was refused for packing about half the time. The machines stand on the floor (ground floor only), so the 25% is asked of the floor too. NEED and `covered()` carry `floor_required` / `need_floor`. Kept by Clayton (2026-11-25, D429 (3)).
 
 ### 2.4 Algorithm
 

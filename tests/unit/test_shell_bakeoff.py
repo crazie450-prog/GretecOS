@@ -3890,3 +3890,19 @@ def test_gos_shell_bakeoff_run_only_names_its_cases(home: Path, tmp_path: Path) 
         )
         in text
     )
+
+
+def test_the_live_designer_s_large_rule_picks_exactly_the_big_cases(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    # D429: a live request is large when GOS's own procedural building for it (the preview the
+    # bake-off reports as its baseline) passes BIG_PREVIEW blocks and max_blocks passes 5,000;
+    # on the cases that is exactly the cases whose target passes 5,000 (D425)
+    vault = VaultIO(home / "vault")
+    for p in bo.prepare(conn, home, vault, bo.load_cases(), PLANS):
+        want = p.case.target is not None and p.case.target > shell_brief.BIG_TARGET
+        assert shell_brief.big_request(p.baseline, p.max_blocks) == want, (
+            p.case.id,
+            p.baseline,
+            p.max_blocks,
+        )

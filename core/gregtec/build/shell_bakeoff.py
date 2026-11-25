@@ -680,13 +680,7 @@ def prepare(
         try:
             got = shell_brief.prepare_design(conn, home, vault, req)
             made, lay = got.preview, got.facts
-            if made.outcome.ok:
-                baseline = len(made.outcome.cells)
-            else:
-                # a site case's procedural building whose machines didn't pack: its SITE,
-                # NEED and palette are still what the brief states, and its blocks the
-                # baseline (the fitter's limits are the models' to work round, D422)
-                baseline = len(shell.compile_ops(made.spec, made.ops).cells)
+            baseline = shell_brief.baseline(made)
             if case.max_blocks != "default":
                 # the record's sizes are what the brief states; the gate judges each answer
                 limit = (

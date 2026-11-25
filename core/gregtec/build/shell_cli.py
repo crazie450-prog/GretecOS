@@ -460,7 +460,13 @@ def _ai(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
         day = shell_designer._day(cfg, store)
 
         def confirm(cap: float, most: float) -> bool:
-            left = "" if day is None else f" · ${day[2]:.2f} left today"
+            left = (
+                ""
+                if day is None
+                else f" · ${day[2]:.2f} left today"
+                if day[2] > 0
+                else " · past today's day cap (a warning only)"
+            )
             print(
                 f"{ready.label} · this request's cap ${cap:.2f} · one try up to "
                 f"${most:.2f}{left}",

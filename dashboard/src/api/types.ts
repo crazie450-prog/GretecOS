@@ -381,6 +381,7 @@ export type ShellDesignerStatus =
       ready: boolean;
       why: string | null;
       cap_usd: number;
+      big_cap_usd: number; // a large request's cap (32,000-token answers, D429)
       day_left_usd: number | null;
       ai_off: string | null;
     };

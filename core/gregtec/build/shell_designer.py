@@ -16,12 +16,16 @@ accepted design is a new version (``by`` architect, with the real cost, the desi
 the rounds it took); nothing is saved on any failure.
 
 **Spending** (:func:`held`, the guard): refused while Clayton's switch or the credit pause has the
-AI off (the Anthropic API's own problems stop only an Anthropic designer), once today's spend
-has reached ``[budget] day_max_usd``, and when one try can cost more than the request's cap
-(``[shell] designer_max_usd``, lowered to what the day cap leaves). Every try, retries included,
-is checked against the cap first; every answered try is metered (lane ``designer``) at its real
-cost, and a try that broke off after it was sent, or came without its token count, at the most
-it can have cost. A designer's own errors never put the other roles into No-AI.
+AI off (the Anthropic API's own problems stop only an Anthropic designer), and when one try can
+cost more than the request's cap (:func:`cap_of`: ``[shell] designer_max_usd``, or for a large
+request, :func:`gregtec.build.shell_brief.big_request`, the larger of it and
+``designer_big_max_usd``; D429). ``[budget] day_max_usd`` only warns, as for every other lane
+(D334's cost watch, which counts this lane too; D429). Every try, retries included, is checked
+against the cap first; every answered try is metered (lane ``designer``) at its real cost, and a
+try that broke off after it was sent, or came without its token count, at the most it can have
+cost. A large request is asked for answers of up to
+:data:`gregtec.build.shell_brief.BIG_OUTPUT_TOKENS` tokens and gets the longer echo (D429).
+A designer's own errors never put the other roles into No-AI.
 
 **Unpriced models never run here**, and the key is read from the keyring per request.
 Connections to the recipe DB are opened for the brief and the gate only, never across a model
@@ -171,33 +175,29 @@ def _ai_off(ai: AiMode | None, ready: Ready) -> str | None:
     return f"the AI is off ({LABELS.get(hard[0], hard[0])}): nothing is spent"
 
 
+def cap_of(cfg: Config, big: bool) -> float:
+    """A request's cap (D429): ``[shell] designer_max_usd``; a large request's the larger of it
+    and ``designer_big_max_usd``, so it never gets less than a standard one."""
+    small = cfg.shell_designer_max_usd
+    return max(small, cfg.shell_designer_big_max_usd) if big else small
+
+
 def held(
     cfg: Config,
     store: Store | None,
     ai: AiMode | None,
     ready: Ready | NotReady | None,
 ) -> tuple[str | None, float]:
-    """Why a request may not start now (one sentence; nothing is spent), and this request's cap:
-    ``[shell] designer_max_usd``, no more than what the day cap still leaves."""
+    """Why a request may not start now (one sentence; nothing is spent), and a standard
+    request's cap (``[shell] designer_max_usd``). The day cap is not a reason: it only warns,
+    as for every other lane (D334, D429)."""
     if ready is None:
         return UNSET_WHY, 0.0
     if isinstance(ready, NotReady):
         return ready.why, 0.0
     if off := _ai_off(ai, ready):
         return off, 0.0
-    cap = cfg.shell_designer_max_usd
-    if ready.spec.fake:
-        return None, cap
-    day = _day(cfg, store)
-    if day is None:
-        return None, cap
-    spent, top, left = day
-    if left <= 0:
-        return (
-            f"today's AI spend ${spent:.2f} has reached the day cap ${top:.2f} ([budget] "
-            "day_max_usd): the shell designer is off until tomorrow, or raise day_max_usd"
-        ), 0.0
-    return None, min(cap, left)
+    return None, cap_of(cfg, False)
 
 
 def checked(
@@ -207,8 +207,8 @@ def checked(
     found: Ready | NotReady | None,
 ) -> Ready | NotReady | None:
     """:func:`resolve`'s designer as :class:`NotReady` when :func:`held` says a request may not
-    start now (the AI off for it, the day cap reached): the one "ready" that the status, chat
-    and the architect's tools share."""
+    start now (the AI off for it): the one "ready" that the status, chat and the architect's
+    tools share."""
     if not isinstance(found, Ready):
         return found
     why, _ = held(cfg, store, ai, found)
@@ -222,11 +222,12 @@ def status(
     path: Path | None = None,
 ) -> dict[str, Any]:
     """``GET /api/shells/designer``: whether one is set, its label and provider (never a model
-    id), whether it is ready now and why not, this request's cap and what today leaves."""
+    id), whether it is ready now and why not, the cap of a request and of a large one, and what
+    today's day cap leaves (at or below 0 it only warns, D429)."""
     if not cfg.shell_designer:
         return {"configured": False}
     ready = resolve(cfg, path)
-    why, cap = held(cfg, store, ai, ready)
+    why, _ = held(cfg, store, ai, ready)
     day = _day(cfg, store)
     return {
         "configured": True,
@@ -234,7 +235,8 @@ def status(
         "provider": ready.spec.provider if isinstance(ready, Ready) else None,
         "ready": why is None,
         "why": why,
-        "cap_usd": cfg.shell_designer_max_usd if why is not None else cap,
+        "cap_usd": cap_of(cfg, False),
+        "big_cap_usd": cap_of(cfg, True),
         "day_left_usd": None if day is None else day[2],
         "ai_off": _ai_off(ai, ready) if isinstance(ready, Ready) else None,
     }
@@ -303,13 +305,15 @@ def _locked(lock: Lock | None) -> Iterator[None]:
 
 @dataclass
 class _Run:
-    """One request's tries: the guard, the meter and what was spent."""
+    """One request's tries: the guard, the meter and what was spent; a large request's longer
+    answer and echo (D429)."""
 
     ctx: Ctx
     ready: Ready
     cap: float
     mode: str
     system: str
+    big: bool = False
     spent: float = 0.0
     tries: int = 0
     round: int = 0
@@ -320,15 +324,28 @@ class _Run:
     def label(self) -> str:
         return self.ready.label
 
+    @property
+    def out_tokens(self) -> int:
+        return (
+            shell_brief.BIG_OUTPUT_TOKENS if self.big else shell_brief.MAX_OUTPUT_TOKENS
+        )
+
+    @property
+    def echo(self) -> int:
+        return shell_brief.BIG_ECHO if self.big else shell_brief.MAX_ECHO
+
     def bound(self, user: str) -> float:
         """The most one try with ``user`` can cost (0 for a fake)."""
         if self.ready.spec.fake:
             return 0.0
-        return bo._most(self.system, self.ready.spec, user, self.mode)[0]
+        most, _ = bo._most(
+            self.system, self.ready.spec, user, self.mode, self.out_tokens
+        )
+        return most
 
     def guard(self, user: str) -> None:
-        """Before every try, a retry too: a Cancel first, then the cap, then the day cap read
-        again (another process, the CLI or a bake-off, may have spent since the start)."""
+        """Before every try, a retry too: a Cancel first, then the request's cap. The day cap
+        only warns (D334's cost watch, D429), so it is not read here."""
         progress.check()
         n, most = self.tries + 1, self.bound(user)
         if self.spent + most > self.cap + 1e-9:
@@ -336,13 +353,6 @@ class _Run:
                 f"stopped before try {n}: ${self.spent:.2f} spent and the next try could "
                 f"cost up to ${most:.2f}, over this request's cap ${self.cap:.2f}. Nothing "
                 "was saved."
-            )
-        day = _day(self.ctx.cfg, self.ctx.store) if most else None
-        if day is not None and day[0] + most > day[1] + 1e-9:
-            raise _Stop(
-                f"stopped before try {n}: today's AI spend is ${day[0]:.2f} and the next try "
-                f"could cost up to ${most:.2f}, over the day cap ${day[1]:.2f} ([budget] "
-                f"day_max_usd). ${self.spent:.2f} spent on this request; nothing was saved."
             )
         self.tries = n
 
@@ -368,7 +378,7 @@ class _Run:
                 self.system,
                 user,
                 shell_brief.schema(self.mode),
-                shell_brief.MAX_OUTPUT_TOKENS,
+                self.out_tokens,
                 sleep=self.ctx.sleep,
             )
         except llm.ProviderError as exc:
@@ -414,6 +424,7 @@ class _Run:
         return {
             "designer": self.label,
             "rounds": self.round,
+            "max_output_tokens": self.out_tokens,
             "cost_usd": round(self.spent, 6),
             "tokens": {"in": self.tokens.input, "out": self.tokens.output},
             "seconds": round(time.monotonic() - started, 1),
@@ -424,12 +435,12 @@ def _refused(why: str, status: str = REFUSED, **more: Any) -> Outcome:  # noqa: 
     return Outcome(status, {"refused": [why], **more})
 
 
-def _start(ctx: Ctx) -> tuple[Ready, float] | Outcome:
-    """The pre-flight: set, ready, the AI on, the day cap not reached."""
+def _start(ctx: Ctx) -> Ready | Outcome:
+    """The pre-flight: set, ready, the AI on (the day cap only warns, D429)."""
     ready = resolve(ctx.cfg, ctx.path)
-    why, cap = held(ctx.cfg, ctx.store, ctx.ai, ready)
+    why, _ = held(ctx.cfg, ctx.store, ctx.ai, ready)
     if why is None and isinstance(ready, Ready):
-        return ready, cap
+        return ready
     kind = (
         UNSET
         if ready is None
@@ -445,14 +456,10 @@ def _one_try(run: _Run, brief: str) -> str | None:
     most = run.bound(brief)
     if most <= run.cap:
         return None
-    lowered = (
-        " (what today's [budget] day_max_usd leaves)"
-        if run.cap < run.ctx.cfg.shell_designer_max_usd
-        else ""
-    )
+    key = "designer_big_max_usd" if run.big else "designer_max_usd"
     return (
         f"one try of {run.label} can cost up to ${most:.2f}; this request's cap is "
-        f"${run.cap:.2f}{lowered}: raise [shell] designer_max_usd"
+        f"${run.cap:.2f}: raise [shell] {key}"
     )
 
 
@@ -478,6 +485,8 @@ def _ask(
             gate,
             run.refused,
             lambda n: run.on_round(n, say),
+            run.out_tokens,
+            run.echo,
         )
     except _Stop as stop:
         return _refused(str(stop), **run.result(started), attempts=run.attempts)
@@ -510,7 +519,7 @@ def design(
     pre = _start(ctx)
     if isinstance(pre, Outcome):
         return pre
-    ready, cap = pre
+    ready = pre
     say("brief")
     try:
         with _locked(ctx.lock):
@@ -521,7 +530,17 @@ def design(
                 conn.close()
     except (ValueError, OSError, sqlite3.Error, palette.CatalogError) as exc:
         return _refused(_brief_problem(exc), designer=ready.label, cost_usd=0.0)
-    run = _Run(ctx, ready, cap, req.mode, shell_brief.system_prompt(req.mode))
+    big = shell_brief.big_request(
+        shell_brief.baseline(got.preview), got.preview.record["max_blocks"]
+    )
+    run = _Run(
+        ctx,
+        ready,
+        cap_of(ctx.cfg, big),
+        req.mode,
+        shell_brief.system_prompt(req.mode),
+        big,
+    )
     saved: dict[str, Any] = {}
 
     def gate(said: shell_brief.Answer) -> str | None:
@@ -577,7 +596,7 @@ def revise(ctx: Ctx, ds: str, words: str, say: Say = progress.stage) -> Outcome:
     pre = _start(ctx)
     if isinstance(pre, Outcome):
         return pre
-    ready, cap = pre
+    ready = pre
     say("brief")
     try:
         with _locked(ctx.lock):
@@ -596,7 +615,10 @@ def revise(ctx: Ctx, ds: str, words: str, say: Say = progress.stage) -> Outcome:
         if shell_store.site_mode(old)
         else "layout"
     )
-    run = _Run(ctx, ready, cap, mode, shell_brief.system_prompt(mode))
+    big = shell_brief.big_request(old["blocks"], old["max_blocks"])
+    run = _Run(
+        ctx, ready, cap_of(ctx.cfg, big), mode, shell_brief.system_prompt(mode), big
+    )
     saved: dict[str, Any] = {}
 
     def gate(said: shell_brief.Answer) -> str | None:
