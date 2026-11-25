@@ -470,8 +470,8 @@ def test_a_tight_case_allows_a_tenth_over_the_procedural_shell(
 
 def test_the_shipped_cases_load_and_span_what_the_work_order_asks() -> None:
     cases = bo.load_cases()
-    assert len(cases) == 7
-    assert {c.line for c in cases} == {"small", "large"}
+    assert len(cases) == 11  # 7, then D425's four big cases
+    assert {c.line for c in cases} == {"small", "large", "none"}
     # varied on purpose (D387): both starter themes, and cases with a palette of their own
     assert {"th-foundry", "th-marble-works", "none"} <= {c.theme for c in cases}
     assert all(c.palette for c in cases if c.theme == "none")
@@ -3254,7 +3254,8 @@ def test_case_tables_default_to_site_and_saved_runs_load_as_layout(
     conn: sqlite3.Connection, home: Path, tmp_path: Path
 ) -> None:
     shipped = bo.load_cases()
-    assert {c.mode for c in shipped} == {"site"}  # every new AI design (D422)
+    # every new AI design (D422), and D425's plan-free cases
+    assert {c.mode for c in shipped if c.line != "none"} == {"site"}
     # a site case's arrangement options stay at their defaults: the building arranges
     gothic = next(c for c in shipped if c.id == "gothic-cathedral")
     assert gothic.layout and gothic.layout_options().spacing == 0
@@ -3419,3 +3420,430 @@ def test_a_fake_site_hall_has_the_floor_for_tall_machines() -> None:
     assert inner >= shell_fakes.ROOM * need["floor_required"]
     lo, hi = shell_fakes.hall(facts, shell_fakes.CRAMPED_ROOM)
     assert (hi[0] - lo[0] - 1) * (hi[2] - lo[2] - 1) < need["floor_required"]
+
+
+# --- big and plan-free cases (WO-10.17, D424, D425) -----------------------------------------
+
+
+def free_case(**changes: Any) -> bo.Case:  # noqa: ANN401
+    base = {
+        "id": "f1",
+        "line": "none",
+        "mode": "free",
+        "area": 400,
+        "line_type": "general",
+    }
+    return one_case(**{**base, **changes})
+
+
+def big_case(**changes: Any) -> bo.Case:  # noqa: ANN401
+    base = {
+        "id": "b1",
+        "line": "large",
+        "max_blocks": "12500",
+        "headroom": 16,
+        "site_factor": 6.0,
+        "target": 10_000,
+    }
+    return site_case(**{**base, **changes})
+
+
+BIG = ("big-foundry-hall", "big-deco-station", "free-warehouse", "free-great-hall")
+
+
+def test_the_big_cases_come_last_with_their_plots_and_targets() -> None:
+    cases = bo.load_cases()
+    assert tuple(c.id for c in cases[-4:]) == BIG  # last: a bad request stops a model
+    old, big = cases[:-4], cases[-4:]
+    assert all(
+        (c.site_factor, c.area, c.target) == (None, None, None) and c.mode == "site"
+        for c in old
+    )
+    for c in big:
+        assert c.target is not None and 5_000 < c.target <= 20_000
+        assert int(c.max_blocks) == c.target * 5 // 4  # max_blocks is 1.25 x the target
+        assert c.expect == ("changed",) and c.touches == set(shell.OPS)
+        assert str(c.target) not in c.brief  # code states the number, never the words
+    by = {c.id: c for c in big}
+    assert [(by[i].mode, by[i].site_factor) for i in BIG[:2]] == [
+        ("site", 4.0),
+        ("site", 6.0),
+    ]
+    assert all(by[i].line == "large" for i in BIG[:2])
+    assert [(by[i].line, by[i].area, by[i].target) for i in BIG[2:]] == [
+        ("none", 2_000, 12_000),
+        ("none", 3_000, 20_000),
+    ]
+
+
+def test_the_new_columns_are_checked_in_a_sentence_naming_the_case(
+    tmp_path: Path,
+) -> None:
+    head = "\t".join([*bo.COLUMNS, *bo.OPTIONAL])
+    path = tmp_path / "cases.tsv"
+
+    def row(
+        line: str = "large",
+        mode: str = "site",
+        factor: str = "",
+        area: str = "",
+        target: str = "",
+        mb: str = "default",
+        layout: str = "",
+    ) -> str:
+        return (
+            f"big-x\t{line}\tth-foundry\tgeneral\t{mb}\ta big hall\tdeeper\tchanged\troof"
+            f"\t\t\t\t{layout}\t{mode}\t{factor}\t{area}\t{target}"
+        )
+
+    def load(text: str) -> list[bo.Case]:
+        path.write_text(f"{head}\n{text}\n", encoding="utf-8")
+        return bo.load_cases(path)
+
+    (free,) = load(row("none", "free", "default", "1500", "6000", "7500"))
+    assert (free.line, free.mode, free.area, free.target) == (
+        "none",
+        "free",
+        1500,
+        6000,
+    )
+    assert free.site_factor is None and free.layout_options() == bo.case_options(
+        (), "free"
+    )
+    (site,) = load(row(factor="3.5", target="20000"))
+    assert site.site_factor == 3.5 and site.target == 20_000 and site.area is None
+    together = "a plan-free case has line none, mode free and an area"
+    for bad, says in [
+        (row("none"), together),
+        (row(mode="free", area="1500"), together),
+        (row("none", "free"), together),
+        (row(area="1500"), together),
+        (row("none", "free", area="10"), "area is a whole number from 25 to 6,000"),
+        (row("none", "free", area="1e3"), "area is a whole number"),
+        (row(factor="7"), "site_factor is default or from 1.25 to 6.0"),
+        (row(factor="nan"), "site_factor is default or from"),
+        (row(factor="big"), "site_factor is default or from"),
+        (
+            row(mode="layout", factor="2"),
+            "a site factor is for a site or plan-free case",
+        ),
+        (row(target="500"), "target is default or from 1,000 to 200,000"),
+        (row(target="20001"), "target 20001 is above max_blocks 20000"),
+        (row(target="20000", mb="15000"), "target 20000 is above max_blocks 15000"),
+        (row(target="6000", mb="tight"), "a case with a target states its max_blocks"),
+        (row("none", "free", area="900", layout="spacing=2"), "has no layout options"),
+    ]:
+        with pytest.raises(bo.BakeoffError, match=says) as got:
+            load(bad)
+        assert "big-x" in str(got.value) or "line 2" in str(got.value), str(got.value)
+
+
+def test_a_plan_free_case_is_prepared_with_no_plans_and_code_states_its_target(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    vault = VaultIO(home / "vault")
+    (free,) = bo.prepare(
+        conn,
+        home,
+        vault,
+        [free_case(target=2_000, max_blocks="2500")],
+        {"small": ["pl-steel"]},  # no plans for the none line: it houses none
+    )
+    assert free.plans == () and free.machines == 0 and free.max_blocks == 2_500
+    assert free.plot == (29, 16, 29)  # shell.site_for_area(400) at factor 2.0
+    facts = shell_fakes._line(free.brief, "facts: ")
+    assert facts["mode"] == "free" and facts["area"] == 400 and "program" not in facts
+    assert "NEED: roofed floor >= 400 columns" in free.brief
+    assert free.brief.splitlines()[-1] == (
+        "TARGET: about 2,000 blocks (aim for 1,600 to 2,400); max_blocks is 2,500."
+    )
+    assert "PROGRAM" not in free.brief and "Machines" not in free.brief
+    # no target: no TARGET line, and the brief is the live designer's own
+    (plain,) = bo.prepare(conn, home, vault, [free_case()], PLANS)
+    assert "TARGET" not in plain.brief and plain.max_blocks == 20_000
+
+
+def test_a_big_site_case_gets_the_bigger_plot_and_still_fits_the_machines(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    vault = VaultIO(home / "vault")
+    usual, big = bo.prepare(
+        conn, home, vault, [site_case(line="large"), big_case()], PLANS
+    )
+    assert usual.plot == (22, 16, 22) and big.plot == (
+        37,
+        28,
+        37,
+    )  # factor 6.0, headroom 16
+    assert big.machines == usual.machines > 0 and big.max_blocks == 12_500
+    assert big.brief.endswith(
+        "TARGET: about 10,000 blocks (aim for 8,000 to 12,000); max_blocks is 12,500."
+    )
+    assert "TARGET" not in usual.brief
+    assert bo.target_line(6_000, 7_500) == (
+        "TARGET: about 6,000 blocks (aim for 4,800 to 7,200); max_blocks is 7,500."
+    )
+
+
+def test_only_big_cases_get_the_longer_answer_and_echo() -> None:
+    for target, want in [
+        (None, (16_000, 16_000)),
+        (1_000, (16_000, 16_000)),
+        (5_000, (16_000, 16_000)),
+        (5_001, (32_000, 40_000)),
+        (20_000, (32_000, 40_000)),
+    ]:
+        assert (shell_brief.out_tokens(target), shell_brief.echo(target)) == want
+    from gregtec.build import sandbox
+
+    assert shell_brief.BIG_ECHO == sandbox.MAX_SCRIPT_CHARS  # a whole script goes back
+    for c in bo.load_cases():
+        big = c.id in BIG
+        assert shell_brief.out_tokens(c.target) == (32_000 if big else 16_000), c.id
+        assert shell_brief.echo(c.target) == (40_000 if big else 16_000), c.id
+    one, more = (
+        bo._most("s", ZEBRA, "u", "site"),
+        bo._most("s", ZEBRA, "u", "site", 32_000),
+    )
+    assert more[1] - one[1] == 16_000
+    assert more[0] - one[0] == pytest.approx(16_000 * ZEBRA.price.output / 1e6)  # type: ignore[union-attr]
+
+
+def test_a_big_case_is_asked_with_its_limits_and_a_refused_answer_goes_back_longer(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    junk = "x" * 30_000  # not a design: refused, and sent back
+    a = Scripted([junk, good, good, junk])
+    run = ran(conn, home, [ZEBRA], {"zebra": a}, [big_case(), site_case(id="c2")])
+    assert run["status"] == bo.DONE, run["why"]
+    limits = [(c["id"], c["max_output_tokens"], c["echo"]) for c in run["cases"]]
+    assert limits == [("b1", 32_000, 40_000), ("c2", 16_000, 16_000)]
+    big, usual = run["cases"]
+    assert (
+        big["target"] == 10_000
+        and big["site_factor"] == 6.0
+        and big["plot"] == [37, 28, 37]
+    )
+    assert usual["target"] is None and usual["area"] is None
+    # each case: junk, its repair (passes), the follow-up
+    assert [n for _, n in a.schemas] == [32_000] * 3 + [16_000] * 3
+    users = [u for _, u in a.seen]
+    assert junk in users[1] and "...(cut)" not in users[1]  # the big echo: all of it
+    assert junk[:16_000] + " ...(cut)" in users[4]  # the standard echo
+    # the follow-up keeps the case's aim
+    assert users[2].startswith("Revise the current design")
+    assert users[2].endswith("max_blocks is 12,500.") and "TARGET" not in users[5]
+    assert result(run, "zebra", "b1")["design"]["ok"]
+
+
+def test_the_estimate_gives_each_big_case_its_share_and_the_old_lines_stay(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    vault = VaultIO(home / "vault")
+    usual, big = bo.prepare(conn, home, vault, [site_case(), big_case()], PLANS)
+    p = ZEBRA.price
+    assert p is not None
+    system = shell_brief.system_prompt("site")
+
+    def worst(x: bo.Prepared, out: int, echo: int) -> float:
+        tokens_in = (
+            2
+            * 3
+            * (
+                len(system.encode())
+                + len(x.brief.encode())
+                + echo
+                + bo.OVERHEADS["site"]
+            )
+        )
+        return (tokens_in * max(p.input, p.cache_write) + 3 * 2 * out * p.output) / 1e6
+
+    # the standard case: the same figure as before D425 (16,000 out, 16,000 echo)
+    alone = bo.estimate([usual], [ZEBRA], 10.0, 1_000)
+    assert alone.worst_usd == pytest.approx(worst(usual, 16_000, 16_000))
+    assert not any("aims at" in x or "of which" in x for x in alone.lines)
+    both = bo.estimate([usual, big], [ZEBRA], 100.0, 1_000)
+    share = worst(big, 32_000, 40_000)
+    assert both.worst_usd == pytest.approx(worst(usual, 16_000, 16_000) + share)
+    assert (
+        "  b1 aims at about 10,000 blocks: at most 32000 output tokens a call, and up to "
+        "40,000 characters of a refused answer sent back"
+    ) in both.lines
+    (line,) = [x for x in both.lines if x.startswith("    of which b1:")]
+    assert line.endswith(f"worst case ${share:.2f}")
+    # the first call's bound is the big case's when it comes first
+    assert bo.first_call([big], [ZEBRA])[0] == pytest.approx(
+        bo._most(system, ZEBRA, big.brief, "site", 32_000)[0]
+    )
+
+
+def test_a_plan_free_run_scores_its_floor_and_the_report_says_hit_or_miss(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    names = [shell_fakes.PLAIN, shell_fakes.CRAMPED, shell_fakes.SLOPPY]
+    fakes = {n: shell_fakes.FakeDesigner(n) for n in names}
+    cases = [free_case(target=2_000, max_blocks="2500"), one_case(id="c2")]
+    run = ran(conn, home, [bo.FAKES[n] for n in names], fakes, cases)
+    assert run["status"] == bo.DONE, run["why"]
+    assert set(run["prompts"]) == {"free", "layout"}
+    assert run["prompts"]["free"]["version"] == 7
+    plain, cramped, sloppy = (result(run, n, "f1") for n in names)
+    assert plain["design"]["first_try"] and plain["design"]["fit"] == {
+        "fit_ok": True,
+        "placed": None,
+        "of": None,
+        "spare_pct": plain["design"]["fit"]["spare_pct"],
+        "entrance_from": "auto",
+        "service_len": None,
+        "rounds_to_fit": 0,
+    }
+    assert not cramped["design"]["ok"] and cramped["design"]["calls"] == 3
+    assert all("it needs 400" in r for r in cramped["design"]["refusals"])
+    assert cramped["design"]["fit"]["fit_ok"] is False
+    assert sloppy["design"]["ok"] and sloppy["design"]["repair_rounds"] == 1
+    where = bo.entry_home(home, run["id"], "f1", plain["letter"])
+    rec = shell_store.load(where, plain["design"]["build"])
+    assert shell_store.free_mode(rec) and rec["plans"] == []
+    # blind: the plan-free case's floor, plot and target; the old case's plot stays unsent
+    view = bo.blind(run)
+    f1, c2 = view["cases"]
+    assert (f1["mode"], f1["area"], f1["target"], f1["plot"]) == (
+        "free",
+        400,
+        2_000,
+        [29, 16, 29],
+    )
+    assert (c2["mode"], c2["area"], c2["target"], c2["plot"]) == (
+        "layout",
+        None,
+        None,
+        None,
+    )
+    for c in run["cases"]:
+        bo.rate(home, run["id"], c["id"], bo.TIE)
+    got = bo.report(home, run["id"])
+    assert got.card["columns"] == [*bo.COLS, *bo.SITE_COLS, bo.TARGET_COL]
+    by = {
+        r[0]: dict(zip(got.card["columns"], r, strict=True)) for r in got.card["rows"]
+    }
+    assert by["fake-plain"]["placed"] == "-" and by["fake-plain"]["service len"] == "-"
+    assert (
+        by["fake-plain"]["fit ok"] == "1 of 1"
+        and by["fake-cramped"]["fit ok"] == "0 of 1"
+    )
+    blocks = plain["design"]["blocks"]
+    hit = bo.on_target(blocks, 2_000)
+    assert by["fake-plain"]["target"] == f"{int(hit)} of 1 hit"
+    assert by["fake-cramped"]["target"] == "0 of 1 hit"
+    assert bo.target_text(plain["design"], 2_000) in got.text
+    assert "| target | why refused |" in got.text
+    # the old case's rows carry "-" in the target column
+    assert any(x.startswith("| c2 |") and "| - | " in x for x in got.text.splitlines())
+
+
+def test_target_text_says_hit_or_how_far_off() -> None:
+    def step(blocks: int) -> dict[str, Any]:
+        return {"ok": True, "blocks": blocks}
+
+    assert bo.target_text(step(12_840), 12_000) == "12,840 / 12,000 hit"
+    assert bo.target_text(step(4_800), 6_000) == "4,800 / 6,000 hit"  # the band's edge
+    assert bo.target_text(step(4_500), 6_000) == (
+        "4,500 / 6,000 miss (-25%, under the band)"
+    )
+    assert bo.target_text(step(26_000), 20_000) == (
+        "26,000 / 20,000 miss (+30%, over the band)"
+    )
+    assert (
+        bo.target_text({"ok": False}, 6_000) == "-" and bo.target_text(None, 1) == "-"
+    )
+
+
+def test_a_run_without_targets_reports_as_before(
+    conn: sqlite3.Connection, home: Path
+) -> None:
+    run = ran(conn, home, [ZEBRA], {"zebra": Scripted()}, [site_case()])
+    got = bo.report(home, run["id"], reveal_unrated=True)
+    assert got.card["columns"] == [*bo.COLS, *bo.SITE_COLS]
+    assert "| target |" not in got.text and "| kept | why refused |" in got.text
+    view = bo.blind(run)["cases"][0]
+    assert (view["mode"], view["plot"], view["area"], view["target"]) == (
+        "site",
+        None,
+        None,
+        None,
+    )
+
+
+def test_a_revision_too_long_to_send_is_refused_and_the_run_goes_on(
+    conn: sqlite3.Connection, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def too_long(*_a: Any) -> Any:  # noqa: ANN401
+        raise shell_brief.BriefError("the brief is 61000 characters, more than 60000")
+
+    monkeypatch.setattr(shell_brief, "prepare_revise", too_long)
+    run = ran(
+        conn, home, [ZEBRA], {"zebra": Scripted()}, [one_case(), one_case(id="c2")]
+    )
+    assert run["status"] == bo.DONE
+    for case in ("c1", "c2"):
+        r = result(run, "zebra", case)
+        assert r["design"]["ok"] and not r["revise"]["ok"]
+        assert r["revise"]["refused"].startswith("no revision: the brief is 61000")
+
+
+def test_a_repair_is_clipped_to_the_brief_limit() -> None:
+    brief, answer = "b" * 30_000, "a" * 40_000
+    again = shell_brief.repair_brief(brief, answer, "no", echo=shell_brief.BIG_ECHO)
+    assert len(again) <= shell_brief.MAX_BRIEF_CHARS and " ...(cut)" in again
+    # a repair that fits is as it always was
+    short = shell_brief.repair_brief("NEED: x\nbrief", "a" * 100, "no")
+    assert short == "\n".join(
+        [
+            "NEED: x\nbrief",
+            "",
+            "Your previous answer was:",
+            "a" * 100,
+            "",
+            (
+                "The code refused it, and nothing was written: no. Fix the design and send "
+                "the whole design again."
+            ),
+            "NEED: x",
+        ]
+    )
+
+
+def test_gos_shell_bakeoff_run_only_names_its_cases(home: Path, tmp_path: Path) -> None:
+    toml = toml_for(home, tmp_path)
+    code, text = gos(
+        toml,
+        "run",
+        "pl-steel",
+        "--models",
+        "fake-plain",
+        "--only",
+        "free-warehouse,nope",
+    )
+    assert code == 2 and "Not run: no case nope in the case table" in text
+    assert "Nothing is spent" in text and bo.runs(home) == []
+    code, text = gos(toml, "run", "pl-steel", "--models", "fake-plain", "--only", " , ")
+    assert code == 2 and "--only names no case" in text
+    code, text = gos(
+        toml, "run", "pl-steel", "--models", "fake-plain", "--only", "free-warehouse"
+    )
+    assert code == 0, text
+    assert "Bake-off: 1 cases x 1 models" in text
+    assert (
+        "free-warehouse aims at about 12,000 blocks: at most 32000 output tokens"
+        in text
+    )
+    rid = next(w for w in text.split() if bo.RUN_ID.fullmatch(w))
+    code, text = gos(toml, "show", rid)
+    assert (
+        code == 0
+        and (
+            "free-warehouse (th-marble-works, plan-free, at least 2,000 floor, aim about "
+            "12,000 blocks, max 15000 blocks)"
+        )
+        in text
+    )

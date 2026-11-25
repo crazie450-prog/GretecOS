@@ -882,11 +882,15 @@ def test_the_planner_spreads_machines_when_asked(conn: sqlite3.Connection) -> No
 
 
 def test_a_case_picks_its_machine_arrangement() -> None:
-    cases = shell_bakeoff.load_cases()
+    every = shell_bakeoff.load_cases()
+    # D425's big cases have none: a site case's arrangement is reset anyway (D422), and a
+    # plan-free one has no machines to arrange (D424)
+    cases = [c for c in every if c.target is None]
+    assert len(cases) == 7 and all(not c.layout for c in every if c.target is not None)
     assert len({c.layout for c in cases}) == len(
         cases
     )  # every case arranged its own way
-    for c in cases:
+    for c in every:
         c.layout_options()  # each is a valid set of the planner's options
 
 

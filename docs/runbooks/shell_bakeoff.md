@@ -1,4 +1,4 @@
-# The shell designer bake-off (WO-10.11)
+# The shell designer bake-off (WO-10.11, big cases WO-10.17)
 
 You asked for it on 2026-11-20: "I do think a bakeoff so to speak would be a good idea so i can also test out the framework of the building generator app". A bake-off gives the same building requests to several AI models, checks every answer with GOS's own gate, and lets you pick the better building without knowing which model drew it. Decisions: D374-D378.
 
@@ -91,7 +91,7 @@ A bake-off building can't be exported. To put a building into the Lab, use one o
 
 ### E. What it costs
 
-One run asks each model for 7 buildings and 7 changes: 14 answers, plus up to 2 repair rounds each when the gate refuses an answer. Each answer may use at most 16,000 output tokens, thinking included.
+One run of the first seven requests asks each model for 7 buildings and 7 changes: 14 answers, plus up to 2 repair rounds each when the gate refuses an answer. Each answer may use at most 16,000 output tokens, thinking included. Since D425 the table has four more, bigger requests (6,000 to 20,000 blocks): they cost more and are best run on their own (section K). A run with no `--only` and no `--limit` asks all eleven.
 
 With the prices read on 2026-11-20, a run of the first 6 requests was likely **about $1 for Claude Opus 5.5 and about $2.50 to $3 for GPT-6 Astra**, if every answer passes at once and uses a quarter of that limit. If every answer used the whole limit and every repair round, it would be about $14 and $35; it can't get there, because the run stops at its cap, which is **$10 for the whole run unless you change it**. The command prints its own estimate for your models before it asks; trust that one, not this page. Prices move: check the pricing pages below on the day.
 
@@ -177,9 +177,42 @@ Since D385 (designer prompt v2, freeform build scripts) every call also carries 
 - **cost / seconds / tokens**: what the answers took. A cost of "unknown" means you gave no price. If the report has a line about calls that "broke off" or "came back without their token count", the vendor may have charged a little more than the cost column says (that line gives the most it can be).
 - **why refused** (the second table): for each request and letter, why the gate sent an answer back, try by try (`design try 1: ...`, `follow-up try 2: ...`). An answer that passed after a repair round still shows why its first try failed.
 - **Six requests is a first look, not proof.** If one model is ahead 4 to 2, that can be chance; 6 to 0 with clearly better buildings is worth believing. To be surer, run it again another day (each run shuffles the letters anew) or with other plans, and see whether the same model wins.
-- The bake-off only compares. Which model draws your real shells does not change: that stays the architect in `[models]` (Anthropic) until you decide otherwise (checklist 5.11.17).
+- The bake-off only compares. Which model draws your real shells is set apart, by `[shell] designer` in gos.toml (D423, checklist 5.11.17: the [shells runbook](shells.md) has the steps); with it unset, the architect in `[models]` (Anthropic) draws them.
+- **target** (only in a run with a big request, section K): how many of that model's buildings for those requests came within 20% of the block count the request aimed at; the second table says, per request and letter, "12,840 / 12,000 hit" or "4,500 / 6,000 miss (-25%, under the band)". A plan-free request's fit columns are its floor check: **fit ok** (the floor held), **spare %** and **entrance**; it has no machines, so **placed** and **service len** say `-` for a model with only plan-free fits.
 
 Your usual cost page counts these runs too (**Costs** view, lane `bakeoff`).
+
+### K. The big requests (D425)
+
+You asked on 2026-11-24 for "a couple options in the 5,000 to 20,000-block range". The first seven requests came out around 2,000 blocks because the plot (SITE) is sized from the machines: a small plan gets a plot of about 24 x 24. The four big requests are at the end of the table:
+
+| request | houses | plot (on the test plans) | aims at | block limit |
+|---|---|---|---|---|
+| `big-foundry-hall` | the large line, plot factor 4.0, headroom 12 | 30 x 24 x 30 (about 34 a side on your plans) | about 6,000 | 7,500 |
+| `big-deco-station` | the large line, plot factor 6.0 (the most), headroom 16 | 37 x 28 x 37 (about 42 on yours) | about 10,000 | 12,500 |
+| `free-warehouse` | **no plan**: an empty building with at least 2,000 blocks of roofed floor, headroom 12 | 64 x 24 x 64 | about 12,000 | 15,000 |
+| `free-great-hall` | **no plan**: at least 3,000 blocks of roofed floor, headroom 16 | 78 x 28 x 78 | about 20,000 | 25,000 |
+
+- GOS adds one line to each of these briefs, and to its follow-up: "TARGET: about 12,000 blocks (aim for 9,600 to 14,400); max_blocks is 15,000." The request's own words carry no number. 20,000 blocks is tried plan-free only: on your plans the biggest plot is about 42 x 28 x 42, and 20,000 blocks there would fill about 40% of it.
+- A big request may answer with up to **32,000 output tokens** (the other requests and your live shell designer keep 16,000) and a refused answer goes back whole, up to 40,000 characters. The report's **tokens in/out** column then shows whether a big building needed more than 16,000: that is what checklist 5.11.20 asks you to decide.
+- **What it costs.** On the test plans the command's estimate for the four big requests (2026-11-25, Astra at $10 in / $50 out) is **likely about $10.57 for GPT-6 Astra and $4.23 for Claude Opus 5.5**, worst case $55.10 and $22.04; each big request's share is printed on its own line ("of which free-warehouse: ..."). Your plans give slightly different figures: trust the command's own lines.
+- **The day limit stops it.** A paid run never gets more than what `[budget] day_max_usd` still leaves today ($10 unless you changed it), so at the default it stops partway through. For the day you run it, raise `day_max_usd` in gos.toml (for example to 40) and give the run a cap from the printed worst case, or run two requests one day and two the next.
+
+30. See the four with the fakes first (free, nothing leaves the PC):
+    ```powershell
+    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models fake-plain,fake-ornate --only big-foundry-hall,big-deco-station,free-warehouse,free-great-hall
+    ```
+    The fakes draw much smaller buildings than the targets: their **target** column says "miss", as it should.
+31. Try one big request on its own with a real model first (a vendor that refuses the 32,000-token limit stops that model for the rest of the run, D378):
+    ```powershell
+    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models astra --only free-warehouse --cap-usd 15
+    ```
+32. Then the four (or the other three), after raising `day_max_usd` for the day:
+    ```powershell
+    & $gos shell bakeoff run <plan-id> --large <plan-id>,<power-plan-id> --models opus,astra --only big-foundry-hall,big-deco-station,free-warehouse,free-great-hall --cap-usd 40
+    ```
+    `--only` takes the requests' ids, comma-separated; an id that isn't in the table is refused before anything is spent. Rate and read the report as in steps 28-29; the plan-free buildings show no machines in the 3D view. Put `day_max_usd` back afterwards.
+33. A plan-free bake-off building can't be exported (no bake-off building can). To get one of your own, design it in the Shell workbench's **Plan-free** mode or with `gos shell design --mode free --area 2000` ([shells runbook](shells.md)).
 
 ## If something is off
 
@@ -212,4 +245,4 @@ Your usual cost page counts these runs too (**Costs** view, lane `bakeoff`).
 
 - A run: `%USERPROFILE%\GregtecOS\data\bakeoff\<run>\` (its buildings and `run.json`; `run.unsaved.json` beside it only while another program was holding `run.json`).
 - Reports: `%USERPROFILE%\GregtecOS\data\reports\shell-bakeoff-<run>.md`.
-- The seven requests: `tests\evals\shell_bakeoff.tsv` in the app folder (a small table; `--cases <file>` runs your own).
+- The eleven requests: `tests\evals\shell_bakeoff.tsv` in the app folder (a small table; `--cases <file>` runs your own, `--only <id>,<id>` some of them). Its last three columns (D425), after `mode`, are `site_factor`, `area` (a plan-free request's floor; its `line` is `none` and its `mode` `free`) and `target`; an empty cell means the default.

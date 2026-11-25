@@ -120,6 +120,28 @@ MAX_OUTPUT_TOKENS = (
 MAX_BRIEF_CHARS = 60_000
 MAX_LISTED = 120  # machines, keep-outs, corridors or chases named in one brief
 MAX_ECHO = 16_000  # characters of a refused answer sent back (room for a build script)
+# A bake-off case that aims at more blocks than BIG_TARGET (D425) gets a longer answer and a
+# longer echo: the whole sandbox script (gregtec.build.sandbox.MAX_SCRIPT_CHARS). The live
+# designer and every other case keep the standard two (D423).
+BIG_TARGET = 5_000
+BIG_OUTPUT_TOKENS = 32_000
+BIG_ECHO = 40_000
+
+
+def out_tokens(target: int | None) -> int:
+    """The output limit of a bake-off case aiming at ``target`` blocks (D425)."""
+    return (
+        BIG_OUTPUT_TOKENS
+        if target is not None and target > BIG_TARGET
+        else MAX_OUTPUT_TOKENS
+    )
+
+
+def echo(target: int | None) -> int:
+    """How much of a refused answer goes back to a bake-off case aiming at ``target`` (D425)."""
+    return BIG_ECHO if target is not None and target > BIG_TARGET else MAX_ECHO
+
+
 # Site mode (D422): how much air a building is asked to give, in NEED.required. The fitter
 # packs greedily, so a hall just big enough is often refused; at 1.75 the fixtures' plans
 # fit a plain hall every time (1.5, the design's first figure, did not on the small line).
@@ -1012,10 +1034,15 @@ def prepare_revise(
 
 def repair_brief(brief: str, answer: str, why: str, *, echo: int = MAX_ECHO) -> str:
     """The brief again after a refused answer: the answer (clipped to ``echo`` characters) and
-    why the code refused it, in the words ``build_request`` gives the architect."""
-    said = answer if len(answer) <= echo else answer[:echo] + " ...(cut)"
+    why the code refused it, in the words ``build_request`` gives the architect. The answer is
+    clipped shorter when the whole would pass :data:`MAX_BRIEF_CHARS` (a big case's long brief
+    and long echo, D425)."""
     # a site brief's NEED again, next to the refusal (D422: a fit refusal is about it)
     need = [x for x in brief.splitlines() if x.startswith("NEED: ")][:1]
+    # the framing lines take under 200 characters
+    room = MAX_BRIEF_CHARS - len(brief) - len(why) - sum(len(x) for x in need) - 200
+    echo = max(0, min(echo, room))
+    said = answer if len(answer) <= echo else answer[:echo] + " ...(cut)"
     return _fit(
         "\n".join(
             [
