@@ -8,7 +8,7 @@
 // WO-10.10: the drawing is `Scene`, which the shell workbench uses too (a shell's blocks with
 // the floor plan's machines and keep-outs as ghosts, D370).
 // Built to the design system: needs Clayton's board approval (D92, D158 (5)).
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { BuildGuide as GuideData, Facing, GuideQuery } from "../api/types";
 import { Button, CitationChip, Panel } from "../components/core";
@@ -63,15 +63,119 @@ export interface SceneProps {
   ghosts?: GhostBox[]; // boxes drawn as outlines over the blocks (the shell's machines, keep-outs)
 }
 
+/** The view state both 3D renderers share (D319, WO-10.19): turn and tilt, zoom, a drag that
+ * turns at most once a frame, and a wheel on ``target`` that zooms without scrolling the page. */
+export function useSceneView(target: RefObject<Element | null>) {
+  const [view, setView] = useState<ViewAngle>(DEFAULT_VIEW);
+  const [zoom, setZoom] = useState(1);
+  // A drag turns the view at most once a frame.
+  const pending = useRef<{ dx: number; dy: number; frame: number } | null>(null);
+  const turnBy = (dx: number, dy: number): void => {
+    const p = pending.current ?? { dx: 0, dy: 0, frame: 0 };
+    p.dx += dx;
+    p.dy += dy;
+    if (!pending.current) {
+      p.frame = window.requestAnimationFrame(() => {
+        const got = pending.current;
+        pending.current = null;
+        if (!got) return;
+        setView((v) => ({
+          yaw: (v.yaw - got.dx * 0.5 + 360) % 360,
+          pitch: Math.max(5, Math.min(85, v.pitch + got.dy * 0.3)),
+        }));
+      });
+    }
+    pending.current = p;
+  };
+  useEffect(() => () => {
+    if (pending.current) window.cancelAnimationFrame(pending.current.frame);
+  }, []);
+
+  useEffect(() => {
+    // A wheel listener React would add is passive, so it couldn't keep the page from scrolling.
+    const el = target.current;
+    if (!el) return;
+    const wheel = (e: Event) => {
+      e.preventDefault();
+      const dy = (e as WheelEvent).deltaY;
+      setZoom((z) => Math.max(0.25, Math.min(8, z * (dy < 0 ? 1.15 : 1 / 1.15))));
+    };
+    el.addEventListener("wheel", wheel, { passive: false });
+    return () => el.removeEventListener("wheel", wheel);
+  }, []);
+  return { view, setView, zoom, setZoom, turnBy };
+}
+
+/** What sits around either drawing: the compass that turns with it, the hover line and the
+ * turn, zoom and reset buttons. */
+export function SceneChrome(props: {
+  prefix: string;
+  compassLabel: string;
+  line: string;
+  view: ViewAngle;
+  setView: (f: (v: ViewAngle) => ViewAngle) => void;
+  setZoom: (f: (z: number) => number) => void;
+}) {
+  const { prefix, view, setView, setZoom } = props;
+  const turn = (by: number) => setView((v) => ({ ...v, yaw: (v.yaw + by + 360) % 360 }));
+  return (
+    <>
+      <svg
+        className="guide-compass"
+        viewBox="-1.6 -1.6 3.2 3.2"
+        role="img"
+        aria-label={props.compassLabel}
+        data-testid={`${prefix}-compass`}
+      >
+        <circle r={1.05} />
+        {compass(view).map((c) => (
+          <g key={c.letter}>
+            {c.letter === "N" && <line x1={0} y1={0} x2={c.x * 0.7} y2={c.y * 0.7} />}
+            <text x={(c.x * 1.2).toFixed(3)} y={(c.y * 1.2).toFixed(3)} className={c.letter === "N" ? "north" : undefined} data-letter={c.letter}>
+              {c.letter}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <p className="gos-sub guide-hover" data-testid={`${prefix}-hover`} aria-live="polite">
+        {props.line}
+      </p>
+      <div className="guide-controls">
+        <Button testId={`${prefix}-turn-left`} title="Turn left" onClick={() => turn(-45)}>
+          ⟲
+        </Button>
+        <Button testId={`${prefix}-turn-right`} title="Turn right" onClick={() => turn(45)}>
+          ⟳
+        </Button>
+        <Button testId={`${prefix}-zoom-in`} title="Zoom in" onClick={() => setZoom((z) => Math.min(8, z * 1.25))}>
+          +
+        </Button>
+        <Button testId={`${prefix}-zoom-out`} title="Zoom out" onClick={() => setZoom((z) => Math.max(0.25, z / 1.25))}>
+          −
+        </Button>
+        <Button
+          testId={`${prefix}-view-reset`}
+          title="Back to the first view"
+          onClick={() => {
+            setView(() => DEFAULT_VIEW);
+            setZoom(() => 1);
+          }}
+        >
+          Reset view
+        </Button>
+      </div>
+    </>
+  );
+}
+
 /** The 3D drawing (D319): turn and tilt (drag, buttons), zoom (wheel, buttons), a compass that
  * turns with it, hover or tap a block for what it is, cells shown up to layer ``upTo``. */
 export function Scene(props: SceneProps) {
   const { cells, size, upTo, palette } = props;
   const prefix = props.prefix ?? "guide";
-  const [view, setView] = useState<ViewAngle>(DEFAULT_VIEW);
-  const [zoom, setZoom] = useState(1);
-  const [hover, setHover] = useState<number | null>(null);
   const svg = useRef<SVGSVGElement | null>(null);
+  const { view, setView, zoom, setZoom, turnBy } = useSceneView(svg);
+  const [hover, setHover] = useState<number | null>(null);
   const drag = useRef<{ x: number; y: number; moved: number } | null>(null);
   const drawing = useMemo(() => project(cells, size, upTo, view), [cells, size, upTo, view]);
   const box = zoomed(drawing.box, zoom);
@@ -116,46 +220,10 @@ export function Scene(props: SceneProps) {
     el.querySelectorAll(".guide-face.hovered").forEach((f) => f.classList.remove("hovered"));
     if (hover !== null) el.querySelectorAll(`.guide-face[data-cell="${hover}"]`).forEach((f) => f.classList.add("hovered"));
   }, [hover, faces]);
-  // A drag turns the view at most once a frame.
-  const pending = useRef<{ dx: number; dy: number; frame: number } | null>(null);
-  const turnBy = (dx: number, dy: number): void => {
-    const p = pending.current ?? { dx: 0, dy: 0, frame: 0 };
-    p.dx += dx;
-    p.dy += dy;
-    if (!pending.current) {
-      p.frame = window.requestAnimationFrame(() => {
-        const got = pending.current;
-        pending.current = null;
-        if (!got) return;
-        setView((v) => ({
-          yaw: (v.yaw - got.dx * 0.5 + 360) % 360,
-          pitch: Math.max(5, Math.min(85, v.pitch + got.dy * 0.3)),
-        }));
-      });
-    }
-    pending.current = p;
-  };
-  useEffect(() => () => {
-    if (pending.current) window.cancelAnimationFrame(pending.current.frame);
-  }, []);
-
-  useEffect(() => {
-    // A wheel listener React would add is passive, so it couldn't keep the page from scrolling.
-    const el = svg.current;
-    if (!el) return;
-    const wheel = (e: WheelEvent) => {
-      e.preventDefault();
-      setZoom((z) => Math.max(0.25, Math.min(8, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
-    };
-    el.addEventListener("wheel", wheel, { passive: false });
-    return () => el.removeEventListener("wheel", wheel);
-  }, []);
-
   const cellOf = (target: EventTarget | null): number | null => {
     const got = (target as Element | null)?.getAttribute?.("data-cell");
     return got === null || got === undefined ? null : Number(got);
   };
-  const turn = (by: number) => setView((v) => ({ ...v, yaw: (v.yaw + by + 360) % 360 }));
 
   return (
     <div className="guide-viewer">
@@ -214,50 +282,14 @@ export function Scene(props: SceneProps) {
         ))}
         {arrow && <path className="guide-front-arrow" d={arrow} data-testid={`${prefix}-front-arrow`} />}
       </svg>
-      <svg
-        className="guide-compass"
-        viewBox="-1.6 -1.6 3.2 3.2"
-        role="img"
-        aria-label={props.compassLabel}
-        data-testid={`${prefix}-compass`}
-      >
-        <circle r={1.05} />
-        {compass(view).map((c) => (
-          <g key={c.letter}>
-            {c.letter === "N" && <line x1={0} y1={0} x2={c.x * 0.7} y2={c.y * 0.7} />}
-            <text x={(c.x * 1.2).toFixed(3)} y={(c.y * 1.2).toFixed(3)} className={c.letter === "N" ? "north" : undefined} data-letter={c.letter}>
-              {c.letter}
-            </text>
-          </g>
-        ))}
-      </svg>
-      <p className="gos-sub guide-hover" data-testid={`${prefix}-hover`} aria-live="polite">
-        {hover === null ? props.hint : props.describe(hover)}
-      </p>
-      <div className="guide-controls">
-        <Button testId={`${prefix}-turn-left`} title="Turn left" onClick={() => turn(-45)}>
-          ⟲
-        </Button>
-        <Button testId={`${prefix}-turn-right`} title="Turn right" onClick={() => turn(45)}>
-          ⟳
-        </Button>
-        <Button testId={`${prefix}-zoom-in`} title="Zoom in" onClick={() => setZoom((z) => Math.min(8, z * 1.25))}>
-          +
-        </Button>
-        <Button testId={`${prefix}-zoom-out`} title="Zoom out" onClick={() => setZoom((z) => Math.max(0.25, z / 1.25))}>
-          −
-        </Button>
-        <Button
-          testId={`${prefix}-view-reset`}
-          title="Back to the first view"
-          onClick={() => {
-            setView(DEFAULT_VIEW);
-            setZoom(1);
-          }}
-        >
-          Reset view
-        </Button>
-      </div>
+      <SceneChrome
+        prefix={prefix}
+        compassLabel={props.compassLabel}
+        line={hover === null ? props.hint : props.describe(hover)}
+        view={view}
+        setView={setView}
+        setZoom={setZoom}
+      />
     </div>
   );
 }

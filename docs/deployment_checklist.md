@@ -520,8 +520,8 @@ Views built to the design system without an approved board, each marked "needs C
 | 5.10.12 | Phone tabs: D159's five (Now, Chat, Search, Costs, Settings) plus More, Base inside More; or Base replaces Costs; the More view | 3.12.7 | D302, G9 Q25 |
 | 5.10.13 | Build view's Shells panel; the 3D build guide and keyboard access to its scene | 3.13.4 | D319, G10 Q44, Q50, Q51 |
 | 5.10.14 | Costs' caps card | 3.14.5 | D334, [#123](https://github.com/crazie450-prog/GretecOS/pull/123) |
-| 5.10.15 | Build view's shell workbench (WO-10.10): the words box, theme and size inputs, Design new / Revise / Ask the architect, the job panel, the version list with cost and Make current, Compare side by side, the 3D viewer with ghosts; on monitor 2 and the phone | 3.13.4, 3.13.8 | D370 |
-| 5.10.16 | Build view's **Shell bake-off** panel (WO-10.11): the request chips, the entries side by side as A, B, C in the workbench's viewer, the first design / after the follow-up switch, the pick buttons, **Name the models and show the report** and the report's table; on monitor 2 and the phone | 3.13.10 | D377 |
+| 5.10.15 | Build view's shell workbench (WO-10.10): the words box, theme and size inputs, Design new / Revise / Ask the architect, the job panel, the version list with cost and Make current, Compare side by side, the 3D viewer with ghosts (WebGL since WO-10.19, the SVG viewer as its fallback; layers under the cut tinted, not see-through); on monitor 2 and the phone | 3.13.4, 3.13.8 | D370, D433 |
+| 5.10.16 | Build view's **Shell bake-off** panel (WO-10.11): the request chips, the entries side by side as A, B, C in the workbench's viewer, the first design / after the follow-up switch, the pick buttons, **Name the models and show the report** and the report's table; on monitor 2 and the phone | 3.13.10 | D377, D433 |
 
 ### 5.11 Building design
 
