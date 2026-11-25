@@ -177,7 +177,8 @@ class _Ops:
         self.span_x, self.span_z = hi[0] - lo[0] + 1, hi[2] - lo[2] + 1
         self.roles = {str(p["role"]) for p in rec["palette"]}
         fit = rec.get("fit")
-        self.site = isinstance(fit, Mapping) and fit.get("mode") == "site"  # D422
+        # D422; a plan-free building (D424) has no layout top either
+        self.site = isinstance(fit, Mapping) and fit.get("mode") in ("site", "free")
 
     def of(self, kind: str, role: str | None = None) -> list[dict[str, Any]]:
         return [

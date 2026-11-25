@@ -1,7 +1,7 @@
 """The shell tool (WO-10.7; plan 7.0 ``build_request(spec)``, 7.10 "Shell designer", D316-D318).
 
-``build_request(plans, theme?, prompt?, line_type?, palette?, exclude?, max_blocks?, headroom?,
-design?, save?, site?, mode?, entrance?, zones?)``, deep lane only (the architect's and the
+``build_request(plans?, theme?, prompt?, line_type?, palette?, exclude?, max_blocks?, headroom?,
+design?, save?, site?, mode?, entrance?, zones?, area?, site_factor?)``, deep lane only (the architect's and the
 orchestrator's): designs a decorative shell around the saved plans' layout. Without ``design`` GOS's procedural generator draws it from
 the theme; with ``design`` (a list of operations in the building vocabulary,
 :data:`gregtec.build.shell.OPS`) the model's own design is compiled to blocks by code. Either way
@@ -26,6 +26,10 @@ one. Its answer may name the main door (``entrance``) and steering boxes (``zone
 the machines don't fit in is refused with the fit's reasons (no doorway, too little roofed air,
 no floor for a machine, no packing, no chase), and nothing of it is removed. GOS's procedural
 shell (no ``design``) stays layout-first unless ``mode`` site is asked.
+
+**Plan-free** (D424, ``mode`` free with ``area`` and no ``plans``): an empty building Clayton
+furnishes himself, its SITE sized from ``area`` blocks of roofed floor and checked for that floor
+joined to a ground door (:func:`gregtec.build.fit.floor_check`); no machines, no zones.
 """
 
 from __future__ import annotations
@@ -60,6 +64,8 @@ VOCABULARY = (
     + shell_brief.SCRIPT_API
     + " "
     + shell_brief.SITE_API
+    + " "
+    + shell_brief.FREE_API
     + " Leave design out for GOS's procedural shell: its operations come back in the "
     "result's ops note to start from (with save false, nothing is saved)."
 )
@@ -72,7 +78,22 @@ BUILD_REQUEST_SCHEMA: dict[str, Any] = {
             "maxLength": 200,
             "description": "the saved plan ids the shell houses, comma-separated (a line and "
             f"the power plan that feeds it; at most {shell.MAX_PLANS}): their layout is "
-            "the shell's input",
+            "the shell's input; leave out for a plan-free building (mode free)",
+        },
+        "area": {
+            "type": "integer",
+            "minimum": shell.AREA[0],
+            "maximum": shell.AREA[1],
+            "description": "mode free only: the blocks of roofed floor a plan-free building "
+            "holds at least (Clayton's number; ask him when he gives none); GOS sizes the "
+            "plot from it and he places the machines himself",
+        },
+        "site_factor": {
+            "type": "number",
+            "minimum": shell.SITE_FACTORS[0],
+            "maximum": shell.SITE_FACTORS[1],
+            "description": "site or free mode: how much bigger than its floor the plot is "
+            f"(default {shell.SITE_FACTOR})",
         },
         "theme": {
             "type": "string",
@@ -138,7 +159,8 @@ BUILD_REQUEST_SCHEMA: dict[str, Any] = {
             "description": "site (the default with a design): your building first, inside "
             "the SITE the result states, and GOS fits the machines into it afterwards; layout: "
             "the shell round the planner's rows of machines (the default without a design: "
-            "GOS's procedural shell)",
+            "GOS's procedural shell); free: a plan-free building of area blocks of roofed "
+            "floor, no plans",
         },
         "entrance": {
             "type": "string",
@@ -156,7 +178,7 @@ BUILD_REQUEST_SCHEMA: dict[str, Any] = {
             "zone (a foyer, a nave); with machines zones, the machines only inside them",
         },
     },
-    "required": ["plans"],
+    "required": [],
     "additionalProperties": False,
 }
 
@@ -196,6 +218,8 @@ def _site_head(made: Any) -> list[tuple[str, object]]:  # noqa: ANN401 - shell_s
     fit = made.fit
     if not fit:
         return []
+    if fit.get("mode") == "free":
+        return _free_head(made)
     lo, hi = fit["site"]["lo"], fit["site"]["hi"]
     need = fit["need"]
     out: list[tuple[str, object]] = [
@@ -217,13 +241,36 @@ def _site_head(made: Any) -> list[tuple[str, object]]:  # noqa: ANN401 - shell_s
     return out
 
 
+def _free_head(made: Any) -> list[tuple[str, object]]:  # noqa: ANN401 - shell_store.Made
+    """A plan-free building's head lines (D424): the build mode, its SITE, the floor it must
+    hold and how its floor checked."""
+    from gregtec.build import shell_store
+
+    fit = made.fit
+    lo, hi = fit["site"]["lo"], fit["site"]["hi"]
+    out: list[tuple[str, object]] = [
+        ("build mode", "free: a plan-free building, no machines (Clayton places them)"),
+        ("site", f"lo {lo} hi {hi}"),
+        (
+            "need",
+            (
+                f"roofed floor >= {fit['area']} columns at least "
+                f"{fit['need']['door_height']} high, joined to a ground door 3 wide"
+            ),
+        ),
+    ]
+    if (line := shell_store.fit_line(fit)) is not None:
+        out.append(("floor", line))
+    return out
+
+
 def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
     from gregtec.build import (
         shell_store,
     )  # imports the layout planner (and the planner)
 
     home = call.env.db.parent.parent  # GOS_HOME/data/gos.sqlite
-    plan_ids = [p.strip() for p in args["plans"].split(",") if p.strip()]
+    plan_ids = [p.strip() for p in args.get("plans", "").split(",") if p.strip()]
     for pid in plan_ids:
         if not PLAN_ID.fullmatch(pid):
             raise ToolError(f"{pid!r} is not a plan id")
@@ -238,7 +285,7 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
     mode = args.get("mode") or ("site" if design is not None else "layout")
     entrance = _json_arg(args, "entrance", dict, "a JSON object {side, at}")
     zones = _json_arg(args, "zones", list, "a JSON list of {kind, lo, hi}")
-    if mode != "site" and (entrance is not None or zones):
+    if mode == "layout" and (entrance is not None or zones):
         raise ToolError("entrance and zones are for a site design (mode site)")
     site = None
     if "site" in args:
@@ -268,6 +315,8 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
             mode=mode,
             entrance=entrance,
             zones=zones or (),
+            area=args.get("area"),
+            site_factor=args.get("site_factor"),
         )
     except (shell.ShellError, palette.CatalogError) as exc:
         raise ToolError(f"no shell: {exc}") from None

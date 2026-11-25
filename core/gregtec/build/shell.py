@@ -111,6 +111,10 @@ INTERIOR = "interior"  # the clear volume id of the layout's own bounds (D316)
 SITE_FACTOR = 2.0
 SITE_FACTORS = (1.25, 6.0)
 SITE_HEIGHT = 12
+# A plan-free building (D424): sized by the roofed floor Clayton asks for (whole columns), its
+# plot square and at most SITE_MAX_SIDE across.
+AREA = (25, 6_000)
+SITE_MAX_SIDE = 128
 # Which end of an entrance its lo cell is, by the edge it is on (lo is the min x and z).
 _LO_END = {"west": "north", "east": "north", "north": "west", "south": "west"}
 
@@ -200,8 +204,9 @@ class Spec:
     # site mode (D422): the building comes first inside ``site`` (the wall line; bounds = it
     # grown by the relief) and GOS fits the machines afterwards (gregtec.build.fit). ``need``
     # is what the building must hold (fit.need) and ``program`` the machines' keep-outs, one
-    # row per distinct size (the script's NEED and PROGRAM)
-    mode: Literal["layout", "site"] = "layout"
+    # row per distinct size (the script's NEED and PROGRAM). A plan-free building (D424,
+    # "free") has a site and a NEED for its floor area only, and no program
+    mode: Literal["layout", "site", "free"] = "layout"
     site: Box | None = None
     need: Mapping[str, Any] | None = None
     program: tuple[Mapping[str, Any], ...] = ()
@@ -610,6 +615,133 @@ def spec_for_site(
     )
 
 
+# --- plan-free buildings (D424) ------------------------------------------------------------
+
+
+def check_area(area: object) -> int:
+    """A plan-free building's floor area: whole columns of roofed floor, within :data:`AREA`."""
+    if (
+        isinstance(area, bool)
+        or not isinstance(area, int)
+        or not AREA[0] <= area <= AREA[1]
+    ):
+        raise ShellError(
+            f"the area must be a whole number from {AREA[0]:,} to {AREA[1]:,} (blocks of "
+            "roofed floor)"
+        )
+    return area
+
+
+def check_factor(factor: object) -> float:
+    """A site factor within :data:`SITE_FACTORS` (site and plan-free builds)."""
+    if (
+        isinstance(factor, bool)
+        or not isinstance(factor, int | float)
+        or not math.isfinite(factor)
+        or not SITE_FACTORS[0] <= factor <= SITE_FACTORS[1]
+    ):
+        raise ShellError(
+            f"the site factor must be from {SITE_FACTORS[0]} to {SITE_FACTORS[1]}"
+        )
+    return float(factor)
+
+
+def site_for_area(
+    area: int,
+    opts: Options | None = None,
+    headroom: int | None = None,
+    factor: float = SITE_FACTOR,
+) -> Box:
+    """The SITE of a plan-free building (D424): a square of side ``max(ceil(sqrt(factor *
+    area)), ceil(sqrt(area)) + 4)`` (room for walls on the site's edge round a square floor of
+    the area, and the door's lobby), at most :data:`SITE_MAX_SIDE`;
+    ``max(corridor_height + chase_height, SITE_HEIGHT) + headroom`` high, from [0, 0, 0]. The
+    relief zone lies outside SITE (:func:`_site_bounds`), so it is not in the side."""
+    from gregtec.build import layout as layout_lib
+
+    opts = opts or layout_lib.Options()
+    check_area(area)
+    factor = check_factor(factor)
+    _, hr = options(None, headroom)
+    side = max(math.ceil(math.sqrt(factor * area)), math.ceil(math.sqrt(area)) + 4)
+    if side > SITE_MAX_SIDE:
+        most = min(math.floor(SITE_MAX_SIDE**2 * 10 / area) / 10, SITE_FACTORS[1])
+        raise ShellError(
+            f"{area:,} blocks of floor at site factor {factor} needs a {side}-wide plot; the "
+            f"most is {SITE_MAX_SIDE}: lower the factor (at most {most} for this area) or "
+            "the area"
+        )
+    height = max(opts.corridor_height + opts.chase_height, SITE_HEIGHT) + hr
+    return layout_lib.Box((0, 0, 0), (side - 1, height - 1, side - 1))
+
+
+def need_for_area(area: int, opts: Options | None = None) -> dict[str, Any]:
+    """A plan-free building's NEED (D424): the keys :func:`gregtec.build.floor.measure` and
+    the sandbox's ``covered()`` read, for ``area`` columns of roofed floor at least
+    ``corridor_height`` high (no machines: no keep-outs, nothing tallest or widest)."""
+    from gregtec.build import layout as layout_lib
+
+    opts = opts or layout_lib.Options()
+    ch, chh = opts.corridor_height, opts.chase_height
+    return {
+        "door_height": ch,
+        "aisle_height": ch + chh,
+        "cap_height": ch + chh,
+        "required": area * ch,
+        "keepout_volume": 0,
+        "floor_area": area,
+        "floor_required": area,
+        "tallest": [0, 0, 0],
+        "widest": [0, 0, 0],
+    }
+
+
+def spec_for_area(
+    area: int,
+    site: Box,
+    swatches: Sequence[Swatch],
+    opts: Options | None = None,
+    *,
+    theme: theme_lib.Theme | None = None,
+    prompt: str = "",
+    line_type: str = theme_lib.GENERAL,
+    max_blocks: int | None = None,
+    headroom: int | None = None,
+    relief: int | None = None,
+) -> Spec:
+    """A plan-free building's spec (D424): :func:`spec_for_site` with no plans and no program,
+    its NEED the floor area's (:func:`need_for_area`). Nothing is kept clear, ever: there are
+    no machines. The palette must already have passed :func:`check_palette`."""
+    from gregtec.build import layout as layout_lib
+
+    opts = opts or layout_lib.Options()
+    check_area(area)
+    mb, hr, rf = _inputs(max_blocks, headroom, relief, line_type, prompt)
+    if site.lo != (0, 0, 0):
+        raise ShellError("a site starts at [0, 0, 0]")
+    return Spec(
+        layout="",
+        plans=(),
+        bounds=_site_bounds(site, rf),
+        interior=_site_interior(site, hr),
+        clear=(),
+        swatches=tuple(swatches),
+        theme=None if theme is None else f"{theme.id}@v{theme.v}",
+        theme_name=None if theme is None else theme.name,
+        prompt=prompt,
+        line_type=line_type,
+        max_blocks=mb,
+        headroom=hr,
+        relief=rf,
+        interior_open=True,
+        theme_rules=_rules(theme, line_type),
+        origin=site.lo,
+        mode="free",
+        site=site,
+        need=need_for_area(area, opts),
+    )
+
+
 def fitted_spec(site_spec: Spec, lay: Mapping[str, Any]) -> Spec:
     """The gate's spec of a site build once its machines are fitted (``lay``, the fitted
     layout): every keep-out, corridor, chase and doorway kept clear, the same bounding volume,
@@ -975,6 +1107,15 @@ def script_facts(spec: Spec) -> dict[str, Any]:
             "need": dict(spec.need or {}),
             "program": [dict(r) for r in spec.program],
             "floor_y": spec.site.lo[1],
+        }
+    elif spec.mode == "free" and spec.site is not None:
+        # a plan-free building (D424): its SITE and NEED (the floor area's), no PROGRAM
+        need = dict(spec.need or {})
+        facts |= {
+            "site": spec.site.to_json(),
+            "need": need,
+            "floor_y": spec.site.lo[1],
+            "area": need.get("floor_required", 0),
         }
     return facts
 
@@ -1389,10 +1530,13 @@ def procedural(spec: Spec, fit: bool = False) -> list[dict[str, Any]]:
     lights from the theme's rules and the palette's roles. Always clean by :func:`inspect`.
 
     ``fit=True`` composes on a site spec (:func:`spec_for_site`; D422, the CI path of site
-    mode): the same building round the whole site, with a doorway ``door_height`` high and
-    three wide in the middle of its west wall for the fitter to find."""
-    if fit != (spec.mode == "site"):
-        raise ShellError("procedural(fit=True) composes on a site spec, and only there")
+    mode) or a plan-free one (:func:`spec_for_area`, D424): the same building round the whole
+    site, with a doorway ``door_height`` high and three wide in the middle of its west wall for
+    the fitter (or the floor check) to find."""
+    if fit != (spec.mode in ("site", "free")):
+        raise ShellError(
+            "procedural(fit=True) composes on a site or plan-free spec, and only there"
+        )
     roles = spec.roles()
     top = spec.wall_top
     ops: list[dict[str, Any]] = [{"op": "walls", "role": "wall", "y": [0, top]}]
@@ -1486,7 +1630,8 @@ def build_id(
     A site build (D422) is named by its site, its program (``program.json``, hashed), the
     answer's entrance and zones instead of the layout, which is derived from them, and, when
     its machines were fitted keeping an earlier version's places, that layout's id
-    (``prior``); a layout build's payload is unchanged."""
+    (``prior``); a layout build's payload is unchanged. A plan-free build (D424) is named by
+    its site, its area and the answer's entrance instead."""
     payload: dict[str, Any] = {
         "layout": spec.layout,
         "theme": spec.theme,
@@ -1515,6 +1660,14 @@ def build_id(
         }
         if prior is not None:
             payload["prior"] = prior
+    elif spec.mode == "free" and spec.site is not None:
+        del payload["layout"]
+        payload |= {
+            "mode": "free",
+            "site": spec.site.to_json(),
+            "area": (spec.need or {}).get("floor_required"),
+            "entrance": None if entrance is None else dict(entrance),
+        }
     text = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
@@ -1641,7 +1794,7 @@ def spec_json(spec: Spec) -> dict[str, Any]:
         ],
         **(
             {"site": spec.site.to_json(), "need": dict(spec.need or {})}
-            if spec.mode == "site" and spec.site is not None
+            if spec.mode in ("site", "free") and spec.site is not None
             else {}
         ),
     }

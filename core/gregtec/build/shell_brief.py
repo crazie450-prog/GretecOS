@@ -23,6 +23,10 @@ services, never a machine's coordinates; its answer (:data:`SITE_SCHEMA`, :func:
 name the main door (``entrance``) and steering boxes (``zones``); a refused answer's repair
 repeats NEED.
 
+**Plan-free buildings** (D424; prompt v7): an empty building Clayton furnishes himself, sized by
+its roofed floor (AREA). Its brief states SITE and NEED (the floor area joined to a ground
+door) and no PROGRAM; its answer is a site answer whose ``zones`` must be empty.
+
 The model gets **no tools**: nothing here runs code, opens a file or touches a world, and the
 answer is only ever handed to the gate. Every number in it is a coordinate the gate checks; no
 game number is asked for or taken from it.
@@ -48,8 +52,10 @@ from gregtec.build import palette, shell
 # 5: an open interior: the floor between machines is the shell's (WO-10.15, D389).
 # 6: site mode: the building first inside a SITE, the machines fitted into it afterwards
 #    (WO-10.16, D422). Layout mode keeps v5's text, word for word.
-PROMPT_VERSION = 6
-PROMPT_VERSIONS = {"layout": 5, "site": PROMPT_VERSION}
+# 7: plan-free buildings: an empty building sized by its roofed floor (WO-10.17, D424). Layout
+#    and site modes keep v5's and v6's texts, word for word.
+PROMPT_VERSION = 7
+PROMPT_VERSIONS = {"layout": 5, "site": 6, "free": PROMPT_VERSION}
 MODES = tuple(PROMPT_VERSIONS)
 # What the vocabulary is, in the words build_request's own description uses (its tool adds how
 # to ask for GOS's procedural shell; gregtec.agents.tools.shells.VOCABULARY).
@@ -240,7 +246,7 @@ def schema(mode: str = "layout") -> dict[str, Any]:
     """The answer's JSON schema for a design of ``mode`` (layout: :data:`SCHEMA`, unchanged)."""
     if mode not in MODES:
         raise ValueError(mode)
-    return SITE_SCHEMA if mode == "site" else SCHEMA
+    return SCHEMA if mode == "layout" else SITE_SCHEMA
 
 
 class BriefError(ValueError):
@@ -294,6 +300,8 @@ def system_prompt(mode: str = "layout") -> str:
         raise ValueError(mode)
     if mode == "site":
         return site_prompt()
+    if mode == "free":
+        return free_prompt()
     return (
         _INTRO
         + "The space (exact numbers in the brief): the machines stand in the layout's interior. "
@@ -419,6 +427,77 @@ def site_prompt() -> str:
     )
 
 
+# What a plan-free building's script reads beside SCRIPT_API's names (shell.script_facts, D424).
+FREE_API = (
+    "A plan-free building's script also reads SITE (the box your building stands in, "
+    '{"lo", "hi"}; WALLS is the same box), AREA (the columns of roofed floor asked for), '
+    "NEED (door_height, and floor_required: AREA), FLOOR_Y (0) and "
+    'covered(): {"volume", "floor", "need_volume", "short_by", "need_floor"} of the blocks '
+    "the script placed so far (floor: each roofed column whose y 0 is air and at least "
+    "door_height high; only those joined to the door count in the check). DOORWAYS and "
+    "KEEP_CLEAR are empty: nothing is kept clear."
+)
+
+
+def free_prompt() -> str:
+    """A plan-free building's system text (v7, D424): the same ambition, then the site and
+    its floor rule, with no machines, program, aisles, chases or keep-outs."""
+    return (
+        _INTRO
+        + "The space (exact numbers in the brief): design the building freely inside SITE. "
+        "It is an empty building the player furnishes himself afterwards: no machine is "
+        "placed or fitted, and nothing of your building is removed. What the code checks:\n"
+        "- y 0 is the floor: keep it air under your roof (a block at y 0 is not floor).\n"
+        "- At least AREA columns of roofed floor (a column with a block somewhere above it "
+        "and at least NEED.door_height of air from y 0), 4-joined to the lobby of one ground "
+        "doorway at least NEED.door_height high and 3 wide with a straight way out at y 0 to "
+        "the edge of SITE. Check it with covered()['floor'] against NEED.floor_required "
+        "(AREA): covered() counts every roofed column, so it is an upper bound; only the "
+        "columns joined to the door count.\n"
+        "Columns, inner walls, arcades, light wells and courtyards are fine while the floor "
+        "stays joined. Beyond SITE the relief zone (RELIEF blocks on every side, from the "
+        "ground up) and everything above, up to the top of the bounding volume, are yours "
+        "too: that is where the silhouette is made.\n\n"
+        'Answer with one JSON object and nothing else: {"script": "<python>", "ops": [...], '
+        '"entrance": null, "zones": []}. "script" is your building. Its building API: '
+        + SCRIPT_API
+        + " "
+        + FREE_API
+        + ' "ops" is optional: operations of a building vocabulary in the same coordinates, '
+        "run after the script in order (later ones overwrite earlier ones). Each is an object "
+        "with op: "
+        + VOCAB
+        + " Every operation carries every key: for the keys it does not use, set role, block, "
+        'edge and parapet_role to "" and every other key to null. Leave ops empty ([]) if the '
+        'script does it all. "entrance" is your main door, or null for GOS to take the widest '
+        'one: {"side": "west", "at": [x, z]}, a ground column of its opening (roofed, on the '
+        'building\'s outer edge on that side). "zones" is always []: there are no machines '
+        "to steer.\n\n"
+        "Fragments that show the helpers (not a building to copy):\n"
+        'cylinder((x, z), 2.5, 0, ROOF_Y + 8, "pillar")  # a round tower\n'
+        'pyramid((x0, ROOF_Y, z0), (x1, ROOF_Y + 6, z1), "roof")  # a stepped hip roof\n'
+        'arch((x0, 0, z), (x1, 0, z), 4, "trim")  # an arch over an opening\n'
+        'top, x1, z1 = NEED["cap_height"], 8, 8  # a hall that grows until it holds AREA\n'
+        "while True:\n"
+        '    ring((0, 0, 0), (x1, top - 1, z1), "wall")\n'
+        '    fill((0, top, 0), (x1, top, z1), "roof")\n'
+        '    if covered()["floor"] >= NEED["floor_required"] or x1 >= SITE["hi"][0]:\n'
+        "        break\n"
+        "    clear((0, 0, 0), (x1, top, z1))\n"
+        '    x1, z1 = x1 + 2, min(z1 + 2, SITE["hi"][2])\n'
+        'clear((0, 0, z1 // 2 - 1), (0, NEED["door_height"] - 1, z1 // 2 + 1))  # the door\n\n'
+        "The code refuses a design that names a role or block the palette does not have (the "
+        "palette holds plain blocks only: nothing with an inventory or a screen, no machine "
+        "block), whose script breaks the rules above or fails, that has more than max_blocks "
+        "blocks, or none. It removes blocks placed outside the bounding volume (SITE and the "
+        "relief zone, up to the top) and refuses the design when that is more than a quarter "
+        "of it. It refuses it too when the floor check fails: no doorway, or too little roofed "
+        "floor joined to it; the refusal says how much to add. Stay valid first, then be "
+        "ambitious: a refused design is worth nothing.\n\n"
+        "The brief gives the palette, the sizes, SITE, AREA and NEED. " + _WORDS
+    )
+
+
 def clean(words: str) -> str:
     """Request words as they go into a brief: one line, no angle brackets (so they can't close
     the <request> block or open another)."""
@@ -481,6 +560,17 @@ def facts(rec: Mapping[str, Any]) -> dict[str, Any]:
             "need": dict(fit["need"]),
             "buffer": fit.get("buffer"),
         }
+    elif free_record(
+        rec
+    ):  # D424: nothing is ever kept clear; the floor area is the rule
+        fit = rec["fit"]
+        out["doorways"] = []
+        out |= {
+            "mode": "free",
+            "site": {"lo": list(fit["site"]["lo"]), "hi": list(fit["site"]["hi"])},
+            "need": dict(fit["need"]),
+            "area": fit["area"],
+        }
     return out
 
 
@@ -489,6 +579,13 @@ def site_record(rec: Mapping[str, Any]) -> bool:
     site_mode`, repeated here: shell_store imports the planner, which imports this module)."""
     got = rec.get("fit")
     return isinstance(got, Mapping) and got.get("mode") == "site"
+
+
+def free_record(rec: Mapping[str, Any]) -> bool:
+    """Whether a build record is a plan-free building's (D424; :func:`gregtec.build.
+    shell_store.free_mode`, repeated here as :func:`site_record` is)."""
+    got = rec.get("fit")
+    return isinstance(got, Mapping) and got.get("mode") == "free"
 
 
 def _head(
@@ -533,6 +630,8 @@ def _body(
 ) -> list[str]:
     if site_record(rec):
         return _site_body(rec, lay, names, rules)
+    if free_record(rec):
+        return _free_body(rec, names, rules)
     b = rec["bounds"]
     sx, sy, sz = b["size"]
     lines = _head(rec, rules)
@@ -676,6 +775,46 @@ def _site_body(
     return lines
 
 
+def _free_body(
+    rec: Mapping[str, Any],
+    names: Mapping[str, str | None],
+    rules: Mapping[str, Sequence[str]] | None,
+) -> list[str]:
+    """A plan-free building's brief (D424): SITE and NEED (its roofed floor, joined to a
+    door); no machines, no PROGRAM, no services."""
+    fit = rec["fit"]
+    b, site, need = rec["bounds"], fit["site"], fit["need"]
+    sx, sy, sz = (site["hi"][i] - site["lo"][i] + 1 for i in range(3))
+    dh = need["door_height"]
+    lines = _head(rec, rules)
+    lines += [
+        (
+            "Coordinates: x east, y up, z south; y 0 is the floor, the first layer above the "
+            "ground."
+        ),
+        (
+            f"SITE: {_box(site)} ({sx} wide in x, {sz} long in z, {sy} high): the building "
+            "stands in it. It is empty: the player furnishes it himself, so there are no "
+            "machines."
+        ),
+        (
+            f"Bounding volume: {_box(b)}: SITE and the relief zone, {rec.get('relief', 0)} "
+            "blocks outside it on every side, from the ground to the top, for facades that "
+            f"stand out. WALL_TOP {rec['wall_top']} and ROOF_Y {rec['roof_y']} are where a "
+            f"plain building's walls end and its roof starts (a suggestion); the top is y "
+            f"{b['hi'][1]} (headroom {rec['headroom']})."
+        ),
+        (
+            f"NEED: roofed floor >= {fit['area']} columns at least {dh} high, joined to a "
+            f"ground door 3 wide x {dh} high with a straight way out of SITE."
+        ),
+        f"max_blocks: {rec['max_blocks']}.",
+    ]
+    lines += _palette(rec, names)
+    lines.append("facts: " + json.dumps(facts(rec), separators=(",", ":")))
+    return lines
+
+
 def _fit(text: str) -> str:
     if len(text) > MAX_BRIEF_CHARS:
         raise BriefError(
@@ -730,11 +869,19 @@ def revise_brief(
             "answer's entrance and zones replace the current ones: send them again to keep "
             "them (entrance null: GOS takes the widest doorway; zones []: none)."
         )
+    elif free_record(rec):
+        head.append(
+            "GOS checks the revised building's floor again. Your answer's entrance replaces "
+            "the current one: send it again to keep it (null: GOS takes the widest doorway); "
+            "zones stay []."
+        )
     script, ops = split(rec["ops"])
     tail = [
         "current script: " + json.dumps(script),
         "current operations: " + json.dumps(ops, separators=(",", ":")),
     ]
+    if free_record(rec):
+        tail.append("current entrance: " + json.dumps(rec["fit"].get("entrance")))
     if site_record(rec):
         fit = rec["fit"]
         tail += [
@@ -808,6 +955,7 @@ class Answer:
 _KEYS = {
     "layout": ({"ops"}, {"script", "ops"}),
     "site": ({"ops"}, {"script", "ops", "entrance", "zones"}),
+    "free": ({"ops"}, {"script", "ops", "entrance", "zones"}),
 }
 
 
@@ -815,7 +963,8 @@ def read(text: str, mode: str = "layout") -> Answer:
     """A model's answer for a design of ``mode``, as data (:func:`parse`). A site answer
     (D422) may also carry ``entrance`` (null, or ``{"side", "at": [x, z]}``) and ``zones``
     (a list of ``{"kind", "lo", "hi"}``); the fitter checks their values. A layout answer
-    takes neither, as before."""
+    takes neither, as before. A plan-free answer (D424) is a site answer whose zones are
+    empty."""
     if mode not in MODES:
         raise ValueError(mode)
     data = _json_object(text)
@@ -827,7 +976,7 @@ def read(text: str, mode: str = "layout") -> Answer:
     ):
         raise BriefError(
             'the answer must be one JSON object {"script": "...", "ops": [...]'
-            + (', "entrance": ..., "zones": [...]}' if mode == "site" else "}")
+            + (', "entrance": ..., "zones": [...]}' if mode != "layout" else "}")
         )
     ops = _ops(data)
     entrance = data.get("entrance")
@@ -842,6 +991,10 @@ def read(text: str, mode: str = "layout") -> Answer:
     ):
         raise BriefError(
             'zones is a list of {"kind": ..., "lo": [x, y, z], "hi": [x, y, z]}'
+        )
+    if mode == "free" and zones:
+        raise BriefError(
+            "a plan-free building has no zones (zones steer where machines go): send []"
         )
     return Answer(ops, entrance, tuple(zones))
 

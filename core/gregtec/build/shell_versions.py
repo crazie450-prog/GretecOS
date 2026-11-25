@@ -436,7 +436,11 @@ def revise(
     parent's layout that still fit when a fresh fit would move them (design §2.7).
     ``entrance`` and ``zones`` (a site build's only; none: the parent's) are the answer's
     door hint and steering boxes; ``entrance`` :data:`AUTO` drops the parent's hint (GOS
-    takes the widest doorway)."""
+    takes the widest doorway).
+
+    A plan-free building (D424) keeps its area and plot (the area is a minimum: more floor
+    fits in the plot; another area is a new design) and its floor is checked again
+    (:func:`gregtec.build.shell_store.gate_free`); it takes an entrance hint, never zones."""
     if by not in BY:
         raise ValueError(by)
     ds = ds or current_id(home)
@@ -447,7 +451,12 @@ def revise(
     rec = shell_store.load(home, parent)
     lay = _layout_of(home, parent)
     site = shell_store.site_mode(rec)
-    if not site and (entrance is not None or zones is not None):
+    free = shell_store.free_mode(rec)
+    if free and zones:
+        raise VersionError(
+            "a plan-free building has no zones (zones steer where machines go)"
+        )
+    if not site and not free and (entrance is not None or zones is not None):
         raise VersionError("an entrance or zones are for a site build")
     if isinstance(entrance, str) and entrance != AUTO:
         raise VersionError(
@@ -508,7 +517,19 @@ def revise(
         changes.append(f"theme {theme.name} ({theme.id}@v{theme.v})")
     line_type = rec.get("line_type", theme_lib.GENERAL)
     try:
-        if site:
+        if free:
+            spec = shell.spec_for_area(
+                int(rec["fit"]["area"]),
+                _site_box(rec, hr),
+                swatches,
+                theme=theme,
+                prompt=rec.get("prompt", ""),
+                line_type=line_type,
+                max_blocks=mb,
+                headroom=hr,
+                relief=rec.get("relief", 0),
+            )
+        elif site:
             _, prog, opts = shell_store._program(home, parent)
             spec = shell.spec_for_site(
                 prog,
@@ -542,15 +563,19 @@ def revise(
         spec = replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
     progress.stage("gate")
     fitted: shell_store.Fitted | None = None
-    if site:
-        info = rec["fit"]
-        door: Mapping[str, Any] | None = (
-            info.get("entrance")
-            if entrance is None
-            else None
-            if isinstance(entrance, str)  # AUTO
-            else entrance
+    gated: shell_store.Gated | None = None
+    if free:
+        gated = shell_store.gate_free(
+            conn,
+            spec,
+            new_ops,
+            source,
+            float(rec["fit"].get("site_factor", shell.SITE_FACTOR)),
+            _door_hint(rec, entrance),
         )
+        spec, outcome, build = gated.spec, gated.outcome, gated.build
+    elif site:
+        info = rec["fit"]
         fitted = shell_store.fit_site(
             conn,
             spec,
@@ -558,7 +583,7 @@ def revise(
             source,
             prog,
             opts,
-            door,
+            _door_hint(rec, entrance),
             (info.get("zones") or ()) if zones is None else zones,
             lay,
             parent,
@@ -600,7 +625,7 @@ def revise(
         brief,
         build,
         None,
-        None if fitted is None else fitted.fit,
+        fitted.fit if fitted is not None else gated.fit if gated is not None else None,
     )
     return _keep(
         home,
@@ -616,6 +641,16 @@ def revise(
     )
 
 
+def _door_hint(
+    rec: Mapping[str, Any], entrance: Mapping[str, Any] | str | None
+) -> Mapping[str, Any] | None:
+    """A version's door hint: the parent's when none is given, none for :data:`AUTO`."""
+    if entrance is None:
+        got: Mapping[str, Any] | None = rec["fit"].get("entrance")
+        return got
+    return None if isinstance(entrance, str) else entrance
+
+
 def _room(home: Path, ds: str) -> dict[str, Any]:
     d = get(home, ds)
     if len(d["versions"]) >= MAX_VERSIONS:
@@ -627,8 +662,9 @@ def _room(home: Path, ds: str) -> dict[str, Any]:
 
 
 def _site_box(rec: Mapping[str, Any], headroom: int) -> shell_store.layout_lib.Box:
-    """A site version's site: its parent's, as high as its headroom makes it (``site_of``'s
-    height is the machines' height plus the headroom)."""
+    """A site (or plan-free, D424) version's site: its parent's, as high as its headroom
+    makes it (``site_of``'s and ``site_for_area``'s height is a floor height plus the
+    headroom)."""
     box = shell_store.layout_lib.box_of(rec["fit"]["site"])
     top = box.hi[1] - int(rec["headroom"]) + headroom
     return shell_store.layout_lib.Box(box.lo, (box.hi[0], top, box.hi[2]))
@@ -747,6 +783,11 @@ def refit(
         )
     d = _room(home, ds)
     rec = shell_store.load(home, build)
+    if shell_store.free_mode(rec):
+        raise VersionError(
+            f"{build} is plan-free: it has no machines to refit. Place them in the game "
+            "yourself, or design on plans."
+        )
     if not shell_store.site_mode(rec):
         raise VersionError(
             f"{build} is a layout-first shell: its machines are laid out, not fitted; "

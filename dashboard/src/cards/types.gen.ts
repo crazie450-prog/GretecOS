@@ -349,13 +349,13 @@ export interface ShellMaterial {
   count: number;
 }
 
-/** A decorative shell's preview (WO-10.7, plan 7.10, D316-D318): what made it (the architect's design or the procedural generator), accepted as designed or repaired, its theme, bounding size, block count, palette manifest, the preview mesh's faces and the Lab-only paste steps. A face is [d, x, y, z, a, b, c]: d the way it looks (0 east, 1 west, 2 up, 3 down, 4 south, 5 north), x y z its lowest cell in the shell, a and b its extent along the plane's axes (x faces z then y, y faces x then z, z faces x then y), c the palette entry it shows. The shell holds no tile entity and no GT machine block; ref cites the plan it houses. */
+/** A decorative shell's preview (WO-10.7, plan 7.10, D316-D318): what made it (the architect's design or the procedural generator), accepted as designed or repaired, its theme, bounding size, block count, palette manifest, the preview mesh's faces and the Lab-only paste steps. A face is [d, x, y, z, a, b, c]: d the way it looks (0 east, 1 west, 2 up, 3 down, 4 south, 5 north), x y z its lowest cell in the shell, a and b its extent along the plane's axes (x faces z then y, y faces x then z, z faces x then y), c the palette entry it shows. The shell holds no tile entity and no GT machine block; ref cites the plan it houses (ref and layout are null for a plan-free building, D424). */
 export interface ShellCard {
   type: "shell";
   title: string;
   ref: Ref | null;
   build: string;
-  layout: string;
+  layout: string | null;
   status: "accepted" | "repaired";
   source: "architect" | "procedural";
   theme: string | null;

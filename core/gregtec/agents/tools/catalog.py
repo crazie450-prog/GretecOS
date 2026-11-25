@@ -514,8 +514,11 @@ TOOLS = (
         "change. In layout mode (GOS's procedural shell, or mode layout) blocks in a machine's "
         "keep-out, a corridor, a chase or the doorway are removed and said. A tile-entity "
         "block, GT's machine block, a block outside the palette or more than max_blocks is "
-        "refused and nothing is saved. Returns the build id, its geometry (and a site design's "
-        "SITE, NEED, PROGRAM and fit line), the palette manifest and the operations used.",
+        "refused and nothing is saved. mode free with area and no plans is a plan-free "
+        "building (D424): an empty one Clayton furnishes himself, refused unless that much "
+        "roofed floor is joined to a ground door. Returns the build id, its geometry (and a "
+        "site design's SITE, NEED, PROGRAM and fit line, or a plan-free one's floor line), "
+        "the palette manifest and the operations used.",
         shells.BUILD_REQUEST_SCHEMA,
         shells.build_request,
         read_only=False,
@@ -534,7 +537,8 @@ TOOLS = (
         "refused revision writes nothing and the current version stays current. Every version "
         "is kept; undo makes the previous one current again. A site build's machines are "
         "fitted into the revised building again (entrance and zones: leave out to keep the "
-        "current version's); its result carries its fit line.",
+        "current version's); its result carries its fit line. A plan-free building keeps its "
+        "area and plot and its floor is checked again.",
         shells.BUILD_REVISE_SCHEMA,
         shells.build_revise,
         read_only=False,

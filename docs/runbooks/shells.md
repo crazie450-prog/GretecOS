@@ -20,6 +20,15 @@ The shell workbench is the separate window you asked for: the dashboard's **Buil
 - The notes and the result say how the machines fit: "8 machines fitted in the building (pass flow), interior 1289 of 519 needed (+25%), 148% spare, entrance auto".
 - To try a site shell for free yourself: `& $gos shell design <plan-id> --theme th-foundry --mode site` (GOS's own building for the site).
 
+## A building with no machines in it (plan-free, D424)
+
+- When you want just the building and will put the machines inside yourself, ask for a **plan-free** building. It names no plans: you give the **interior floor area** instead, as blocks of roofed floor (25 to 6,000), for example "at least 1,500 blocks of roofed floor".
+- GOS works out a square plot (the SITE) from the area: its side is `max(ceil(sqrt(2.0 x area)), ceil(sqrt(area)) + 4)`, at most 128, and it is 12 blocks high plus the headroom. 1,500 blocks of floor gives a 55 x 55 plot, and 6,000 gives 110 x 110. A **site factor** from 1.25 to 6.0 (default 2.0) makes the plot tighter or roomier. The same factor now also works for site-mode shells on plans (`--site-factor`).
+- The check is site mode's floor and door rule, without the machines: at least that many columns of roofed floor, at least 3 high, all joined to one ground doorway 3 wide with a straight way out. There is no fit, no keep-outs and no program. A building that is too small is refused with the numbers, for example "the roofed floor joined to the west door has 1,212 columns at least 3 high; it needs 1,500: add at least 288".
+- It exports as a `.schematic` like any shell (`gos shell export`), and you paste it in the Lab from its doorway. The viewer shows no machine ghosts. `gos shell refit` refuses a plan-free building: it has no machines to refit.
+- Revising one keeps its area and plot. The area is a minimum, so a revision may add floor inside the plot. A different area is a new design.
+- To try one for free: `& $gos shell design --mode free --area 1500 --theme th-marble-works` (GOS's own building: walls round the whole plot, a flat roof and a west door). The architect takes the same request in Chat ("a plan-free building with 1,500 blocks of floor"); without a number it asks you for one.
+
 ## How to iterate
 
 1. **Design.** Pick the plan and a theme (or leave it blank: the theme used nearby, else one that fits the line type), set Max blocks or Headroom if you like, press **Design new**. Or say it: "design a foundry shell around my steel line".
@@ -49,6 +58,7 @@ Some phrasings in Chat or voice neither design a shell nor revise the current on
 & $gos shell compare <sh-id> <sh-id>       # materials and block counts side by side
 & $gos shell refit <sh-id>                 # a site shell: today's machines fitted into the same building
 & $gos shell design <plan-id> --theme th-foundry --mode site   # GOS's own site building (free)
+& $gos shell design --mode free --area 1500 --theme th-marble-works   # a plan-free building (free)
 ```
 
 `revise` and `refit` exit 0 saved, 1 refused (nothing written), 2 bad input. `refit` works on the current version of its design only.

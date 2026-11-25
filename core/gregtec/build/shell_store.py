@@ -6,7 +6,10 @@ shell design`` and the dashboard's No-AI button): it lays the plans out (WO-10.5
 palette, or blank: the theme most used nearby, else one that fits the line type), checks the
 palette against the block catalog, compiles the design (the model's operations, or the procedural
 generator's when none is given), and inspects, repairs or refuses it (:mod:`gregtec.build.shell`).
-Only an accepted or repaired design is saved; a refused one writes nothing.
+Only an accepted or repaired design is saved; a refused one writes nothing. A plan-free building
+(``mode="free"``, D424) names no plans: its site is sized from the roofed floor asked for and
+its floor is checked (:func:`gate_free`) instead of a layout or a fit; its ``layout.json`` is
+``{}``.
 
 A saved build is ``GOS_HOME/data/build/shells/<sh-id>/``:
 
@@ -54,7 +57,7 @@ FILES = ("design.json", "layout.json", "palette.tsv", "preview.json", "notes.txt
 SITE_FILES = (*FILES, "program.json")
 # a site version whose machines kept an earlier version's places: that layout (D422)
 PRIOR = "prior.json"
-MODES = ("layout", "site")
+MODES = ("layout", "site", "free")
 MAX_PLANS = shell.MAX_PLANS
 MAX_CARD_FACES = 6000  # the shell card's limit (core/gregtec/cards/schema.json)
 MAX_CARD_PALETTE = 64
@@ -99,6 +102,12 @@ def site_mode(rec: Mapping[str, Any]) -> bool:
     return isinstance(got, Mapping) and got.get("mode") == "site"
 
 
+def free_mode(rec: Mapping[str, Any]) -> bool:
+    """Whether a saved build is a plan-free building (D424: no plans, no machines)."""
+    got = rec.get("fit")
+    return isinstance(got, Mapping) and got.get("mode") == "free"
+
+
 def _theme_store(vault: VaultIO | None) -> theme_lib.Themes | None:
     return None if vault is None else theme_lib.Themes(vault)
 
@@ -124,37 +133,64 @@ def make(
     mode: str = "layout",
     entrance: Mapping[str, Any] | None = None,
     zones: Sequence[Mapping[str, Any]] = (),
+    area: int | None = None,
+    site_factor: float | None = None,
 ) -> Made:
     """Design a shell around the plans' layout and save it unless refused (see the module).
     Under a shell job (WO-10.10) each step is a stage and a cancel point, all before saving.
 
     ``mode="site"`` (D422) designs the building first inside a SITE sized from the plans'
     machines and fits the machines into it afterwards (:func:`_make_site`); ``entrance`` and
-    ``zones`` are the answer's optional door hint and steering boxes."""
+    ``zones`` are the answer's optional door hint and steering boxes. ``site_factor`` sizes
+    the SITE (:data:`gregtec.build.shell.SITE_FACTORS`; default 2.0).
+
+    ``mode="free"`` (D424) is a plan-free building: no plans, its SITE sized from ``area``
+    (columns of roofed floor), checked by :func:`gregtec.build.fit.floor_check` instead of a
+    fit (:func:`_make_area`); Clayton places the machines himself."""
     progress.stage("layout")
     if mode not in MODES:
         raise shell.ShellError(f"mode {mode!r} is not one of {', '.join(MODES)}")
     if mode == "layout" and (entrance is not None or zones):
         raise shell.ShellError("an entrance or zones are for a site build")
-    if not plan_ids or len(plan_ids) > MAX_PLANS:
-        raise shell.ShellError(f"name 1 to {MAX_PLANS} saved plans")
-    plans = []
-    for pid in plan_ids:
-        try:
-            plans.append(plan_store.load(home, pid))
-        except (OSError, ValueError) as exc:
-            raise shell.ShellError(f"plan {pid} isn't saved: {exc}") from None
+    if mode == "layout" and site_factor is not None:
+        raise shell.ShellError("a site factor is for a site or plan-free build")
+    if site_factor is not None:
+        shell.check_factor(site_factor)
+    factor = shell.SITE_FACTOR if site_factor is None else float(site_factor)
     prog: layout_lib.Program | None = None
     lay: dict[str, Any] = {}
-    try:
-        if mode == "site":
-            prog = layout_lib.program(conn, plans)
-        else:
-            lay = layout_lib.plan_layout(conn, plans, layout_options)
-    except layout_lib.LayoutError as exc:
-        raise shell.ShellError(f"no layout: {exc}") from None
-    if (not prog.instances) if prog is not None else not lay["placements"]:
-        raise shell.ShellError("the layout places no machine: nothing to house")
+    if mode == "free":
+        if plan_ids or area is None:
+            raise shell.ShellError("a plan-free building takes an area and no plans")
+        if zones:
+            raise shell.ShellError(
+                "a plan-free building has no zones (zones steer where machines go)"
+            )
+        if layout_options is not None:
+            raise shell.ShellError("a plan-free building has no layout options")
+        shell.check_area(area)
+    else:
+        if area is not None:
+            raise shell.ShellError(
+                "an area is only for a plan-free building (mode free)"
+            )
+        if not plan_ids or len(plan_ids) > MAX_PLANS:
+            raise shell.ShellError(f"name 1 to {MAX_PLANS} saved plans")
+        plans = []
+        for pid in plan_ids:
+            try:
+                plans.append(plan_store.load(home, pid))
+            except (OSError, ValueError) as exc:
+                raise shell.ShellError(f"plan {pid} isn't saved: {exc}") from None
+        try:
+            if mode == "site":
+                prog = layout_lib.program(conn, plans)
+            else:
+                lay = layout_lib.plan_layout(conn, plans, layout_options)
+        except layout_lib.LayoutError as exc:
+            raise shell.ShellError(f"no layout: {exc}") from None
+        if (not prog.instances) if prog is not None else not lay["placements"]:
+            raise shell.ShellError("the layout places no machine: nothing to house")
     store = _theme_store(vault)
     found: list[theme_lib.Theme] = []
     if store is not None:
@@ -185,6 +221,23 @@ def make(
         shell.check_palette(conn, swatches)
     except palette.CatalogError as exc:
         raise shell.ShellError(str(exc)) from None
+    if mode == "free":
+        assert area is not None
+        return _make_area(
+            conn,
+            home,
+            area,
+            factor,
+            swatches,
+            brief,
+            max_blocks=max_blocks,
+            headroom=headroom,
+            ops=ops,
+            relief=relief,
+            site=site,
+            save_it=save_it,
+            entrance=entrance,
+        )
     if prog is not None:
         return _make_site(
             conn,
@@ -201,6 +254,7 @@ def make(
             save_it=save_it,
             entrance=entrance,
             zones=zones,
+            factor=factor,
         )
     spec = shell.spec_from_layout(
         lay,
@@ -255,12 +309,13 @@ def _make_site(
     save_it: bool,
     entrance: Mapping[str, Any] | None,
     zones: Sequence[Mapping[str, Any]],
+    factor: float = shell.SITE_FACTOR,
 ) -> Made:
     """:func:`make`'s site branch (D422, design §2.6): the SITE and its spec, the design
     compiled once, the palette and size gate, the fit, then the gate on the fitted volumes."""
     from gregtec.build import fit as fit_lib
 
-    box = shell.site_of(prog, opts, headroom)
+    box = shell.site_of(prog, opts, headroom, factor)
     spec = shell.spec_for_site(
         prog,
         box,
@@ -328,11 +383,147 @@ def _make_site(
     return replace(made, saved=path)
 
 
+def _make_area(
+    conn: sqlite3.Connection,
+    home: Path,
+    area: int,
+    factor: float,
+    swatches: Sequence[shell.Swatch],
+    brief: theme_lib.Brief,
+    *,
+    max_blocks: int | None,
+    headroom: int | None,
+    ops: Sequence[Mapping[str, Any]] | None,
+    relief: int | None,
+    site: Site | None,
+    save_it: bool,
+    entrance: Mapping[str, Any] | None,
+) -> Made:
+    """:func:`make`'s plan-free branch (D424): the SITE from the area and its spec, then
+    :func:`gate_free`."""
+    box = shell.site_for_area(area, None, headroom, factor)
+    spec = shell.spec_for_area(
+        area,
+        box,
+        swatches,
+        theme=brief.theme,
+        prompt=brief.prompt,
+        line_type=brief.line_type,
+        max_blocks=max_blocks,
+        headroom=headroom,
+        relief=relief,
+    )
+    source = "procedural" if ops is None else "architect"
+    progress.stage("compose")
+    design_ops = tuple(
+        dict(o)
+        for o in (shell.procedural(spec, fit=True) if ops is None else ops)
+        if isinstance(o, Mapping)
+    )
+    if ops is not None and len(design_ops) != len(ops):
+        hint = None if entrance is None else dict(entrance)
+        out = shell.Outcome(
+            "refused", source, {}, {}, ("every operation is an object",)
+        )
+        build = shell.build_id(spec, design_ops, entrance=hint)
+        return Made(spec, design_ops, out, brief, build, None, None)
+    gated = gate_free(conn, spec, design_ops, source, factor, entrance)
+    made = Made(
+        gated.spec, design_ops, gated.outcome, brief, gated.build, None, gated.fit
+    )
+    if not gated.outcome.ok or not save_it:
+        return made
+    progress.stage("saving")
+    path = save(home, made, {})
+    if site is not None and brief.theme is not None:
+        theme_lib.record_use(
+            home, theme_lib.Use(gated.build, brief.theme.id, site.dim, site.x, site.z)
+        )
+    return replace(made, saved=path)
+
+
+@dataclass(frozen=True)
+class Gated:
+    """A plan-free design gated and its floor checked (:func:`gate_free`)."""
+
+    spec: (
+        shell.Spec
+    )  # with the paste origin at the door when it passed, else design-time
+    outcome: shell.Outcome
+    build: str
+    fit: dict[str, Any]  # design.json's ``fit``
+
+
+def gate_free(
+    conn: sqlite3.Connection,
+    spec: shell.Spec,
+    ops: Sequence[Mapping[str, Any]],
+    source: str,
+    factor: float,
+    entrance: Mapping[str, Any] | None,
+) -> Gated:
+    """A plan-free building's gate (D424; a new design or a version): ``ops`` compiled once
+    with ``spec`` (:func:`gregtec.build.shell.spec_for_area`'s), the palette and size gate,
+    then the floor check (:func:`gregtec.build.fit.floor_check`: no fit, nothing kept clear)
+    with the answer's door hint ``entrance``; the paste origin is the door's entrance cell."""
+    from gregtec.build import fit as fit_lib
+
+    assert spec.mode == "free" and spec.site is not None
+    area = int((spec.need or {})["floor_required"])
+    hint = None if entrance is None else dict(entrance)
+    build = shell.build_id(spec, ops, entrance=hint)
+    info: dict[str, Any] = {
+        "mode": "free",
+        "site": spec.site.to_json(),
+        "need": dict(spec.need or {}),
+        "area": area,
+        "site_factor": factor,
+        "entrance": hint,
+        "zones": [],
+        "buffer": 0,
+    }
+
+    def refused(out: shell.Outcome) -> Gated:
+        return Gated(spec, out, build, info)
+
+    progress.stage("gate")
+    try:
+        got = shell.compile_ops(spec, ops)
+    except shell.ShellError as exc:
+        return refused(shell.Outcome("refused", source, {}, {}, (str(exc),)))
+    outcome = shell.design(conn, spec, ops, source, compiled=got)
+    if not outcome.ok:
+        return refused(outcome)
+    progress.stage("floor")
+    fl = fit_lib.floor_check(outcome.cells, spec.site, area, None, hint)
+    info["fit"] = fl.stats
+    if not fl.ok:
+        return refused(shell.Outcome("refused", source, {}, {}, tuple(fl.reasons)))
+    return Gated(with_door(spec, fl), outcome, build, info)
+
+
+def with_door(spec: shell.Spec, fl: fit_lib.Floored) -> shell.Spec:
+    """A plan-free spec (D424) with its paste origin at the checked door's entrance cell."""
+    assert fl.entrance is not None and fl.door is not None
+    return replace(
+        spec,
+        origin=fl.entrance.lo,
+        origin_entrance="e1",
+        origin_side=str(fl.door["side"]),
+    )
+
+
 def fit_line(fit: Mapping[str, Any]) -> str | None:
-    """The accepted site build's note: how its machines fit (None before the fit)."""
+    """The accepted site build's note: how its machines fit (None before the fit); a
+    plan-free building's (D424): its roofed floor and door."""
     st = fit.get("fit") or {}
     if "spare_pct" not in st:
         return None
+    if fit.get("mode") == "free":
+        return (
+            f"roofed floor {st['floor']:,} of ≥{st['need_floor']:,}, joined to the "
+            f"{st['door']['side']} door (spare {st['spare_pct']}%)"
+        )
     return (
         f"{st['placed']} machines fitted in the building (pass {st['pass']}), interior "
         f"{st['volume']} of {st['need']['required']} needed (+{fit.get('buffer')}%), "
@@ -367,6 +558,14 @@ def notes(
             for v in outcome.report.verdicts
             for w in v.warnings
         ]
+    if fit is not None and fit.get("mode") == "free":
+        if (line := fit_line(fit)) is not None:
+            out.append(line)
+        out.append(
+            "no tile entity, no GT machine block; a plan-free building: no machines, so "
+            "nothing is kept clear (you place them in the game yourself)"
+        )
+        return out
     if fit is not None and (line := fit_line(fit)) is not None:
         out.append(line)
         out.append(
@@ -515,6 +714,8 @@ def summary(rec: Mapping[str, Any]) -> dict[str, Any]:
         "layout": rec.get("layout"),
         "size": rec["bounds"]["size"],
         "blocks": rec["blocks"],
+        # a plan-free building's floor area (D424)
+        **({"area": rec["fit"]["area"]} if free_mode(rec) else {}),
     }
 
 
@@ -534,8 +735,12 @@ def rebuild(
         ) from None
     swatches = _swatches(rec)
     shell.check_palette(conn, swatches)
-    if site_mode(rec):
-        spec, got = _site_cells(home, build, rec, lay, swatches)
+    if site_mode(rec) or free_mode(rec):
+        spec, got = (
+            _free_cells(build, rec, swatches)
+            if free_mode(rec)
+            else _site_cells(home, build, rec, lay, swatches)
+        )
         outcome = shell.design(
             conn, spec, rec["ops"], rec["source"], sandbox.REPLAY_TIMEOUT_S, got
         )
@@ -589,7 +794,9 @@ def cells_of(
             f"build {build}'s layout.json can't be read: {exc}"
         ) from None
     swatches = _swatches(rec)
-    if site_mode(rec):
+    if free_mode(rec):
+        spec, got = _free_cells(build, rec, swatches)
+    elif site_mode(rec):
         spec, got = _site_cells(home, build, rec, lay, swatches)
     else:
         spec = shell.spec_from_layout(
@@ -700,6 +907,54 @@ def _site_cells(
             f"{lay.get('id')}"
         )
     return shell.fitted_spec(spec, lay), got
+
+
+def free_spec_with(
+    rec: Mapping[str, Any], swatches: Sequence[shell.Swatch]
+) -> shell.Spec:
+    """A plan-free build's design-time spec (D424) from its ``design.json`` alone: its site,
+    area, sizes and palette (the paste origin is set once its floor is checked)."""
+    spec = shell.spec_for_area(
+        int(rec["fit"]["area"]),
+        layout_lib.box_of(rec["fit"]["site"]),
+        swatches,
+        prompt=rec.get("prompt", ""),
+        line_type=rec.get("line_type", theme_lib.GENERAL),
+        max_blocks=rec["max_blocks"],
+        headroom=rec["headroom"],
+        relief=rec.get("relief", 0),
+    )
+    return replace(spec, theme=rec.get("theme"), theme_name=rec.get("theme_name"))
+
+
+def _free_cells(
+    build: str, rec: Mapping[str, Any], swatches: Sequence[shell.Swatch]
+) -> tuple[shell.Spec, shell.Compiled]:
+    """A plan-free build's operations compiled again from its ``design.json`` alone and its
+    floor checked again (D424): refused when it no longer passes, or when its door is not
+    the saved one (its paste origin would move); the spec with its origin, and the cells."""
+    from gregtec.build import fit as fit_lib  # late: layout's import chain reaches here
+
+    spec = free_spec_with(rec, swatches)
+    assert spec.site is not None
+    info = rec["fit"]
+    try:
+        got = shell.compile_ops(spec, rec["ops"], sandbox.REPLAY_TIMEOUT_S)
+    except shell.ShellError as exc:
+        raise shell.ShellError(f"build {build} no longer passes: {exc}") from None
+    fl = fit_lib.floor_check(
+        got.cells, spec.site, int(info["area"]), None, info.get("entrance")
+    )
+    if not fl.ok:
+        raise shell.ShellError(
+            f"build {build} no longer passes its floor check: " + " | ".join(fl.reasons)
+        )
+    saved = (info.get("fit") or {}).get("door")
+    if fl.door != saved:
+        raise shell.ShellError(
+            f"build {build} finds its door at {fl.door} now, not at the saved {saved}"
+        )
+    return with_door(spec, fl), got
 
 
 def _refit(
@@ -848,6 +1103,10 @@ def check_layout(conn: sqlite3.Connection, home: Path, rec: Mapping[str, Any]) -
             plans.append(plan_store.load(home, pid))
         except (OSError, ValueError):
             raise shell.ShellError(f"plan {pid} isn't saved any more: {redo}") from None
+    if free_mode(
+        rec
+    ):  # D424: no plans, no layout; the export's rebuild checks its floor
+        return
     if site_mode(rec):
         _check_site(conn, home, rec, plans)
         return
@@ -997,7 +1256,7 @@ def card(home: Path, build: str) -> dict[str, Any]:
         "title": layout_lib.clip(title, 300),
         "ref": f"plan:{plans[0]}" if plans else None,
         "build": build,
-        "layout": rec["layout"],
+        "layout": rec["layout"] or None,  # none for a plan-free building (D424)
         "status": rec["status"],
         "source": rec["source"],
         "theme": rec.get("theme"),

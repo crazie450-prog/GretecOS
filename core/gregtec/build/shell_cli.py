@@ -7,7 +7,11 @@
   checks it (repairs a small breach, refuses anything else) and saves the build in
   ``GOS_HOME/data/build/shells/<sh-id>/``. ``--mode site`` (D422) designs the building first
   inside a site sized from the machines and fits the machines into it afterwards; ``layout``
-  (the default) builds around the laid-out machines. Works with no AI and no key (No-AI mode).
+  (the default) builds around the laid-out machines. ``--site-factor F`` (1.25 to 6.0) sizes a
+  site build's plot, ``--entrance side:x,z`` names its door.
+  ``gos shell design --mode free --area N`` (D424) is a plan-free building: no plans, its
+  plot sized from N blocks of roofed floor, checked for that floor joined to a door; you
+  place the machines yourself. Works with no AI and no key (No-AI mode).
   Exit 0 saved, 1 refused (nothing written), 2 bad input or setup.
 - ``gos shell list`` and ``gos shell show BUILD [--card]``: saved builds; one build's palette
   manifest, notes and paste steps (or its dashboard card).
@@ -71,8 +75,11 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         description="Shells hold plain blocks only; GOS never pastes machines.",
     )
     sub = p.add_subparsers(dest="shell_command", required=True)
-    d = sub.add_parser("design", help="design a shell around saved plans' layout")
-    d.add_argument("plans", nargs="+", metavar="PLAN_ID")
+    d = sub.add_parser(
+        "design",
+        help="design a shell around saved plans' layout, or a plan-free building",
+    )
+    d.add_argument("plans", nargs="*", metavar="PLAN_ID")
     d.add_argument("--theme", default=None, help="th-<name> (default: blank mode)")
     d.add_argument("--prompt", default="", help="Clayton's words for the build")
     d.add_argument(
@@ -92,7 +99,29 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
         choices=shell_store.MODES,
         default="layout",
         help="layout: build around the laid-out machines (default); site: design the "
-        "building first and fit the machines into it (D422)",
+        "building first and fit the machines into it (D422); free: a plan-free building "
+        "sized by --area (D424)",
+    )
+    d.add_argument(
+        "--area",
+        type=int,
+        default=None,
+        help="--mode free: the blocks of roofed floor the building holds at least "
+        f"({shell.AREA[0]:,} to {shell.AREA[1]:,})",
+    )
+    d.add_argument(
+        "--site-factor",
+        type=float,
+        default=None,
+        help=f"--mode site or free: the plot's size factor ({shell.SITE_FACTORS[0]} to "
+        f"{shell.SITE_FACTORS[1]}, default {shell.SITE_FACTOR})",
+    )
+    d.add_argument(
+        "--entrance",
+        default=None,
+        metavar="SIDE:X,Z",
+        help="--mode site or free: the main door, a ground column of its opening "
+        "(e.g. west:0,27)",
     )
     sub.add_parser("list", help="the saved shell builds")
     v = sub.add_parser("versions", help="the shell designs, or one design's versions")
@@ -170,9 +199,14 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
         if args.shell_command == "list":
             for b in shell_store.builds(home):
                 sx, sy, sz = b["size"]
+                what = (
+                    f"plan-free, ≥{b['area']:,} floor"
+                    if "area" in b
+                    else f"plans {', '.join(b['plans'])}"
+                )
                 print(
                     f"{b['id']}\t{b['status']}\t{b['source']}\t{b['theme'] or '-'}\t"
-                    f"{sx}x{sy}x{sz}\t{b['blocks']} blocks\tplans {', '.join(b['plans'])}",
+                    f"{sx}x{sy}x{sz}\t{b['blocks']} blocks\t{what}",
                     file=out,
                 )
             return 0
@@ -304,11 +338,18 @@ def _show(home: Path, args: argparse.Namespace, out: TextIO) -> int:
 
 def render(rec: dict[str, Any]) -> list[str]:
     sx, sy, sz = rec["bounds"]["size"]
+    what = (
+        f"plan-free, ≥{rec['fit']['area']:,} floor"
+        if shell_store.free_mode(rec)
+        else f"layout {rec['layout']} of "
+        + ", ".join(f"plan:{p}" for p in rec["plans"])
+    )
     lines = [
-        f"Shell {rec['id']}: {rec['status']} ({rec['source']}), {rec['blocks']} blocks of "
-        f"{rec['max_blocks']}, {sx} x {sz} blocks and {sy} high, theme "
-        f"{rec.get('theme') or 'none'}, layout {rec['layout']} of "
-        + ", ".join(f"plan:{p}" for p in rec["plans"]),
+        (
+            f"Shell {rec['id']}: {rec['status']} ({rec['source']}), {rec['blocks']} blocks "
+            f"of {rec['max_blocks']}, {sx} x {sz} blocks and {sy} high, theme "
+            f"{rec.get('theme') or 'none'}, {what}"
+        ),
         "palette (role, block, name, count):",
     ]
     lines += [
@@ -319,8 +360,35 @@ def render(rec: dict[str, Any]) -> list[str]:
     return lines
 
 
+def entrance_arg(text: str) -> dict[str, Any]:
+    """``--entrance side:x,z`` as the answer's door hint ``{"side", "at": [x, z]}``."""
+    side, _, at = text.partition(":")
+    parts = at.split(",")
+    try:
+        x, z = (int(v) for v in parts)
+    except ValueError:
+        raise shell.ShellError(
+            f"the entrance is side:x,z (e.g. west:0,27), not {text!r}"
+        ) from None
+    return {"side": side.strip(), "at": [x, z]}
+
+
 def _design(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
     home = cfg.gos_home
+    if args.mode == "free" and args.plans:
+        print("a plan-free building takes an area and no plans", file=out)
+        return 2
+    if args.mode == "free" and args.area is None:
+        print("--mode free needs --area N (blocks of roofed floor)", file=out)
+        return 2
+    if args.mode != "free" and args.area is not None:
+        print("--area is only for --mode free", file=out)
+        return 2
+    try:
+        entrance = None if args.entrance is None else entrance_arg(args.entrance)
+    except shell.ShellError as exc:
+        print(str(exc), file=out)
+        return 2
     try:
         extra = (
             extra_swatches(args.palette.read_text(encoding="utf-8-sig"))
@@ -356,6 +424,9 @@ def _design(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
             headroom=args.headroom,
             ops=ops,
             mode=args.mode,
+            entrance=entrance,
+            area=args.area,
+            site_factor=args.site_factor,
         )
     except (shell.ShellError, palette.CatalogError) as exc:
         print(str(exc), file=out)

@@ -4,7 +4,7 @@
 |---------------------|-----------------------|----------------------------------------------------------|
 | GET /api/shells     | admin, client, device | the saved shell builds, newest first (summaries)          |
 | GET /api/shells/{id}| admin, client, device | ``{"card": shell card}``: preview, manifest, paste steps |
-| POST /api/shells    | admin, device         | ``{"plans": [ids], "theme"?, "line_type"?}``: the procedural shell (No-AI mode), saved unless refused; ``{"card"}`` |
+| POST /api/shells    | admin, device         | ``{"plans": [ids], "theme"?, "line_type"?, "mode"?, "site_factor"?}`` or ``{"mode": "free", "area": N, ...}`` (a plan-free building, D424): the procedural shell (No-AI mode), saved unless refused; ``{"card"}`` |
 
 The workbench (WO-10.10, D367-D370):
 
@@ -13,7 +13,7 @@ The workbench (WO-10.10, D367-D370):
 | GET  /api/shells/designs                | admin, client, device | ``{"designs": [...], "current": ds}``: every design, the one touched last first |
 | GET  /api/shells/designs/{ds}           | admin, client, device | ``{"design"}``: its versions (parent, asked, by, time, cost, blocks) and the current one |
 | POST /api/shells/designs/{ds}/current   | admin, device         | ``{"build"}``: make that version current (undo is an older one); nothing is deleted |
-| POST /api/shells/jobs                   | admin, device         | ``{"design": {plans, theme?, line_type?, prompt?, max_blocks?, headroom?}}`` or ``{"revise": {design?, words, theme?, max_blocks?, headroom?}}``: a shell job (stages, Cancel; one at a time), GOS's own generator or reviser, no model |
+| POST /api/shells/jobs                   | admin, device         | ``{"design": {plans, theme?, line_type?, prompt?, max_blocks?, headroom?, mode?, site_factor?}}`` (``mode`` layout by default, or site; ``{mode: "free", area, ...}`` with no plans is a plan-free building, D424) or ``{"revise": {design?, words, theme?, max_blocks?, headroom?}}``: a shell job (stages, Cancel; one at a time), GOS's own generator or reviser, no model |
 | GET  /api/shells/compare?a=&b=          | admin, client, device | two versions' materials and block counts side by side |
 | GET  /api/shells/{id}/view              | admin, client, device | the 3D viewer's data: cells, palette with the catalog's colours, layers, the floor plan's machines and keep-outs as ghosts |
 
@@ -67,8 +67,57 @@ def shown(home: Path, build: str) -> dict[str, Any]:
         raise HTTPException(404, str(exc)) from None
 
 
+def _mode_of(
+    req: dict[str, Any], headroom: int | None = None
+) -> tuple[str, list[str], int | None, float | None]:
+    """A design request's mode, plans, area and site factor (D424), checked: a plan-free
+    building (mode free) takes an area and no plans, the others 1 to 3 plans and no area; a
+    site factor is for site or free. A 400 with the sentence when wrong."""
+    from gregtec.build import shell, shell_store
+
+    mode, plans = req.get("mode", "layout"), req.get("plans")
+    area, factor = req.get("area"), req.get("site_factor")
+    if mode not in shell_store.MODES:
+        raise HTTPException(400, f"mode is one of {', '.join(shell_store.MODES)}")
+    try:
+        if factor is not None:
+            if mode == "layout":
+                raise shell.ShellError("a site factor is for a site or plan-free build")
+            factor = shell.check_factor(factor)
+        if mode == "free":
+            if plans or area is None:
+                raise shell.ShellError(
+                    "a plan-free building takes an area and no plans"
+                )
+            if req.get("zones"):
+                raise shell.ShellError(
+                    "a plan-free building has no zones (zones steer where machines go)"
+                )
+            shell.site_for_area(
+                shell.check_area(area),
+                None,
+                headroom,
+                shell.SITE_FACTOR if factor is None else factor,
+            )
+            return mode, [], area, factor
+        if area is not None:
+            raise shell.ShellError(
+                "an area is only for a plan-free building (mode free)"
+            )
+    except shell.ShellError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if (
+        not isinstance(plans, list)
+        or not 1 <= len(plans) <= shell.MAX_PLANS
+        or not all(isinstance(p, str) and len(p) <= 64 for p in plans)
+    ):
+        raise HTTPException(400, "name 1 to 3 saved plans (plan ids)")
+    return mode, plans, None, factor
+
+
 def designed(home: Path, body: dict[str, Any]) -> dict[str, Any]:
-    """The procedural shell for the plans (no model): saved, or refused with the reasons."""
+    """The procedural shell for the plans (no model), or a plan-free building (D424): saved,
+    or refused with the reasons."""
     from gregtec.build import palette, shell, shell_store
     from gregtec.build import themes as theme_lib
     from gregtec.db import access
@@ -78,13 +127,12 @@ def designed(home: Path, body: dict[str, Any]) -> dict[str, Any]:
     theme = body.get("theme")
     line_type = body.get("line_type", theme_lib.GENERAL)
     if (
-        not isinstance(plans, list)
-        or not plans
-        or not all(isinstance(p, str) and len(p) <= 64 for p in plans)
+        not (body.get("mode") == "free" or isinstance(plans, list))
         or not (theme is None or isinstance(theme, str))
         or not isinstance(line_type, str)
     ):
         raise HTTPException(400, "send plans (a list of plan ids), theme and line_type")
+    mode, plans, area, factor = _mode_of(body)
     db = access.db_path(home)
     if not db.is_file():
         raise HTTPException(503, "no recipe DB: run gos db build")
@@ -97,6 +145,9 @@ def designed(home: Path, body: dict[str, Any]) -> dict[str, Any]:
             plans,
             theme_id=theme,
             line_type=line_type,
+            mode=mode,
+            area=area,
+            site_factor=factor,
         )
     except (shell.ShellError, palette.CatalogError) as exc:
         raise HTTPException(400, str(exc)) from None
@@ -144,9 +195,14 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
         line_type = req.get("line_type", theme_lib.GENERAL)
         prompt = req.get("prompt", "")
         if (
-            not isinstance(plans, list)
-            or not 1 <= len(plans) <= shell.MAX_PLANS
-            or not all(isinstance(p, str) and len(p) <= 64 for p in plans)
+            not (
+                req.get("mode") == "free"
+                or (
+                    isinstance(plans, list)
+                    and 1 <= len(plans) <= shell.MAX_PLANS
+                    and all(isinstance(p, str) and len(p) <= 64 for p in plans)
+                )
+            )
             or not (theme is None or isinstance(theme, str))
             or line_type not in theme_lib.LINE_TYPES
             or not isinstance(prompt, str)
@@ -161,6 +217,7 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
             )
         except shell.ShellError as exc:
             raise HTTPException(400, str(exc)) from None
+        mode, plans, area, factor = _mode_of(req, hr)
 
         def design() -> dict[str, Any]:
             conn = access.connect(db, readonly=True)
@@ -175,6 +232,9 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
                     line_type=line_type,
                     max_blocks=mb,
                     headroom=hr,
+                    mode=mode,
+                    area=area,
+                    site_factor=factor,
                 )
             except (shell.ShellError, palette.CatalogError) as exc:
                 raise HTTPException(400, str(exc)) from None
@@ -187,6 +247,8 @@ def shell_job(home: Path, body: dict[str, Any]) -> tuple[str, Any]:
             )
             return {"design": d["id"], "build": made.build}
 
+        if area is not None:
+            return f"Shell: a plan-free building (≥{area:,} floor)", design
         return f"Shell: design around {', '.join(plans)}", design
     req = body["revise"]
     if not isinstance(req, dict):

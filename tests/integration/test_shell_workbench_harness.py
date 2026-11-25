@@ -210,3 +210,31 @@ def test_a_chest_from_the_real_catalog_is_refused_and_writes_nothing(
     assert versions.get(home, ds)["current"] == v1
     assert (home / versions.ROOT / f"{ds}.json").read_bytes() == design_file
     assert {p.name for p in (home / shell_store.ROOT).iterdir()} == before
+
+
+def test_a_plan_free_building_on_the_real_catalog_exports(home: Path) -> None:
+    """WO-10.17 (D424): GOS's plan-free building (no plans) on the real block catalog, saved,
+    revised and exported from its own files; its WEOffset is from the door's cell."""
+    from gregtec.build.worldreg import WorldRegistry
+
+    vault = VaultIO(home / "vault")
+    c = access.connect(access.db_path(home), readonly=True)
+    try:
+        made = shell_store.make(
+            c, home, vault, [], theme_id="th-foundry", mode="free", area=1_500
+        )
+        assert made.outcome.ok and made.saved is not None, made.outcome.reasons
+        rec = shell_store.load(home, made.build)
+        assert rec["plans"] == [] and rec["fit"]["fit"]["floor"] >= 1_500
+        ds = versions.start(home, made.build, asked="an empty hall", by="procedural")
+        got = versions.revise(c, home, vault, ds["id"], "no lights")
+        assert got.saved, got.reasons
+        names = {m["block"].split("@")[0] for m in rec["materials"]}
+        world = WorldRegistry("lab", frozenset(names), frozenset(), "level.dat")
+        ex = shell_store.export(c, home, made.build, world)
+    finally:
+        c.close()
+    part = ex.written.parts[0].schematic
+    lo, o = made.spec.bounds.lo, made.spec.origin
+    assert part.offset == (lo[0] - o[0], lo[1] - o[1], lo[2] - o[2])
+    assert sum(part.used().values()) == rec["blocks"]

@@ -440,7 +440,7 @@ def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
     assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v5 (sha ")
     assert shell_bakeoff.prompt_label({}).startswith("v1")
     site = shell_bakeoff.prompt_record("site")
-    assert site["version"] == shell_brief.PROMPT_VERSION == 6
+    assert site["version"] == shell_brief.PROMPT_VERSIONS["site"] == 6
     assert site["sha256"] != rec["sha256"]
     both = {"prompt": site, "prompts": {"site": site, "layout": rec}}
     assert shell_bakeoff.prompt_label(both) == (
@@ -1010,3 +1010,102 @@ def test_a_site_spec_gives_the_script_its_site_facts(conn: sqlite3.Connection) -
         f"() () 0 (0, 0, 0) {need['door_height']}",
         f"{len(prog.instances)} 0",
     )
+
+
+# --- shape helpers capped by the cells they place (WO-10.17, D425) ---------------------------
+
+
+def test_hollow_helpers_are_capped_by_what_they_place() -> None:
+    """A big building's ring, hollow box, pyramid and clear are held to the cells they place,
+    not their box's volume: a 100 x 28 x 100 ring at max_blocks 20,000 (cap 80,000) passes;
+    fill and a solid box still check their volume."""
+    ring = sandbox.run("ring((0, 0, 0), (99, 27, 99), 'wall')", FACTS, 80_000)
+    assert len(ring.cells) == 396 * 28
+    hollow = sandbox.run(
+        "box((0, 0, 0), (77, 27, 77), 'wall', hollow=True)", FACTS, 100_000
+    )
+    assert len(hollow.cells) == 78 * 28 * 78 - 76 * 26 * 76
+    assert (1, 1, 1) not in hollow.cells and (0, 5, 5) in hollow.cells
+    spire = sandbox.run("pyramid((0, 0, 0), (99, 40, 99), 'roof')", FACTS, 80_000)
+    assert len(spire.cells) == sum(4 * (99 - 2 * i) for i in range(41))
+    for script in (
+        "fill((0, 0, 0), (99, 27, 99), 'wall')",
+        "box((0, 0, 0), (99, 27, 99), 'wall')",
+    ):
+        with pytest.raises(sandbox.ScriptError, match="the box holds more than 80000"):
+            sandbox.run(script, FACTS, 80_000)
+    for script, name in (
+        ("ring((0, 0, 0), (99, 27, 99), 'wall')", "ring"),
+        ("box((0, 0, 0), (99, 27, 99), 'wall', hollow=True)", "box"),
+        ("pyramid((0, 0, 0), (99, 40, 99), 'roof')", "pyramid"),
+    ):
+        with pytest.raises(sandbox.ScriptError, match=f"{name}: the shape holds more"):
+            sandbox.run(script, FACTS, 5_000)
+    # _put still stops a script that places more than the cap, helper by helper
+    with pytest.raises(sandbox.ScriptError, match="placed more than 20000 blocks"):
+        sandbox.run(
+            "for y in range(0, 80, 4):\n    ring((0, y, 0), (99, y + 3, 99), 'wall')",
+            FACTS,
+            20_000,
+        )
+
+
+@pytest.mark.serial
+def test_clearing_a_huge_box_walks_only_what_was_placed() -> None:
+    import time
+
+    script = (
+        "ring((0, 0, 0), (77, 27, 77), 'wall')\n"
+        "fill((0, 28, 0), (77, 28, 77), 'roof')\n"
+        "clear((0, 0, 0), (77, 28, 77))\n"  # 176,904 cells: far over the cap, places none
+        "ring((0, 0, 0), (9, 3, 9), 'wall')\n"
+        "clear((0, 0, 0), (0, 2, 9))\n"  # a small box: walked
+    )
+    start = time.monotonic()
+    ran = sandbox.run(script, FACTS, 100_000)
+    assert time.monotonic() - start < 5
+    assert len(ran.cells) == 36 * 4 - 3 * 10  # the west wall's doorway rows gone
+    assert (0, 3, 5) in ran.cells and (0, 2, 5) not in ran.cells
+
+
+def _reference(
+    name: str, a: tuple[int, ...], b: tuple[int, ...]
+) -> set[tuple[int, ...]]:
+    """The helpers' cells by brute force over the whole box (the rule before D425)."""
+    out = set()
+    for x in range(a[0], b[0] + 1):
+        for y in range(a[1], b[1] + 1):
+            for z in range(a[2], b[2] + 1):
+                side = x in (a[0], b[0]) or z in (a[2], b[2])
+                keep = {
+                    "ring": side,
+                    "hollow": side or y in (a[1], b[1]),
+                    "solid": True,
+                }[name]
+                if keep:
+                    out.add((x, y, z))
+    return out
+
+
+def test_the_helpers_build_the_same_cells_as_before() -> None:
+    import random
+
+    rng = random.Random(425)
+    for _ in range(12):
+        a = tuple(rng.randint(-3, 3) for _ in range(3))
+        b = tuple(a[i] + rng.randint(0, 6) for i in range(3))
+        script = (
+            f"ring({a}, {b}, 'wall')\n"
+            f"box({tuple(v + 10 for v in a)}, {tuple(v + 10 for v in b)}, 'roof', "
+            "hollow=True)\n"
+            f"box({tuple(v + 20 for v in a)}, {tuple(v + 20 for v in b)}, 'trim')\n"
+            f"clear({tuple(v + 20 for v in a)}, {tuple(v + 21 for v in a)})\n"
+        )
+        ran = sandbox.run(script, FACTS, 5_000)
+        want = {c: "wall" for c in _reference("ring", a, b)}
+        shift = [tuple(v + 10 for v in p) for p in (a, b)]
+        want |= {c: "roof" for c in _reference("hollow", shift[0], shift[1])}
+        lo, hi = [tuple(v + 20 for v in p) for p in (a, b)]
+        gone = _reference("solid", lo, tuple(v + 21 for v in a))
+        want |= {c: "trim" for c in _reference("solid", lo, hi) - gone}
+        assert ran.cells == want

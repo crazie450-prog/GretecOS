@@ -28,7 +28,8 @@ building drives them, the model never places one.
    (:func:`gregtec.build.layout.reach_all`, the open air under the roof included).
 
 The result is an ordinary gos-layout v1 with a ``fit`` block (bounds = the site), or the reasons
-it can't be made, cheapest first. Deterministic: no randomness, every set read sorted, ties
+it can't be made, cheapest first. A plan-free building (D424) has no machines: :func:`floor_check`
+runs steps 1-3 alone (the door and the roofed floor joined to it, against its area). Deterministic: no randomness, every set read sorted, ties
 broken by (distance, z, x, facing). Game numbers aren't made here: sizes are the footprints'.
 """
 
@@ -960,3 +961,83 @@ def fit(
         **body,
     }
     return FitResult(out, [], stats)
+
+
+# --- plan-free buildings (D424) -------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Floored:
+    """A plan-free building's floor check (:func:`floor_check`)."""
+
+    ok: bool
+    reasons: list[str]
+    stats: dict[str, Any]
+    door: (
+        dict[str, Any] | None
+    )  # {"side", "at": [x, z]}: the door the floor is joined to
+    entrance: (
+        Box | None
+    )  # the doorway's ground cells, door_height high (the paste origin's)
+
+
+def floor_check(
+    cells: Iterable[Cell],
+    site: Box,
+    area: int,
+    opts: Options | None = None,
+    hint: Mapping[str, Any] | None = None,
+) -> Floored:
+    """A plan-free building's rule (D424): at least ``area`` columns of roofed floor at least
+    ``corridor_height`` high, 4-joined to the lobby of one ground doorway, with site mode's own
+    door rule (:func:`_door`: the answer's ``hint``, else the ranked doorways). The first door
+    in rank order whose joined floor holds the area, else the one joining the most (as
+    :func:`fit` picks its door). No machines, no zones, no keep-outs."""
+    opts = opts or Options()
+    if site.lo[1] != 0:
+        raise lay_lib.LayoutError("a site's floor is y 0")
+    ch = opts.corridor_height
+    floor = derive(sorted(set(cells)), site)
+    tall = {c for c, v in floor.h.items() if v >= ch}
+    stats: dict[str, Any] = {"floor": 0, "need_floor": area}
+
+    def refuse(*why: str) -> Floored:
+        return Floored(False, list(why), stats, None, None)
+
+    doors, why = _door(floor, tall, opts, hint)
+    if not doors:
+        return refuse(*why)
+    door, joined = doors[0], set(_flood(tall, doors[0].lobby))
+    for d in doors[1:]:
+        if len(joined) >= area:
+            break
+        other = set(_flood(tall, d.lobby))
+        if len(other) > len(joined):
+            door, joined = d, other
+    n, unjoined = len(joined), len(tall) - len(joined)
+    stats |= {
+        "floor": n,
+        "spare_pct": round(100 * (n - area) / area),
+        "unjoined": unjoined,
+        "door": {"side": door.side, "at": list(door.cols[0])},
+        "entrance_from": "auto" if hint is None else "answer",
+    }
+    if n < area:
+        msg = (
+            f"the roofed floor joined to the {door.side} door has {n:,} columns at least "
+            f"{ch} high; it needs {area:,}: add at least {area - n:,}"
+        )
+        if unjoined:
+            msg += f" (another {unjoined:,} roofed columns aren't joined to the door)"
+        if floor.blocked:
+            x, z = floor.blocked[0]
+            msg += (
+                f". y 0 is solid in {len(floor.blocked)} columns under your roof, e.g. "
+                f"[{x},0,{z}]: the floor is y 0; leave it air"
+            )
+        return refuse(msg)
+    entrance = Box(
+        (min(c[0] for c in door.cols), 0, min(c[1] for c in door.cols)),
+        (max(c[0] for c in door.cols), ch - 1, max(c[1] for c in door.cols)),
+    )
+    return Floored(True, [], stats, dict(stats["door"]), entrance)

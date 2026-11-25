@@ -117,7 +117,8 @@ COLUMNS = (
 # the case's mode (site, the default, or layout; D422)
 HEADROOM_COLUMN = "headroom"
 OPTIONAL = ("headroom", "relief", "palette", "layout", "mode")
-MODES = shell_brief.MODES
+# plan-free cases (D424) come with their own columns (D425, WO-10.17's stage 4)
+MODES = tuple(m for m in shell_brief.MODES if m != "free")
 NEW_MODE = "site"  # a case table's default (D422: every new AI design is a site design)
 LINES = ("small", "large")
 RUN_ID = re.compile(r"bo-\d{8}-\d{6}-[0-9a-f]{4}")

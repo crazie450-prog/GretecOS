@@ -27,6 +27,11 @@ wall), and GOS fits the machines into it. Two more show the fit's refusals:
 
 In layout mode those two answer as fake-plain.
 
+A plan-free building (D424; the facts say ``"mode": "free"``) has no machines: fake-plain (and
+sloppy's repair) draws walls on SITE's edge, a flat roof and a door three wide in the west
+wall; fake-ornate and fake-tower add a tower on the roof's corner, off the floor; fake-cramped
+draws a hall of :data:`CRAMPED_ROOM` of the area, refused every round as too small.
+
 A follow-up is answered with GOS's own reviser (:mod:`gregtec.build.shell_revise`) on the current
 operations. They are the bake-off's hands-on tour and CI's models; what they draw says nothing
 about any real model.
@@ -113,6 +118,11 @@ def _clears(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def site(facts: Mapping[str, Any]) -> bool:
     return facts.get("mode") == "site"
+
+
+def free(facts: Mapping[str, Any]) -> bool:
+    """A plan-free building's brief (D424)."""
+    return facts.get("mode") == "free"
 
 
 def hall(facts: Mapping[str, Any], room: float = ROOM) -> tuple[list[int], list[int]]:
@@ -233,7 +243,48 @@ def site_tower(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [*ops, _door(facts, lo, [hi[0], top, hi[2]])]
 
 
+def free_plain(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """fake-plain on a plan-free building (D424): walls on SITE's edge, windows, pillars, a
+    flat roof and lights, then a door three wide in the west wall."""
+    roles = {p["role"] for p in facts["palette"]}
+    top = facts["wall_top"]
+    ops: list[dict[str, Any]] = [{"op": "walls", "role": "wall", "y": [0, top]}]
+    if "window" in roles and top >= 3:
+        ops.append(
+            {"op": "windows", "role": "window", "y": [1, 2], "every": 6, "width": 2}
+        )
+    if "pillar" in roles:
+        ops.append({"op": "pillars", "role": "pillar", "y": [0, top], "every": 8})
+    ops.append({"op": "roof", "role": "roof", "style": "flat"})
+    if "light" in roles:
+        ops.append({"op": "lights", "role": "light", "every": 6})
+    lo, hi = facts["site"]["lo"], facts["site"]["hi"]
+    return [*ops, _door(facts, lo, hi)]
+
+
+def free_tower(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """fake-ornate's and fake-tower's plan-free building: fake-plain's and a 2x2 tower on the
+    roof's north-east corner, up to the top (off the floor: the floor check is the same)."""
+    ops = free_plain(facts)
+    roles = {p["role"] for p in facts["palette"]}
+    hi, y0, top = facts["site"]["hi"], facts["roof_y"] + 1, facts["bounds"]["hi"][1]
+    if y0 <= top:
+        lo = facts["site"]["lo"]
+        ops.insert(
+            -1,
+            {
+                "op": "fill",
+                "role": "pillar" if "pillar" in roles else "wall",
+                "lo": [hi[0] - 1, y0, lo[2]],
+                "hi": [hi[0], top, lo[2] + 1],
+            },
+        )
+    return ops
+
+
 def plain(facts: Mapping[str, Any]) -> list[dict[str, Any]]:
+    if free(facts):
+        return free_plain(facts)
     if site(facts):
         return site_plain(facts)
     roles = {p["role"] for p in facts["palette"]}
@@ -311,8 +362,8 @@ def revised(user: str, facts: Mapping[str, Any]) -> list[dict[str, Any]]:
     m = _REQUEST.search(user)
     words = m.group(1) if m else ""
     rec = {**facts, "ops": current}
-    if site(facts):  # as a saved site build's record says (D422)
-        rec["fit"] = {"mode": "site"}
+    if site(facts) or free(facts):  # as a saved site (or plan-free) build's record says
+        rec["fit"] = {"mode": facts["mode"]}
     got = shell_revise.revise(rec, words)
     return [dict(o) for o in (got.ops if got.ok else current)]
 
@@ -346,11 +397,19 @@ class FakeDesigner:
                 }
                 text = json.dumps(
                     {"ops": [*plain(facts), chest]}
-                    | ({"entrance": None, "zones": []} if site(facts) else {})
+                    | (
+                        {"entrance": None, "zones": []}
+                        if site(facts) or free(facts)
+                        else {}
+                    )
                 )
         else:
             if revise:
                 ops = revised(user, facts)
+            elif free(facts) and self.model == CRAMPED:  # too small, every round
+                ops = site_plain(facts, CRAMPED_ROOM)
+            elif free(facts) and self.model in (ORNATE, TOWER):
+                ops = free_tower(facts)
             elif site(facts) and self.model == TOWER:
                 ops = site_tower(facts)
             elif site(facts) and self.model == CRAMPED and not repair:
@@ -359,7 +418,10 @@ class FakeDesigner:
                 m = _LINE_TYPE.search(user)
                 line = m.group(1) if m else "general"
                 ops = ornate(facts, line) if self.model == ORNATE else plain(facts)
-            if not site(facts):
+            if free(facts):  # the current door sent again to keep it; never zones
+                door = _line(user, "current entrance: ") if revise else None
+                text = shell_brief.answer(ops, door, [])
+            elif not site(facts):
                 text = shell_brief.answer(ops)
             elif revise:  # the current door and zones, sent again to keep them
                 text = shell_brief.answer(

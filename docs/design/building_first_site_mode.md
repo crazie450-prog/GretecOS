@@ -1,3 +1,5 @@
+> **Plan-free buildings (WO-10.17, D424)** reuse this design's floor and door rule without the machines: see [`plan_free_and_live_designer.md`](plan_free_and_live_designer.md) §3.
+
 VERDICT: derived-interior wins. The final design below takes its core (the model only builds, GOS derives the floor and fits the machines) and grafts on three pieces: optional zones from rooms-placer, the `prior` pass and `extra_open` reach from rooms-placer, and the program/site split and compile-once gate from model-places. Model-placed pins are left out of this PR (Q6).
 
 Checked in the repo for this review:
