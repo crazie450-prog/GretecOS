@@ -117,9 +117,14 @@ export function buildMesh(
   return { size, grid, faces: buf.slice(0, n * FACE_STRIDE), count: n, always, coveredUp };
 }
 
+/** Faces whose corners 0..3 (GLScene's vertex shader) run anticlockwise seen from outside the
+ * block (E, Down, S): their triangles are listed the other way round, so every face is clockwise
+ * from outside and GLScene can cull the faces turned away (gl.frontFace(gl.CW)). */
+const ANTICLOCKWISE = [true, false, false, true, true, false];
+
 /** The faces as GPU vertices (four per face, the face's record with the corner 0..3 in flags bits
- * 1-2) and two triangles per face. Instancing is avoided on purpose: software GPUs (SwiftShader,
- * old drivers) pay per instance, and a plain indexed draw is fast everywhere. */
+ * 1-2) and two triangles per face, clockwise seen from outside. Instancing is avoided on purpose:
+ * software GPUs (SwiftShader, old drivers) pay per instance, and a plain indexed draw is fast everywhere. */
 export function vertices(mesh: VoxelMesh): { data: ArrayBuffer; indices: Uint32Array } {
   const src = new Uint8Array(mesh.faces);
   const data = new ArrayBuffer(mesh.count * 4 * FACE_STRIDE);
@@ -133,7 +138,7 @@ export function vertices(mesh: VoxelMesh): { data: ArrayBuffer; indices: Uint32A
       dst[o + 7] = (face[7] & COVERED_ABOVE) | (k << 1);
     }
     const v = f * 4;
-    indices.set([v, v + 1, v + 2, v, v + 2, v + 3], f * 6);
+    indices.set(ANTICLOCKWISE[face[6]] ? [v, v + 2, v + 1, v, v + 3, v + 2] : [v, v + 1, v + 2, v, v + 2, v + 3], f * 6);
   }
   return { data, indices };
 }

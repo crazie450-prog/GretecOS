@@ -1,11 +1,11 @@
 // A made-up big shell scene for the viewer's speed check (WO-10.19, D433): a 72x24x72 hall
 // (floor, four walls, a roof, interior columns and two mezzanine floors) of about 20,000 blocks,
-// three palette entries (one with no colours, so the stand-in colour is used) and two ghosts. Only
-// the viewer's numbers: nothing here is a game number.
+// three palette entries (one with no colours, so the stand-in colour is used) and two ghosts.
+// bigHallScene is the largest plot (128x28x128, one mezzanine): about 57,000 blocks, under the
+// core's 60,000-cell viewer cap. Only the viewer's numbers: nothing here is a game number.
 import type { ShellScene } from "../src/api/types";
 
-export function hallScene(build = "sh-perfhall0000"): ShellScene {
-  const [X, Y, Z] = [72, 24, 72];
+export function hallScene(build = "sh-perfhall0000", [X, Y, Z]: [number, number, number] = [72, 24, 72], decks = [8, 16]): ShellScene {
   const cells: ShellScene["cells"] = [];
   const add = (x: number, y: number, z: number, b: number) => cells.push([x, y, z, b, -1]);
   for (let y = 0; y < Y; y++)
@@ -16,7 +16,7 @@ export function hallScene(build = "sh-perfhall0000"): ShellScene {
         else if (y === Y - 1) add(x, y, z, 2); // roof
         else if (edge) add(x, y, z, 1); // walls
         else if (x % 12 === 6 && z % 12 === 6) add(x, y, z, 1); // columns
-        else if ((y === 8 || y === 16) && x > 8 && x < X - 9 && z > 8 && z < Z - 9 && (x + z) % 3 !== 0) add(x, y, z, 0); // mezzanines
+        else if (decks.includes(y) && x > 8 && x < X - 9 && z > 8 && z < Z - 9 && (x + z) % 3 !== 0) add(x, y, z, 0); // mezzanines
       }
   // sorted by (y, z, x) as the core sends them
   const counts = [0, 0, 0];
@@ -44,3 +44,5 @@ export function hallScene(build = "sh-perfhall0000"): ShellScene {
     caveats: [],
   };
 }
+
+export const bigHallScene = (build = "sh-perfhall0000"): ShellScene => hallScene(build, [128, 28, 128], [14]);

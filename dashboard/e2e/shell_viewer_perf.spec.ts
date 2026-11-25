@@ -6,10 +6,11 @@
 // (WebGL's mean frame and main-thread time are below the SVG's) so a software GPU on CI doesn't
 // flake it. Also
 // checks the WebGL viewer's hover names the block under the pointer, and that the drag turned it.
+// A second test does the same on the largest plot (bigHallScene, 128x28x128, ~57,000 blocks).
 // Needs Clayton's board approval (D92): no board yet.
 import { type Page, expect, test } from "@playwright/test";
-import { hallScene } from "./hall";
-import { SHELLS_BASE, shellsCode } from "./shells_core";
+import { bigHallScene, hallScene } from "./hall";
+import { buildView, refuseWebGL } from "./viewer";
 
 type Frames = {
   frames: number; // animation frames seen during the drag
@@ -95,17 +96,7 @@ async function dragFrames(page: Page): Promise<Frames> {
 test("a ~21,000-block shell turns faster in WebGL than in the SVG fallback", async ({ browser }) => {
   test.setTimeout(180_000);
   const hall = hallScene();
-  const page = await browser.newPage({ baseURL: SHELLS_BASE, viewport: { width: 2560, height: 1440 } });
-  await page.route("**/api/shells/*/view", (route) => route.fulfill({ json: hall }));
-  await page.goto("/");
-  await page.getByTestId("pair-name").fill("Shell viewer speed");
-  await page.getByTestId("pair-start").click();
-  await page.getByTestId("pair-code").fill(await shellsCode());
-  await page.getByTestId("pair-complete").click();
-  await page.getByTestId("shell").waitFor();
-  await page.evaluate(() => {
-    window.location.hash = "/build";
-  });
+  const page = await buildView(browser, hall);
   const scene = page.getByTestId("shell3d-scene");
 
   // WebGL2 (SwiftShader in headless Chromium)
@@ -133,13 +124,7 @@ test("a ~21,000-block shell turns faster in WebGL than in the SVG fallback", asy
   await page.getByTestId("shell3d-layer").fill("23");
 
   // the SVG fallback: WebGL2 refused, same build, same drag
-  await page.addInitScript(() => {
-    const get = HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
-      if (kind === "webgl2") return null;
-      return (get as (...a: unknown[]) => unknown).call(this, kind, ...rest);
-    } as typeof get;
-  });
+  await refuseWebGL(page);
   await page.reload();
   await page.getByTestId("shell").waitFor();
   await expect(scene.locator("polygon").first()).toBeAttached({ timeout: 30_000 });
@@ -151,6 +136,33 @@ test("a ~21,000-block shell turns faster in WebGL than in the SVG fallback", asy
   const evidence = { blocks: hall.cells.length, size: hall.size, drag: "60 mouse steps, 300 px", webgl, svg };
   console.log(`WO-10.19 frame times (ms): ${JSON.stringify(evidence)}`);
   await test.info().attach("frame-times", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
+  expect(webgl.mean).toBeLessThan(svg.mean);
+  expect(webgl.busyMs).toBeLessThan(svg.busyMs);
+  await page.close();
+});
+
+test("the largest plot (~57,000 blocks) turns faster in WebGL than in the SVG fallback", async ({ browser }) => {
+  test.setTimeout(480_000);
+  const hall = bigHallScene();
+  const page = await buildView(browser, hall);
+  const scene = page.getByTestId("shell3d-scene");
+  await expect(scene).toHaveAttribute("data-renderer", "webgl", { timeout: 60_000 });
+  expect(Number(await scene.getAttribute("data-faces"))).toBeGreaterThan(50_000);
+  const yaw = await scene.getAttribute("data-yaw");
+  const webgl = await dragFrames(page);
+  await expect(scene).not.toHaveAttribute("data-yaw", yaw ?? "");
+  await scene.screenshot({ path: test.info().outputPath("viewer-webgl-big.png") });
+
+  await refuseWebGL(page);
+  await page.reload();
+  await page.getByTestId("shell").waitFor();
+  await expect(scene.locator("polygon").first()).toBeAttached({ timeout: 120_000 });
+  expect(await scene.getAttribute("data-renderer")).toBeNull();
+  const svg = await dragFrames(page);
+
+  const evidence = { blocks: hall.cells.length, size: hall.size, drag: "60 mouse steps, 300 px", webgl, svg };
+  console.log(`WO-10.19 frame times, largest plot (ms): ${JSON.stringify(evidence)}`);
+  await test.info().attach("frame-times-big", { body: JSON.stringify(evidence, null, 2), contentType: "application/json" });
   expect(webgl.mean).toBeLessThan(svg.mean);
   expect(webgl.busyMs).toBeLessThan(svg.busyMs);
   await page.close();

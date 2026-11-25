@@ -7,6 +7,9 @@
 // context, freed on unmount, so the bake-off's side-by-side viewers don't pile contexts up. The
 // ghosts (machines, keep-outs) stay an SVG overlay fitted to the same box, so their dashes, token
 // colours and tooltips are the CSS's. No WebGL2 (jsdom, old GPUs, a context refused): the SVG Scene.
+// The build guide's marks (the controller's front face and arrow, hatch-slot and hatch-only cells)
+// are not drawn here: props that ask for them get the SVG Scene too (svgOnly). A context that is
+// lost and not restored within a few seconds falls back to the SVG Scene as well.
 // Colours: each block's own, and --bg / --primary read from the theme. Built to the design
 // system: needs Clayton's board approval (D92).
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,10 +19,21 @@ import { FACE_STRIDE, buildMesh, facesAt, pick, vertices, viewMatrix } from "./v
 
 const hasWebGL2 = (): boolean => typeof window !== "undefined" && typeof window.WebGL2RenderingContext !== "undefined";
 
+/** Whether ``props`` ask for marks only the SVG Scene draws: the controller and its front, a
+ * hatch-only cell (no block) or a hatch slot. Shells have none of these. */
+export function svgOnly(props: Pick<SceneProps, "cells" | "controllerAt" | "front">): boolean {
+  return !!props.controllerAt || !!props.front || props.cells.some((c) => c[3] < 0 || c[4] >= 0);
+}
+
+/** How long a lost context may take to come back before the SVG Scene is drawn instead (a
+ * context Chrome evicted, or WebGL blocklisted after GPU crashes, never comes back). */
+export const RESTORE_MS = 3000;
+
 /** The shell's 3D drawing: WebGL2 when the browser has it, else the SVG Scene. */
 export function GLScene(props: SceneProps) {
   const [failed, setFailed] = useState(() => !hasWebGL2());
-  if (failed) return <Scene {...props} />;
+  const svg = useMemo(() => svgOnly(props), [props.cells, props.controllerAt, props.front]);
+  if (failed || svg) return <Scene {...props} />;
   return <GLSceneInner {...props} onFail={() => setFailed(true)} />;
 }
 
@@ -75,11 +89,16 @@ void main() {
   // the SVG's look, opaque: fill-opacity, and the layers under the cut at half (.below)
   float a = vShade * ((vY == uUpTo || hov) ? 1.0 : 0.5);
   vec3 col = mix(uBg, vRgb, a);
-  // the face's edge: the SVG's 0.03 stroke in --bg, the hovered block's 0.12 in --primary
+  // the face's edge: the SVG's 0.03 stroke in --bg, the hovered block's 0.12 in --primary. The
+  // --bg line fades out as a face gets small on screen (under ~10 px), where the SVG's stroke is
+  // sub-pixel too, so far-off and small views aren't darkened by it. The pixel's size in face units
+  // comes from the uv (linear, so its derivative is steady; fwidth of the kinked e speckled).
   float e = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
-  float w = fwidth(e);
+  vec2 fw = fwidth(vUv);
+  float w = max(fw.x, fw.y);
   float edge = hov ? 0.06 : 0.015;
   float line = 1.0 - smoothstep(edge - w, edge + w, e);
+  if (!hov) line *= 1.0 - smoothstep(0.1, 0.3, w);
   col = mix(col, hov ? uPrimary : uBg, line);
   outColour = vec4(col, 1.0);
 }`;
@@ -168,6 +187,14 @@ function setUp(gl: WebGL2RenderingContext): GL | null {
   gl.enableVertexAttribArray(3);
   gl.vertexAttribIPointer(3, 1, gl.UNSIGNED_INT, FACE_STRIDE, 12);
   gl.bindVertexArray(null);
+  // Fixed for the context's life: depth-tested, and faces turned away from the viewer culled
+  // (voxelMesh winds every face clockwise as seen from outside, so the back half of each draw is
+  // never shaded: about a fifth of a turn on a software renderer, the same picture; e2e).
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LESS);
+  gl.enable(gl.CULL_FACE);
+  gl.cullFace(gl.BACK);
+  gl.frontFace(gl.CW);
   const at = (n: string) => gl.getUniformLocation(prog, n);
   return {
     gl,
@@ -227,11 +254,15 @@ function GLSceneInner(props: SceneProps & { onFail: () => void }) {
     }
     glRef.current = made;
     setGen((n) => n + 1);
+    let giveUp: ReturnType<typeof setTimeout> | undefined;
     const lost = (e: Event) => {
       e.preventDefault();
       glRef.current = null;
+      clearTimeout(giveUp);
+      giveUp = setTimeout(onFail, RESTORE_MS); // not restored: the SVG Scene
     };
     const restored = () => {
+      clearTimeout(giveUp);
       const again = setUp(made.gl);
       glRef.current = again;
       if (again) setGen((n) => n + 1);
@@ -240,6 +271,7 @@ function GLSceneInner(props: SceneProps & { onFail: () => void }) {
     canvas.addEventListener("webglcontextlost", lost);
     canvas.addEventListener("webglcontextrestored", restored);
     return () => {
+      clearTimeout(giveUp);
       canvas.removeEventListener("webglcontextlost", lost);
       canvas.removeEventListener("webglcontextrestored", restored);
       const g = glRef.current;
@@ -256,9 +288,10 @@ function GLSceneInner(props: SceneProps & { onFail: () => void }) {
     };
   }, []);
 
-  // The vertex and index buffers: once per build (and per new context).
+  // The vertex and index buffers: once per build (and per new context). gen 0 is the first render,
+  // before the context exists or in the same commit as it: the context's gen bump uploads.
   useEffect(() => {
-    if (glRef.current) upload(glRef.current, gpu);
+    if (gen && glRef.current) upload(glRef.current, gpu);
   }, [gpu, gen]);
 
   // The canvas's size in device pixels: on resize, and when the window moves to another screen.
@@ -321,9 +354,6 @@ function GLSceneInner(props: SceneProps & { onFail: () => void }) {
     gl.viewport(0, 0, px.w, px.h);
     gl.clearColor(0, 0, 0, 0);
     gl.clearDepth(1);
-    gl.enable(gl.DEPTH_TEST);
-    gl.depthFunc(gl.LESS);
-    gl.disable(gl.CULL_FACE);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     if (!g.count) return;
     gl.useProgram(g.prog);

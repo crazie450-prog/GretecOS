@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { hallScene } from "../e2e/hall";
 import { DEFAULT_VIEW, type GuideCell, type Vec, fallbackColour, structureBox, toView, zoomed } from "../src/views/guideMesh";
+import { svgOnly } from "../src/views/GLScene";
 import { COVERED_ABOVE, FACE_STRIDE, buildMesh, faceColour, facesAt, pick, rgbOf, vertices, viewMatrix } from "../src/views/voxelMesh";
 
 const GREY = { block: "minecraft:stone@0", top: "#808080", side: "#404040" };
@@ -86,7 +87,7 @@ describe("vertices", () => {
     const m = buildMesh([cell(0, 0, 0), cell(0, 1, 0)], [1, 2, 1], [GREY]);
     const v = vertices(m);
     expect(v.data.byteLength).toBe(m.count * 4 * FACE_STRIDE);
-    expect(Array.from(v.indices.slice(0, 12))).toEqual([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+    expect(Array.from(v.indices.slice(0, 12))).toEqual([0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7]); // E turned round: clockwise from outside
     const u8 = new Uint8Array(v.data);
     const covered = faceList(m).findIndex((f) => f.flags & COVERED_ABOVE);
     expect([0, 1, 2, 3].map((k) => u8[(covered * 4 + k) * FACE_STRIDE + 7])).toEqual([1, 3, 5, 7]);
@@ -155,5 +156,58 @@ describe("pick", () => {
 
   it("a miss is null", () => {
     expect(pick(mesh, 1, DEFAULT_VIEW, structureBox(size, DEFAULT_VIEW), W, H, 2, 2)).toBeNull();
+  });
+});
+
+describe("winding (GLScene culls back faces: gl.frontFace(gl.CW))", () => {
+  // GLScene's vertex shader: corner k of face d, as uv then the face's plane
+  const corner = (d: number, k: number): Vec => {
+    const u = k === 1 || k === 2 ? 1 : 0;
+    const v = k >= 2 ? 1 : 0;
+    const side = d % 2 === 0 ? 1 : 0;
+    const axis = d >> 1;
+    return axis === 0 ? [side, u, v] : axis === 1 ? [u, side, v] : [u, v, side];
+  };
+  const NORMALS: Vec[] = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+  ];
+
+  it("a face is clockwise on screen exactly when it faces the viewer, from every side", () => {
+    const size: Vec = [1, 1, 1];
+    const { indices } = vertices(buildMesh([cell(0, 0, 0)], size, [GREY]));
+    let checked = 0;
+    for (const yaw of [0, 37, 90, 145, 200, 300])
+      for (const pitch of [-60, -20, 15, 35, 80]) {
+        const view = { yaw, pitch };
+        const m = viewMatrix(size, view, structureBox(size, view), 400, 300);
+        const ndc = (p: Vec) => [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12], m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]];
+        const toViewer: Vec = [m[2], m[6], m[10]].map((n) => -n) as Vec; // nearer = smaller depth
+        for (let d = 0; d < 6; d++) {
+          const facing = NORMALS[d].reduce((a, n, i) => a + n * toViewer[i], 0);
+          if (Math.abs(facing) < 1e-6) continue;
+          for (const t of [0, 3]) {
+            const [a, b, c] = [0, 1, 2].map((j) => ndc(corner(d, indices[d * 6 + t + j] % 4)));
+            const area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]); // > 0: CCW
+            expect(area < 0, `yaw ${yaw} pitch ${pitch} face ${d}`).toBe(facing > 0);
+            checked += 1;
+          }
+        }
+      }
+    expect(checked).toBeGreaterThan(100);
+  });
+});
+
+describe("svgOnly", () => {
+  it("shells draw with WebGL; the build guide's marks keep the SVG Scene", () => {
+    expect(svgOnly({ cells: [cell(0, 0, 0)] })).toBe(false);
+    expect(svgOnly({ cells: [cell(0, 0, 0)], controllerAt: [0, 0, 0], front: [0, 0, 1] })).toBe(true);
+    expect(svgOnly({ cells: [cell(0, 0, 0)], controllerAt: null, front: [0, 0, 1] })).toBe(true);
+    expect(svgOnly({ cells: [[0, 0, 0, -1, 0]] })).toBe(true); // hatch only
+    expect(svgOnly({ cells: [[0, 0, 0, 0, 2]] })).toBe(true); // hatch slot
   });
 });
