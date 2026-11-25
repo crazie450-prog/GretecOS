@@ -1315,3 +1315,11 @@ def test_a_new_site_builds_versions_keep_the_relief_door_rule(
     assert got.record["fit"]["door_relief"] is True
     spec, _ = shell_store.rebuild(conn, home, got.build)
     assert spec.door_relief
+
+
+def test_a_version_keeps_a_long_request_whole() -> None:
+    """A version's history keeps up to 1,000 characters of what was asked (WO-10.18, D432)."""
+    words = "word " * 199  # 994 characters
+    assert versions.clip(words) == words.strip()
+    assert versions.clip("w" * 1001).endswith("…")
+    assert len(versions.clip("w" * 1001)) == versions.MAX_ASKED

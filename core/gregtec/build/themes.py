@@ -79,6 +79,9 @@ LIST_KEYS = (*RULE_KEYS, "change", "sample", "note")
 KEYS = frozenset({"name", "v", "summary", "fits", "prompt", "adapt", *LIST_KEYS})
 PALETTE_HEADER = ["role", "block", "note"]
 MAX_TEXT = 200  # characters of one value
+MAX_PROMPT = (
+    MAX_TEXT * 5
+)  # a request's own words (the API, the tool and the bake-off allow this)
 MAX_CHANGE = MAX_TEXT - 8  # a change line is "v<N> <change>", N up to 5 digits
 MAX_RULES = 8  # lines per rule key
 MAX_SWATCHES = 32
@@ -616,7 +619,7 @@ def select(
     type, else the first theme."""
     kind = _line_type(line_type, "line type")
     concept = LINE_TYPES[kind]
-    words = _text(prompt or "", "prompt", empty=True)
+    words = _text(prompt or "", "prompt", empty=True, limit=MAX_PROMPT)
     by_id = {t.id: t for t in themes}
     if theme_id is not None:
         if theme_id not in by_id:

@@ -64,7 +64,7 @@ AUTO = "auto"  # a site revision's entrance: drop the parent's door hint (D422)
 MAX_VERSIONS = (
     200  # a design this long is started again (nothing is dropped to make room)
 )
-MAX_ASKED = 200
+MAX_ASKED = 1000  # what a version keeps of its words: a brief may be 1,000 (shell.py)
 MAX_HISTORY = 1000
 MAX_VIEW_CELLS = (
     60_000  # the 3D viewer's cells (shell.MAX_BLOCKS is far above any shell asked)
