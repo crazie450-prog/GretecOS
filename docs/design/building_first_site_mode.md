@@ -260,6 +260,7 @@ fit.fit(program, cells, site, opts, hint, zones, prior):
 - **With a hint**: validate it or refuse.
 - **Without one**: take the widest run of candidates. Ties go west, south, east, north, then the lowest coordinate.
 - The doorway volume = that straight path, so the gate never removes porch blocks.
+- **Through the relief zone too (WO-10.18, D430).** A site design made since WO-10.18 also needs the way out clear past SITE's edge, through the relief zone, at y 0..ch-1 (as a plan-free door, D424): a candidate walled there is dropped, and a hint on one is refused with "entrance at [x,z] on the {side}: its way out is blocked in the relief zone outside SITE at y 0..{ch-1}: keep it clear". Blocks above the door's height or beside its way out are fine. The rule is the record flag `fit.door_relief` (true on new designs, `Spec.door_relief`); a site build saved before it has no flag and rebuilds, exports, revises and refits by the old rule, with the same build ids. Prompt v8 (site) says it in the door rule.
 - Origin and `to_schematic` use e1's lo (D318 semantics move from "first layout entrance" to "e1").
 
 ### 2.6 Gate order (shell_store.make, site branch) and messages

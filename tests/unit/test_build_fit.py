@@ -389,6 +389,44 @@ def test_a_porch_in_the_way_closes_a_doorway() -> None:
     ]
 
 
+def test_a_site_door_walled_in_the_relief_zone_is_skipped_for_new_builds() -> None:
+    """WO-10.18: a site build made since it keeps its door's way out clear through the relief
+    zone outside SITE too (``door_relief``, as plan-free buildings do, D424); without the flag
+    (a build from before it) the relief zone is not looked at."""
+    two = hall_with_doors(("west", 0, 5, 3), ("east", 12, 5, 3))
+    site = site_of(two)  # x 0..13: the relief zone starts at x -1 and x 14
+    wall = {
+        (-2, y, z) for y in range(3) for z in range(4, 9)
+    }  # in front of the west door
+
+    def go(cells: set[Cell], **kw: Any) -> fit.FitResult:  # noqa: ANN401
+        return fit.fit(program_of(CUBE), sorted(cells), site, OPTS, **kw)
+
+    old = verify(go(two | wall), two | wall, site)
+    assert old["entrances"][0]["side"] == "west"  # the old rule: west wins the tie
+    new = verify(go(two | wall, door_relief=True), two | wall, site)
+    assert new["entrances"][0]["side"] == "east"
+    # the only door walled: none
+    only = hall_with_doors(("west", 0, 5, 3))
+    r = go(only | wall, door_relief=True)
+    assert not r.ok and r.reasons[0].startswith("no doorway: ")
+    assert go(only | wall).ok
+    # an answer naming it is told why
+    r = go(only | wall, hint={"side": "west", "at": [0, 6]}, door_relief=True)
+    assert r.reasons == [
+        (
+            "entrance at [0,6] on the west: its way out is blocked in the relief zone outside "
+            "SITE at y 0..2: keep it clear"
+        )
+    ]
+    # a wall above the doorway's height or beside its way out is no matter
+    above = {(-2, y, z) for y in range(3, 6) for z in range(4, 9)}
+    beside = {(-2, y, z) for y in range(3) for z in range(5)}
+    for ok in (above, beside):
+        got = verify(go(only | ok, door_relief=True), only | ok, site)
+        assert got["entrances"][0]["side"] == "west"
+
+
 # --- capacity -------------------------------------------------------------------------------
 
 

@@ -1359,6 +1359,15 @@ LAYOUT_GOLDEN = {
 }
 
 
+# the procedural site builds of the same plans from before WO-10.18 (no door_relief): their
+# build ids, layout ids and cells; a site build from before it must never change
+SITE_GOLDEN = {
+    ("pl-steel",): ("sh-68ef5a0e4f56", "lo-5b0f32d4c883", "18c6c8686547"),
+    ("pl-power",): ("sh-aefe85bcd7d2", "lo-541358706830", "49500a8e36a7"),
+    ("pl-steel", "pl-power"): ("sh-71e5217a67a2", "lo-51193652f8fe", "c82458ac4572"),
+}
+
+
 def _digest(cells: Mapping[Cell, Entry]) -> str:
     import hashlib
 
@@ -1591,6 +1600,101 @@ def test_fit_refusals_reach_the_outcome_and_nothing_is_written(
     assert make(hollow).build == make(hollow).build
 
 
+def old_site_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    """New site builds made as before WO-10.18 (no ``door_relief``): what a saved build from
+    before it is. Replays read the flag from the record (a missing key is False)."""
+    import functools
+
+    monkeypatch.setattr(
+        shell_store.shell,
+        "spec_for_site",
+        functools.partial(shell.spec_for_site, door_relief=False),
+    )
+
+
+def test_site_builds_from_before_the_relief_door_rule_keep_their_ids_and_cells(
+    home: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vault = VaultIO(home / "vault")
+
+    def made(plans: tuple[str, ...]) -> shell_store.Made:
+        return shell_store.make(
+            conn,
+            home,
+            vault,
+            list(plans),
+            theme_id="th-foundry",
+            mode="site",
+            save_it=False,
+        )
+
+    new = {plans: made(plans) for plans in SITE_GOLDEN}
+    for plans, m in new.items():
+        assert m.fit is not None and m.fit["door_relief"] is True
+        assert m.build != SITE_GOLDEN[plans][0]  # the flag is in a new build's id
+        # GOS's own procedural door is clear through the relief zone: the same building
+        assert (m.spec.layout, _digest(m.outcome.cells)) == SITE_GOLDEN[plans][1:]
+    with monkeypatch.context() as mp:
+        old_site_rule(mp)
+        for plans, (build, lay_id, cells) in SITE_GOLDEN.items():
+            m = made(plans)
+            assert (m.build, m.spec.layout, _digest(m.outcome.cells)) == (
+                build,
+                lay_id,
+                cells,
+            )
+            assert m.fit is not None and "door_relief" not in m.fit
+
+
+def walled(made: shell_store.Made) -> dict[str, Any]:
+    """A wall in the relief zone in front of a procedural site build's west door (y 0..5)."""
+    assert made.fit is not None
+    door = made.fit["fit"]["door"]
+    assert door["side"] == "west"
+    z = door["at"][1]
+    return {"op": "fill", "role": "wall", "lo": [-2, 0, z - 2], "hi": [-1, 5, z + 2]}
+
+
+def test_a_new_site_door_walled_in_the_relief_zone_is_refused(
+    home: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WO-10.18: a new site design's door keeps its way out clear through the relief zone too,
+    as a plan-free building's does (D424)."""
+    vault = VaultIO(home / "vault")
+
+    def make(ops: list[dict[str, Any]] | None = None, **kw: Any) -> shell_store.Made:  # noqa: ANN401
+        return shell_store.make(
+            conn,
+            home,
+            vault,
+            ["pl-steel"],
+            theme_id="th-foundry",
+            mode="site",
+            ops=ops,
+            save_it=False,
+            **kw,
+        )
+
+    plain = make()
+    ops = [*plain.ops, walled(plain)]
+    got = make(ops)
+    assert got.outcome.status == "refused"
+    assert got.outcome.reasons[0].startswith("no doorway: ")
+    at = plain.fit["fit"]["door"]["at"] if plain.fit else []
+    got = make(ops, entrance={"side": "west", "at": at})
+    assert got.outcome.reasons == (
+        (
+            f"entrance at [{at[0]},{at[1]}] on the west: its way out is blocked in the relief "
+            "zone outside SITE at y 0..2: keep it clear"
+        ),
+    )
+    # the old rule never looked there
+    old_site_rule(monkeypatch)
+    old = make(ops)
+    assert old.outcome.status == "accepted", old.outcome.reasons
+    assert old.fit is not None and old.fit["fit"]["door"] == plain.fit["fit"]["door"]
+
+
 def test_site_build_ids_name_the_site_program_entrance_and_zones(
     conn: sqlite3.Connection,
 ) -> None:
@@ -1612,8 +1716,9 @@ def test_site_build_ids_name_the_site_program_entrance_and_zones(
         shell.build_id(spec, ops, pj, None, [zone]),
         shell.build_id(spec, ops, {**pj, "v": 2}),
         shell.build_id(shell.spec_for_site(prog, site, sw, opts, relief=2), ops, pj),
+        shell.build_id(shell.replace(spec, door_relief=False), ops, pj),
     }
-    assert len(others) == 4 and a not in others
+    assert len(others) == 5 and a not in others
     # the layout doesn't name it (it is derived): the fitted spec gives the same id
     lay = layout.plan_layout(conn, [lay_tests.production()])
     assert shell.build_id(spec, ops, pj) == shell.build_id(

@@ -60,8 +60,10 @@ if TYPE_CHECKING:
 #    (WO-10.16, D422). Layout mode keeps v5's text, word for word.
 # 7: plan-free buildings: an empty building sized by its roofed floor (WO-10.17, D424). Layout
 #    and site modes keep v5's and v6's texts, word for word.
+# 8: site mode: the door's way out is kept clear through the relief zone too, as v7 asks of a
+#    plan-free door (WO-10.18). One sentence on from v6; layout and free keep v5 and v7.
 PROMPT_VERSION = 7
-PROMPT_VERSIONS = {"layout": 5, "site": 6, "free": PROMPT_VERSION}
+PROMPT_VERSIONS = {"layout": 5, "site": 8, "free": PROMPT_VERSION}
 MODES = tuple(PROMPT_VERSIONS)
 # What the vocabulary is, in the words build_request's own description uses (its tool adds how
 # to ask for GOS's procedural shell; gregtec.agents.tools.shells.VOCABULARY).
@@ -351,7 +353,7 @@ def system_prompt(mode: str = "layout") -> str:
     """The same text for every model and every case of a mode (:data:`PROMPT_VERSIONS`): the
     ambition first, then the space, the answer and its script API, the rules the code checks,
     and that the request's words are data. No whole building is shown: an example gets copied
-    (D387). Layout mode is v5's text; site mode (v6, D422) is :func:`site_prompt`."""
+    (D387). Layout mode is v5's text; site mode (v8, D422, WO-10.18) is :func:`site_prompt`."""
     if mode not in MODES:
         raise ValueError(mode)
     if mode == "site":
@@ -427,7 +429,8 @@ def site_prompt() -> str:
         "least NEED.door_height of air, joined to the door, on at least NEED.floor_required "
         "such columns.\n"
         "- At least one ground doorway at least NEED.door_height high and 3 wide, with a "
-        "straight way out at y 0 to the edge of SITE.\n"
+        "straight way out at y 0 to the edge of SITE and on through the relief zone (keep it "
+        "clear there too).\n"
         "- Some ceilings over open floor at least NEED.aisle_height high (the cable chase runs "
         "there).\n"
         "- Each machine's keep-out (PROGRAM) needs that much free floor in one piece, at least "

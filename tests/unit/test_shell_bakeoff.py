@@ -3279,7 +3279,7 @@ def test_case_tables_default_to_site_and_saved_runs_load_as_layout(
     assert a.schemas[0][0] is shell_brief.SCHEMA
 
 
-def test_a_site_run_sends_v6_and_scores_the_fit(
+def test_a_site_run_sends_v8_and_scores_the_fit(
     conn: sqlite3.Connection, home: Path
 ) -> None:
     """fake-cramped is refused for volume, then repaired in round 2; fake-tower ends refused
@@ -3293,7 +3293,7 @@ def test_a_site_run_sends_v6_and_scores_the_fit(
     fakes = {n: shell_fakes.FakeDesigner(n) for n in names}
     run = ran(conn, home, [bo.FAKES[n] for n in names], fakes, [site_case()])
     assert run["status"] == bo.DONE
-    assert run["prompt"]["version"] == 6 and run["prompt"]["mode"] == "site"
+    assert run["prompt"]["version"] == 8 and run["prompt"]["mode"] == "site"
     assert set(run["prompts"]) == {"site"} and run["cases"][0]["mode"] == "site"
     plain, cramped, tower, sloppy = (result(run, n) for n in names)
     assert plain["design"]["first_try"] and plain["design"]["fit"] == {

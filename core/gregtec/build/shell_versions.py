@@ -568,6 +568,8 @@ def revise(
                 max_blocks=mb,
                 headroom=hr,
                 relief=rec.get("relief", 0),
+                # and its door's way out through the relief zone (WO-10.18)
+                door_relief=bool(rec["fit"].get("door_relief", False)),
             )
         else:
             spec = shell.spec_from_layout(

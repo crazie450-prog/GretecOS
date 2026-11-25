@@ -433,18 +433,18 @@ def test_the_prompt_names_every_op_roof_and_api_and_its_version_is_recorded(
         len(text) < 8_000
     )  # the per-call estimate in the runbook assumes about this size
     assert shell_brief.SCHEMA["required"] == ["script", "ops"]
-    # layout mode keeps v5's text; site mode (D422) is v6, and a run records each it sent
+    # layout mode keeps v5's text; site mode (D422) is v8 (WO-10.18), and a run records each it sent
     rec = shell_bakeoff.prompt_record()
     assert rec["version"] == shell_brief.PROMPT_VERSIONS["layout"] == 5
     assert len(rec["sha256"]) == 12 and rec["mode"] == "layout"
     assert shell_bakeoff.prompt_label({"prompt": rec}).startswith("v5 (sha ")
     assert shell_bakeoff.prompt_label({}).startswith("v1")
     site = shell_bakeoff.prompt_record("site")
-    assert site["version"] == shell_brief.PROMPT_VERSIONS["site"] == 6
+    assert site["version"] == shell_brief.PROMPT_VERSIONS["site"] == 8
     assert site["sha256"] != rec["sha256"]
     both = {"prompt": site, "prompts": {"site": site, "layout": rec}}
     assert shell_bakeoff.prompt_label(both) == (
-        f"v6 site (sha {site['sha256']}); v5 layout (sha {rec['sha256']})"
+        f"v8 site (sha {site['sha256']}); v5 layout (sha {rec['sha256']})"
     )
 
 
