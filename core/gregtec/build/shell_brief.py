@@ -1,10 +1,12 @@
 """The shell designer's brief: "brief in, shell operations out" as text (WO-10.11, D374).
 
-Today a shell design reaches a model only through the deep lane: the ``architect`` subagent
-(Claude Agent SDK) is handed Clayton's words and calls the ``build_request`` or ``build_revise``
-tool with a list of operations; the tool's code checks them (:func:`gregtec.build.shell.design`)
-and a refused design goes back to the model as the tool's error ("Fix the design and send it
-again"), which the agent retries inside its own turn budget. That path needs tools and an agent
+With no live shell designer set (``[shell] designer``, D423: :mod:`gregtec.build.shell_designer`
+asks the configured model through this module, as the bake-off does), a shell design reaches a
+model through the deep lane: the ``architect`` subagent (Claude Agent SDK) is handed Clayton's
+words and calls the ``build_request`` or ``build_revise`` tool with a list of operations; the
+tool's code checks them (:func:`gregtec.build.shell.design`) and a refused design goes back to
+the model as the tool's error ("Fix the design and send it again"), which the agent retries
+inside its own turn budget. That path needs tools and an agent
 loop, which only one vendor's SDK gives.
 
 This module is the same job without tools, so any model that can answer one request with JSON
@@ -39,9 +41,13 @@ import math
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from gregtec.build import palette, shell
+
+if TYPE_CHECKING:
+    from gregtec.vault.io import VaultIO
 
 # The version of the designer's instructions (system_prompt, OPERATIONS, SCRIPT_API): every
 # bake-off run records it, so runs before and after a change are never compared unawares.
@@ -892,10 +898,122 @@ def revise_brief(
     return _fit("\n".join([*head, *_body(rec, lay, names, None), *tail]))
 
 
-def repair_brief(brief: str, answer: str, why: str) -> str:
-    """The brief again after a refused answer: the answer (clipped) and why the code refused
-    it, in the words ``build_request`` gives the architect."""
-    said = answer if len(answer) <= MAX_ECHO else answer[:MAX_ECHO] + " ...(cut)"
+@dataclass(frozen=True)
+class DesignRequest:
+    """What a new design is asked for (the bake-off's case, the live designer's request):
+    ``words`` is the request (the brief's <request> and the shell's prompt)."""
+
+    plans: tuple[str, ...]
+    words: str
+    mode: str = "site"
+    theme: str | None = None
+    line_type: str = "general"
+    max_blocks: int | None = None
+    headroom: int | None = None
+    relief: int | None = None
+    extra: tuple[tuple[str, str], ...] = ()
+    layout_options: Any = None  # a layout.Options, or None for the defaults
+    area: int | None = None  # mode free (D424)
+    site_factor: float | None = None
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """A new design's brief (the user text), GOS's procedural preview it is sized from (a
+    ``shell_store.Made``, never saved) and the facts it states (the layout, a site design's
+    program, nothing for a plan-free building)."""
+
+    brief: str
+    preview: Any
+    facts: dict[str, Any]
+
+
+def fit_refused(made: Any) -> bool:  # noqa: ANN401 - a shell_store.Made
+    """A site design refused by the fit itself (its palette and size passed)."""
+    return bool(made.spec.mode == "site" and "fit" in (made.fit or {}))
+
+
+def prepare_design(
+    conn: sqlite3.Connection,
+    home: Path,
+    vault: VaultIO | None,
+    req: DesignRequest,
+    *,
+    check: bool = True,
+) -> Prepared:
+    """The brief for a new design and GOS's own procedural preview it is sized from (never
+    saved): the preview's record gives the sizes, palette and doorways, its layout the facts
+    (a site design's program, D422; nothing for a plan-free building, D424). ``check``: a
+    preview refused for anything but the fit itself (whose machines the model works round) is
+    a :class:`gregtec.build.shell.ShellError` with the gate's reasons. Shared by the bake-off
+    and the live designer (WO-10.17, D423)."""
+    from gregtec.build import layout as layout_lib  # late: layout's chain reaches here
+    from gregtec.build import shell_store
+    from gregtec.planner.outputs import store as plan_store
+
+    lay: dict[str, Any] = {}
+    if req.mode != "free":
+        loaded = [plan_store.load(home, pid) for pid in req.plans]
+        opts = req.layout_options
+        if req.mode == "site":  # the brief states the program, never a layout
+            lay = layout_lib.program(conn, loaded).to_json(opts or layout_lib.Options())
+        else:
+            lay = layout_lib.plan_layout(conn, loaded, opts)
+    made = shell_store.make(
+        conn,
+        home,
+        vault,
+        list(req.plans),
+        theme_id=req.theme,
+        prompt=req.words,
+        line_type=req.line_type,
+        max_blocks=req.max_blocks,
+        headroom=req.headroom,
+        relief=req.relief,
+        extra=req.extra,
+        layout_options=req.layout_options,
+        save_it=False,
+        mode=req.mode,
+        area=req.area,
+        site_factor=req.site_factor,
+    )
+    if check and not made.outcome.ok and not fit_refused(made):
+        raise shell.ShellError(" | ".join(made.outcome.reasons))
+    rec = made.record
+    brief = design_brief(
+        rec, lay, names_of(conn, rec), req.words, made.spec.theme_rules
+    )
+    return Prepared(brief, made, lay)
+
+
+def prepare_revise(
+    conn: sqlite3.Connection, home: Path, ds: str, words: str
+) -> tuple[str, dict[str, Any]]:
+    """The brief for a revision of design ``ds``'s current version, and that version's record:
+    its facts from its own files (a site build's ``program.json``, a layout build's
+    ``layout.json``, none for a plan-free building). Shared by the bake-off and the live
+    designer (WO-10.17, D423)."""
+    from gregtec.build import shell_store
+    from gregtec.build import shell_versions as versions
+
+    first = versions.get(home, ds)["current"]
+    old = shell_store.load(home, first)
+    lay: dict[str, Any]
+    if shell_store.free_mode(old):
+        lay = {}
+    elif shell_store.site_mode(old):
+        lay = json.loads(
+            (shell_store.folder(home, first) / "program.json").read_text("utf-8")
+        )
+    else:
+        lay = versions._layout_of(home, first)
+    return revise_brief(old, lay, names_of(conn, old), words), old
+
+
+def repair_brief(brief: str, answer: str, why: str, *, echo: int = MAX_ECHO) -> str:
+    """The brief again after a refused answer: the answer (clipped to ``echo`` characters) and
+    why the code refused it, in the words ``build_request`` gives the architect."""
+    said = answer if len(answer) <= echo else answer[:echo] + " ...(cut)"
     # a site brief's NEED again, next to the refusal (D422: a fit refusal is about it)
     need = [x for x in brief.splitlines() if x.startswith("NEED: ")][:1]
     return _fit(

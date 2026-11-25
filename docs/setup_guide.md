@@ -1985,6 +1985,37 @@ If not: `close` answers `was last heard from ... minute(s) ago: it may be going 
 
 More detail: [shell_bakeoff.md](runbooks/shell_bakeoff.md) (Part 2 and "If something is off").
 
+### Step 84. Make astra your shell designer (optional)
+
+Skip this step to keep things as they are: then the architect (Claude) keeps writing your AI shell designs. With it, the bake-off model labelled `astra` (step 77) draws every new AI shell design and revision instead: the workbench's buttons, chat and the architect all send it the request, and GOS checks its answer exactly as in the bake-off. Planning, chat and everything else stay with Claude.
+
+Open the settings file:
+
+```powershell
+notepad "$gh\config\gos.toml"
+```
+
+Add two lines at the very end, then save: `[shell]` on the first and `designer = "astra"` on the second. A third line `designer_max_usd = 4.0` is optional: it is the most one request may spend, every try counted (from 0.5 to 20; 4 when you leave it out). Your day limit holds too: once today's spend reaches it, the designer says so and spends nothing until tomorrow.
+
+GOS reads the file when it starts, so start it again:
+
+```powershell
+& $gos stop
+& $gos serve --detach
+```
+
+Then ask it for one design at the command line. It prints what one request may cost and waits:
+
+```powershell
+& $gos shell design $plan --ai
+```
+
+You should see: a line `astra · this request's cap $4.00 · one try up to $<amount> · $<amount> left today`, then `Type yes to spend up to $4.00:`. Type `no` to stop here with nothing spent, or `yes` to have astra draw one building (about \$1). With `yes` it prints its stages and ends with a line `v1 sh-... of ds-... by astra: ...` and the next step, `gos shell export`.
+
+If not: `Not run: no shell designer is set ...`: the two lines are not in the file, or GOS was not started again. `Not run: no openai key is stored ...`: go back to step 76, part 3. `Not run: astra has no price in gos.toml ...`: the `input_usd` and `output_usd` lines of step 77 are missing. `Not run: no [[bakeoff.models]] entry is labelled ...`: the label after `designer =` is not the one in step 77. To go back to the architect, delete the two lines, save, and start GOS again as above.
+
+More detail: [shells.md](runbooks/shells.md) ("The live shell designer").
+
 ---
 
 ## Part 11. What you have now and what comes next

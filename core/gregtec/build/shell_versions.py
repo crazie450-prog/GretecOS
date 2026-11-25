@@ -117,9 +117,13 @@ def _version(
     by: str,
     cost_usd: float | None,
     at: float,
+    designer: str | None = None,
+    rounds: int | None = None,
 ) -> dict[str, Any]:
     if by not in BY:
         raise ValueError(by)
+    # the live shell designer's label and its repair rounds (D423); never a model id
+    drawn = {} if designer is None else {"designer": designer, "rounds": rounds}
     return {
         "n": n,
         "build": rec["id"],
@@ -133,6 +137,7 @@ def _version(
         "theme": rec.get("theme"),
         "headroom": rec["headroom"],
         "max_blocks": rec["max_blocks"],
+        **drawn,
     }
 
 
@@ -305,9 +310,12 @@ def start(
     asked: str,
     by: str,
     cost_usd: float | None = None,
+    designer: str | None = None,
+    rounds: int | None = None,
 ) -> dict[str, Any]:
     """A new design whose first version is the saved ``build`` (or, when it is already a
-    design's first version, that design with it made current). It becomes the current design."""
+    design's first version, that design with it made current). It becomes the current design.
+    ``designer`` and ``rounds``: the live shell designer's label and repair rounds (D423)."""
     with _LOCK:
         ds = design_id(build)
         d = _read(home, ds)
@@ -315,7 +323,15 @@ def start(
             rec = shell_store.load(home, build)
             now = time.time()
             v = _version(
-                1, rec, None, asked, by, 0.0 if by == "procedural" else cost_usd, now
+                1,
+                rec,
+                None,
+                asked,
+                by,
+                0.0 if by == "procedural" else cost_usd,
+                now,
+                designer,
+                rounds,
             )
             d = {
                 "schema": SCHEMA,
@@ -422,6 +438,8 @@ def revise(
     save_it: bool = True,
     entrance: Mapping[str, Any] | str | None = None,
     zones: Sequence[Mapping[str, Any]] | None = None,
+    designer: str | None = None,
+    rounds: int | None = None,
 ) -> Revised:
     """A new version of design ``ds`` (the current design if none) from its current version and
     ``words``: the model's operations (``ops``, ``by`` architect) or GOS's reviser's (``ops``
@@ -638,6 +656,8 @@ def revise(
         by,
         cost_usd,
         save_it,
+        designer,
+        rounds,
     )
 
 
@@ -681,6 +701,8 @@ def _keep(
     by: str,
     cost_usd: float | None,
     save_it: bool,
+    designer: str | None = None,
+    rounds: int | None = None,
 ) -> Revised:
     """A version that passed the gate: refused when it is one of the design's versions
     already, else saved (``save_it``) and made current. ``lay`` is the layout a layout-first
@@ -733,6 +755,8 @@ def _keep(
             by,
             0.0 if by == "procedural" else cost_usd,
             time.time(),
+            designer,
+            rounds,
         )
         d["versions"].append(v)
         _history(d, build, f"revised: {v['asked']}")

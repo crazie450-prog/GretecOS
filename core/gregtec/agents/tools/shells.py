@@ -1,7 +1,7 @@
 """The shell tool (WO-10.7; plan 7.0 ``build_request(spec)``, 7.10 "Shell designer", D316-D318).
 
 ``build_request(plans?, theme?, prompt?, line_type?, palette?, exclude?, max_blocks?, headroom?,
-design?, save?, site?, mode?, entrance?, zones?, area?, site_factor?)``, deep lane only (the architect's and the
+design?, save?, site?, mode?, entrance?, zones?, area?, site_factor?, ask_designer?)``, deep lane only (the architect's and the
 orchestrator's): designs a decorative shell around the saved plans' layout. Without ``design`` GOS's procedural generator draws it from
 the theme; with ``design`` (a list of operations in the building vocabulary,
 :data:`gregtec.build.shell.OPS`) the model's own design is compiled to blocks by code. Either way
@@ -30,6 +30,13 @@ shell (no ``design``) stays layout-first unless ``mode`` site is asked.
 **Plan-free** (D424, ``mode`` free with ``area`` and no ``plans``): an empty building Clayton
 furnishes himself, its SITE sized from ``area`` blocks of roofed floor and checked for that floor
 joined to a ground door (:func:`gregtec.build.fit.floor_check`); no machines, no zones.
+
+**The live shell designer** (D423, ``[shell] designer`` in gos.toml): while one is set and ready,
+every new AI design and revision is drawn by that model through the bake-off's seam
+(:mod:`gregtec.build.shell_designer`), not written here: ``ask_designer`` true starts a shell job
+with Clayton's words and returns at once, and a hand-written ``design`` or ``design_ops`` is
+refused. ``save`` false's head says which designer is set (``designer`` line). GOS's own
+procedural shell and reviser are unchanged.
 """
 
 from __future__ import annotations
@@ -37,7 +44,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from gregtec.agents.tools.registry import Call, ToolError
+from gregtec.agents.tools.registry import Call, ShellJobError, ToolError
 from gregtec.agents.tools.tsv import Result
 from gregtec.build import palette, shell, shell_brief
 from gregtec.build import themes as theme_lib
@@ -177,6 +184,13 @@ BUILD_REQUEST_SCHEMA: dict[str, Any] = {
             '"open" or "machines", "lo": [x, y, z], "hi": [x, y, z]}: no machine in an open '
             "zone (a foyer, a nave); with machines zones, the machines only inside them",
         },
+        "ask_designer": {
+            "type": "boolean",
+            "description": "true: the shell designer set in gos.toml draws it (when the "
+            "save false head says designer ready): plans or area, mode, theme, line_type, "
+            "sizes and prompt (Clayton's words) only; it runs as a shell job and the version "
+            "shows in the Shell workbench. Default false",
+        },
     },
     "required": [],
     "additionalProperties": False,
@@ -264,6 +278,68 @@ def _free_head(made: Any) -> list[tuple[str, object]]:  # noqa: ANN401 - shell_s
     return out
 
 
+def _designer(call: Call) -> Any:  # noqa: ANN401 - shell_designer.Ready | NotReady | None
+    """The live shell designer set in gos.toml (D423), read now; None when none is set."""
+    holder = call.env.shell_jobs
+    if holder is None or holder.cfg is None or not holder.cfg.shell_designer:
+        return None
+    from gregtec.build import shell_designer
+
+    return shell_designer.resolve(holder.cfg, holder.path)
+
+
+def _designer_line(found: Any) -> str:  # noqa: ANN401
+    from gregtec.build import shell_designer
+
+    if found is None:
+        return "none"
+    if isinstance(found, shell_designer.NotReady):
+        return f"{found.label} (not ready: {found.why})"
+    return f"{found.label} (ready)"
+
+
+def _hand_written(found: Any, what: str) -> None:  # noqa: ANN401
+    """Refuse a hand-written design while a designer is ready (D423: it draws them)."""
+    from gregtec.build import shell_designer
+
+    if isinstance(found, shell_designer.Ready):
+        raise ToolError(
+            f"a shell designer ({found.label}) is configured: call {what} with "
+            "ask_designer=true and Clayton's words; don't write the operations yourself"
+        )
+
+
+DESIGNER_ONLY = ("palette", "exclude", "site", "entrance", "zones", "design")
+
+
+def _ask_designer(call: Call, body: dict[str, Any], yourself: str) -> Result:
+    """Start the live designer's shell job and return at once (D423)."""
+    holder = call.env.shell_jobs
+    if holder is None or holder.cfg is None or not holder.cfg.shell_designer:
+        raise ToolError(
+            f"no shell designer is set: write the design yourself ({yourself})"
+        )
+    if holder.start is None:
+        raise ToolError(
+            "the shell designer runs in the core (gos serve): write the design yourself "
+            f"({yourself})"
+        )
+    try:
+        job = holder.start(body)
+    except ShellJobError as exc:
+        raise ToolError(f"the designer wasn't asked: {exc}") from None
+    label = holder.cfg.shell_designer
+    return Result(
+        head=[("job", job["id"]), ("designer", label), ("title", job["title"])],
+        notes=[
+            (
+                f"say: {label} is drawing it as job {job['id']}; the version shows in the "
+                "Shell workbench when it's done"
+            )
+        ],
+    )
+
+
 def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
     from gregtec.build import (
         shell_store,
@@ -274,6 +350,30 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
     for pid in plan_ids:
         if not PLAN_ID.fullmatch(pid):
             raise ToolError(f"{pid!r} is not a plan id")
+    found = _designer(call)
+    if args.get("ask_designer"):
+        if given := [k for k in DESIGNER_ONLY if k in args]:
+            raise ToolError(
+                f"with ask_designer, leave out {', '.join(given)}: the designer writes the "
+                "operations and chooses the door; the palette is the theme's"
+            )
+        if args.get("save") is False:
+            raise ToolError(
+                "ask_designer always saves (a refused design writes nothing)"
+            )
+        words = args.get("prompt") or call.request or ""
+        body: dict[str, Any] = {
+            "mode": args.get("mode") or "site",
+            "prompt": words[: theme_lib.MAX_TEXT * 5],
+            "line_type": args.get("line_type", theme_lib.GENERAL),
+            "ai": True,
+        }
+        if plan_ids:
+            body["plans"] = plan_ids
+        for key in ("theme", "max_blocks", "headroom", "area", "site_factor"):
+            if key in args:
+                body[key] = args[key]
+        return _ask_designer(call, {"design": body}, "design=…")
     design = None
     if "design" in args:
         try:
@@ -282,6 +382,7 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
             raise ToolError(f"design is not JSON: {exc}") from None
         if not isinstance(design, list):
             raise ToolError("design is a JSON list of operations")
+        _hand_written(found, "build_request")
     mode = args.get("mode") or ("site" if design is not None else "layout")
     entrance = _json_arg(args, "entrance", dict, "a JSON object {side, at}")
     zones = _json_arg(args, "zones", list, "a JSON list of {kind, lo, hi}")
@@ -365,6 +466,8 @@ def build_request(call: Call, args: dict[str, Any], offset: int) -> Result:
         ),
     ]
     head += [("repaired", r) for r in out.repairs]
+    if made.saved is None:  # the first look: which designer draws new designs (D423)
+        head.append(("designer", _designer_line(found)))
     notes = [
         "not saved (save false): send your design, or call again without save for this one",
         "ops: " + json.dumps(list(made.ops), separators=(",", ":")),
@@ -446,6 +549,13 @@ BUILD_REVISE_SCHEMA: dict[str, Any] = {
             "take the widest doorway",
         },
         "zones": BUILD_REQUEST_SCHEMA["properties"]["zones"],
+        "ask_designer": {
+            "type": "boolean",
+            "description": "true: the shell designer set in gos.toml revises it from the "
+            "words (when the save false head says designer ready): design and words only; "
+            "it runs as a shell job and the version shows in the Shell workbench. Default "
+            "false",
+        },
         "save": {
             "type": "boolean",
             "description": "false: save nothing; return the current version's operations and "
@@ -468,6 +578,40 @@ def build_revise(call: Call, args: dict[str, Any], offset: int) -> Result:
 
     home = call.env.db.parent.parent
     words = args["words"]
+    found = _designer(call)
+    if args.get("ask_designer"):
+        given = [
+            k
+            for k in (
+                "design_ops",
+                "theme",
+                "max_blocks",
+                "headroom",
+                "entrance",
+                "zones",
+            )
+            if k in args
+        ]
+        if given:
+            raise ToolError(
+                f"with ask_designer, leave out {', '.join(given)}: the designer revises "
+                "from Clayton's words alone"
+            )
+        if args.get("save") is False:
+            raise ToolError(
+                "ask_designer always saves (a refused revision writes nothing)"
+            )
+        try:
+            ds = args.get("design") or versions.current_id(home)
+        except shell.ShellError as exc:
+            raise ToolError(f"no revision: {exc}") from None
+        if ds is None:
+            raise ToolError(
+                "there is no shell yet: design one with build_request first"
+            )
+        return _ask_designer(
+            call, {"revise": {"design": ds, "words": words, "ai": True}}, "design_ops=…"
+        )
     ops = None
     if "design_ops" in args:
         try:
@@ -476,6 +620,7 @@ def build_revise(call: Call, args: dict[str, Any], offset: int) -> Result:
             raise ToolError(f"design_ops is not JSON: {exc}") from None
         if not isinstance(ops, list):
             raise ToolError("design_ops is a JSON list of operations")
+        _hand_written(found, "build_revise")
     save = args.get("save", True)
     entrance: dict[str, Any] | str | None
     if str(args.get("entrance", "")).strip() in ("null", "auto", '"auto"'):
@@ -513,6 +658,7 @@ def build_revise(call: Call, args: dict[str, Any], offset: int) -> Result:
                     ("design", ds),
                     ("current", f"v{cur['n']} {d['current']}"),
                     ("saved", "no (save false: nothing written)"),
+                    ("designer", _designer_line(found)),
                 ],
                 notes=notes,
             )

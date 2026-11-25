@@ -325,15 +325,15 @@ def _rate(home: Path, args: argparse.Namespace, out: TextIO, answer_in: Answer) 
 
 
 def _designers(models: Any, out: TextIO) -> dict[str, Any] | None:  # noqa: ANN401
-    """Each model's designer; None (said) when a key is missing."""
-    from gregtec.build import shell_fakes
-    from gregtec.llm import designers as llm
+    """Each model's designer; None (said) when a key is missing. Built as the live shell
+    designer builds its own (:func:`gregtec.build.shell_designer.build`, D423)."""
+    from gregtec.build import shell_designer
     from gregtec.llm import keys
 
     out_map: dict[str, Any] = {}
     for m in models:
         if m.fake:
-            out_map[m.label] = shell_fakes.FakeDesigner(m.model)
+            out_map[m.label] = shell_designer.build(m, "")
             continue
         try:
             key = keys.get_key(m.provider)
@@ -345,14 +345,7 @@ def _designers(models: Any, out: TextIO) -> dict[str, Any] | None:  # noqa: ANN4
                 f"Not run: the keyring can't be read ({type(exc).__name__}).", file=out
             )
             return None
-        if m.provider == "anthropic":
-            out_map[m.label] = llm.AnthropicDesigner(
-                llm.anthropic_client(key), m.model, m.effort
-            )
-        else:
-            out_map[m.label] = llm.OpenAIDesigner(
-                key, m.model, m.effort, url=llm.OPENAI_URL
-            )
+        out_map[m.label] = shell_designer.build(m, key)
     return out_map
 
 

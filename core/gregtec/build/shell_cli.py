@@ -12,7 +12,10 @@
   ``gos shell design --mode free --area N`` (D424) is a plan-free building: no plans, its
   plot sized from N blocks of roofed floor, checked for that floor joined to a door; you
   place the machines yourself. Works with no AI and no key (No-AI mode).
-  Exit 0 saved, 1 refused (nothing written), 2 bad input or setup.
+  ``--ai [--yes]`` (D423): the shell designer set in gos.toml (``[shell] designer``) draws it
+  instead, in the foreground (site mode by default): it prints the request's cap and what one
+  try can cost and waits for ``yes``. Exit 0 saved, 1 refused (nothing written), 2 bad input
+  or setup.
 - ``gos shell list`` and ``gos shell show BUILD [--card]``: saved builds; one build's palette
   manifest, notes and paste steps (or its dashboard card).
 - ``gos shell export BUILD [--world NAME | --world-dir DIR] [--over split|addblocks] [--out FILE]``:
@@ -28,7 +31,8 @@ Iterating (WO-10.10, D367): every saved design starts a **design** whose version
   blocks, cost; ``*`` marks the current one).
 - ``gos shell revise [--design DS] [--theme ID] [--max-blocks N] [--headroom N] WORDS...``: a new
   version of the current design (or ``--design``) by GOS's own reviser (no AI, free), through the
-  same gate; refused: nothing written, the current version stays. Exit 0, 1 refused, 2.
+  same gate; refused: nothing written, the current version stays. ``--ai [--yes]``: the shell
+  designer set in gos.toml revises it from the words instead (D423). Exit 0, 1 refused, 2.
 - ``gos shell refit BUILD``: a site build's (D422) new version with the same building and its
   plans' machines as they are today fitted into it again (export names it when they changed);
   free, no AI. Exit 0, 1 refused (they no longer fit: revise the building), 2.
@@ -97,10 +101,10 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     d.add_argument(
         "--mode",
         choices=shell_store.MODES,
-        default="layout",
-        help="layout: build around the laid-out machines (default); site: design the "
-        "building first and fit the machines into it (D422); free: a plan-free building "
-        "sized by --area (D424)",
+        default=None,
+        help="layout: build around the laid-out machines (default; site with --ai); site: "
+        "design the building first and fit the machines into it (D422); free: a plan-free "
+        "building sized by --area (D424)",
     )
     d.add_argument(
         "--area",
@@ -136,6 +140,18 @@ def add_parsers(commands: argparse._SubParsersAction[argparse.ArgumentParser]) -
     r.add_argument("--theme", default=None, help="th-<name>: another theme's palette")
     r.add_argument("--max-blocks", type=int, default=None)
     r.add_argument("--headroom", type=int, default=None)
+    for each in (d, r):  # the live shell designer (D423)
+        each.add_argument(
+            "--ai",
+            action="store_true",
+            help="the shell designer set in gos.toml ([shell] designer) draws it: paid, "
+            "the cap and the cost are printed and it waits for yes",
+        )
+        each.add_argument(
+            "--yes",
+            action="store_true",
+            help="--ai: spend without asking (the cap still holds)",
+        )
     f = sub.add_parser(
         "refit", help="a site build's machines as they are today, fitted again (D422)"
     )
@@ -221,6 +237,8 @@ def run(args: argparse.Namespace, out: TextIO = sys.stdout) -> int:
     if not db.is_file():
         print(f"{db} doesn't exist: run `gos db build` first", file=out)
         return 2
+    if args.shell_command in ("design", "revise") and args.ai:
+        return _ai(cfg, args, out)
     if args.shell_command == "design":
         return _design(cfg, args, out)
     if args.shell_command in ("revise", "refit"):
@@ -373,6 +391,140 @@ def entrance_arg(text: str) -> dict[str, Any]:
     return {"side": side.strip(), "at": [x, z]}
 
 
+def _ai(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
+    """``--ai`` (D423): the shell designer set in gos.toml draws the design or revision, in the
+    foreground. Exit 0 saved, 1 refused or not run, 2 bad input or no designer ready."""
+    from gregtec.agents.no_ai import AiMode, CreditWatch
+    from gregtec.build import shell_brief, shell_designer
+    from gregtec.build import shell_versions as versions
+    from gregtec.llm.usage import UsageMeter
+    from gregtec.store import Store
+
+    home = cfg.gos_home
+    design = args.shell_command == "design"
+    given = (
+        [
+            flag
+            for flag, value in (
+                ("--design", args.design),
+                ("--palette", args.palette),
+                ("--exclude", args.exclude),
+                ("--entrance", args.entrance),
+            )
+            if value
+        ]
+        if design
+        else [
+            flag
+            for flag, value in (
+                ("--theme", args.theme),
+                ("--max-blocks", args.max_blocks),
+                ("--headroom", args.headroom),
+            )
+            if value is not None
+        ]
+    )
+    if given:
+        print(
+            f"--ai: leave out {', '.join(given)} (the designer writes the operations "
+            "from your words)",
+            file=out,
+        )
+        return 2
+    path = args.config or config.default_path()
+    ready = shell_designer.resolve(cfg, path)
+    if not isinstance(ready, shell_designer.Ready):
+        why = shell_designer.UNSET_WHY if ready is None else ready.why
+        print(f"Not run: {why}.", file=out)
+        return 2
+    if design:
+        mode = args.mode or "site"  # D422: a new AI design is a site design
+        if mode == "free" and (args.plans or args.area is None):
+            print("a plan-free building takes --area N and no plans", file=out)
+            return 2
+        if mode != "free" and (not args.plans or args.area is not None):
+            print("name 1 to 3 saved plans (--area is only for --mode free)", file=out)
+            return 2
+    else:
+        target = args.design or versions.current_id(home)
+        if target is None:
+            print("there is no shell yet: design one first", file=out)
+            return 2
+    store = Store(access.db_path(home))
+    try:
+        meter = UsageMeter(
+            store, cfg.monthly_included_usd, cfg.credit_alerts_pct, cfg.cycle_day
+        )
+        mode_ai = AiMode(store)
+        CreditWatch(meter, mode_ai).check()
+        day = shell_designer._day(cfg, store)
+
+        def confirm(cap: float, most: float) -> bool:
+            left = "" if day is None else f" · ${day[2]:.2f} left today"
+            print(
+                f"{ready.label} · this request's cap ${cap:.2f} · one try up to "
+                f"${most:.2f}{left}",
+                file=out,
+            )
+            if args.yes or ready.spec.fake:
+                return True
+            print(f"Type yes to spend up to ${cap:.2f}: ", end="", file=out, flush=True)
+            return sys.stdin.readline().strip().casefold() == "yes"
+
+        ctx = shell_designer.Ctx(
+            cfg,
+            home,
+            store=store,
+            meter=meter,
+            ai=mode_ai,
+            path=path,
+            confirm=confirm,
+        )
+
+        def say(stage: str) -> None:
+            print(f"  {stage}", file=out, flush=True)
+
+        if design:
+            got = shell_designer.design(
+                ctx,
+                shell_brief.DesignRequest(
+                    tuple(args.plans),
+                    args.prompt,
+                    mode=mode,
+                    theme=args.theme,
+                    line_type=args.line_type,
+                    max_blocks=args.max_blocks,
+                    headroom=args.headroom,
+                    area=args.area,
+                    site_factor=args.site_factor,
+                ),
+                say,
+            )
+        else:
+            got = shell_designer.revise(ctx, target, " ".join(args.words), say)
+    finally:
+        store.close()
+    res = got.result
+    if not got.ok:
+        if got.status != shell_designer.NOT_RUN:
+            print("REFUSED: nothing written", file=out)
+        for why in res["refused"]:
+            print(f"  {why}", file=out)
+        return (
+            2 if got.status in (shell_designer.UNSET, shell_designer.NOT_READY) else 1
+        )
+    print(
+        f"v{res['version']} {res['build']} of {res['design']} by {res['designer']}: "
+        f"{res['rounds']} repair round(s), ${res['cost_usd']:.2f}, {res['seconds']:.0f} s",
+        file=out,
+    )
+    print(
+        f"next: gos shell export {res['build']} (writes the .schematic for the Lab)",
+        file=out,
+    )
+    return 0
+
+
 def _design(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
     home = cfg.gos_home
     if args.mode == "free" and args.plans:
@@ -423,7 +575,7 @@ def _design(cfg: config.Config, args: argparse.Namespace, out: TextIO) -> int:
             max_blocks=args.max_blocks,
             headroom=args.headroom,
             ops=ops,
-            mode=args.mode,
+            mode=args.mode or "layout",
             entrance=entrance,
             area=args.area,
             site_factor=args.site_factor,

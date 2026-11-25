@@ -81,6 +81,7 @@ from gregtec.build import (
     shell_brief,
     shell_eval,
     shell_fakes,
+    shell_rounds,
     shell_store,
 )
 from gregtec.build import shell_versions as versions
@@ -127,7 +128,8 @@ LABEL = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 LETTERS = "ABCDEFGH"
 MAX_MODELS = len(LETTERS)
 MAX_CASES = 24
-REPAIR_ROUNDS = 2  # after the first answer, for every model and every step
+# after the first answer, for every model and every step (the live designer's too, D423)
+REPAIR_ROUNDS = shell_rounds.REPAIR_ROUNDS
 TIGHT = 1.10  # a "tight" case allows this share of GOS's own procedural shell's blocks
 DEFAULT_CAP_USD = 10.0
 DEFAULT_CAP_TOKENS = 1_000_000
@@ -542,40 +544,6 @@ class Prepared:
     machines: int = 0  # a site case's machines to fit (its program's instances)
 
 
-def _preview(
-    conn: sqlite3.Connection,
-    home: Path,
-    vault: VaultIO | None,
-    case: Case,
-    ids: Sequence[str],
-    max_blocks: int | None,
-) -> shell_store.Made:
-    """GOS's own procedural shell for the case, never saved: its record gives the sizes, the
-    palette and the doorways every model's brief states (a site case's: the procedural building
-    with the machines fitted, whose SITE and NEED the brief states)."""
-    return shell_store.make(
-        conn,
-        home,
-        vault,
-        list(ids),
-        theme_id=None if case.theme == "none" else case.theme,
-        prompt=case.brief,
-        line_type=case.line_type,
-        max_blocks=max_blocks,
-        headroom=case.headroom,
-        relief=case.relief,
-        extra=case.palette,
-        layout_options=case.layout_options(),
-        save_it=False,
-        mode=case.mode,
-    )
-
-
-def _fit_refused(made: shell_store.Made) -> bool:
-    """A site design refused by the fit itself (its palette and size passed)."""
-    return made.spec.mode == "site" and "fit" in (made.fit or {})
-
-
 def prepare(
     conn: sqlite3.Connection,
     home: Path,
@@ -590,24 +558,27 @@ def prepare(
         ids = tuple(plans.get(case.line) or ())
         if not ids:
             raise BakeoffError(f"case {case.id} needs the {case.line} line's plans")
+        req = shell_brief.DesignRequest(
+            ids,
+            case.brief,
+            mode=case.mode,
+            theme=None if case.theme == "none" else case.theme,
+            line_type=case.line_type,
+            headroom=case.headroom,
+            relief=case.relief,
+            extra=case.palette,
+            layout_options=case.layout_options(),
+        )
         try:
-            loaded = [plan_store.load(home, pid) for pid in ids]
-            opts = case.layout_options()
-            if case.mode == "site":  # the brief states the program, never a layout
-                lay = layout_lib.program(conn, loaded).to_json(opts)
-            else:
-                lay = layout_lib.plan_layout(conn, loaded, opts)
-
-            made = _preview(conn, home, vault, case, ids, None)
+            got = shell_brief.prepare_design(conn, home, vault, req)
+            made, lay = got.preview, got.facts
             if made.outcome.ok:
                 baseline = len(made.outcome.cells)
-            elif _fit_refused(made):
+            else:
                 # a site case's procedural building whose machines didn't pack: its SITE,
                 # NEED and palette are still what the brief states, and its blocks the
                 # baseline (the fitter's limits are the models' to work round, D422)
                 baseline = len(shell.compile_ops(made.spec, made.ops).cells)
-            else:
-                raise BakeoffError(" | ".join(made.outcome.reasons))
             if case.max_blocks != "default":
                 # the record's sizes are what the brief states; the gate judges each answer
                 limit = (
@@ -615,15 +586,11 @@ def prepare(
                     if case.max_blocks == "tight"
                     else int(case.max_blocks)
                 )
-                made = _preview(conn, home, vault, case, ids, limit)
-            rec = made.record
-            brief = shell_brief.design_brief(
-                rec,
-                lay,
-                shell_brief.names_of(conn, rec),
-                case.brief,
-                made.spec.theme_rules,
-            )
+                got = shell_brief.prepare_design(
+                    conn, home, vault, replace(req, max_blocks=limit), check=False
+                )
+                made = got.preview
+            rec, brief = made.record, got.brief
         except (
             OSError,
             ValueError,
@@ -1148,38 +1115,6 @@ Say = Callable[[str], None]
 
 
 @dataclass
-class _Capped:
-    """A model's designer inside the run's caps: every try (:func:`gregtec.llm.designers.call`
-    retries) passes the runner's guard first, and a try that broke off is counted."""
-
-    runner: Runner
-    spec: ModelSpec
-    inner: llm.Designer
-
-    @property
-    def provider(self) -> str:
-        return self.inner.provider
-
-    @property
-    def model(self) -> str:
-        return self.inner.model
-
-    def complete(
-        self, system: str, user: str, schema: Mapping[str, Any], max_output_tokens: int
-    ) -> llm.Reply:
-        self.runner._guard(self.spec, user)
-        try:
-            reply = self.inner.complete(system, user, schema, max_output_tokens)
-        except llm.ProviderError as exc:
-            if exc.maybe_billed:
-                self.runner._broke(self.spec, user)
-            raise
-        if not reply.measured:  # answered, but the vendor sent no token count with it
-            self.runner._broke(self.spec, user)
-        return reply
-
-
-@dataclass
 class Runner:
     """One run's work. ``designers`` maps a model label to its :class:`~gregtec.llm.designers.
     Designer`; ``meter`` (the live ``llm_usage``) records every real call; ``cancel`` is asked
@@ -1282,7 +1217,11 @@ class Runner:
         beat = _Heartbeat(self.say, self.heartbeat_s)
         try:
             reply = llm.call(
-                _Capped(self, model, self.designers[model.label]),
+                shell_rounds.Capped(
+                    self.designers[model.label],
+                    lambda text: self._guard(model, text),
+                    lambda text: self._broke(model, text),
+                ),
                 self.system,
                 user,
                 shell_brief.schema(self.mode),
@@ -1340,34 +1279,19 @@ class Runner:
     ) -> None:
         """The first answer and at most REPAIR_ROUNDS more, each read for the case's mode and
         through ``gate`` (which saves an accepted design and returns None, or says why it
-        refused)."""
-        user = brief
-        for attempt in range(REPAIR_ROUNDS + 1):
-            step.rounds = attempt
-            got = self._ask(model, user, step)
-            if isinstance(got, str):
-                step.refuse(got)
-                return
-            if got.stop == llm.REFUSAL:
-                step.refuse(got.detail or "the model declined")
-                return
-            if got.stop == llm.MAX_TOKENS:
-                why = (
-                    f"the answer was cut off at the output limit "
-                    f"({shell_brief.MAX_OUTPUT_TOKENS} tokens): use fewer operations"
-                )
-            else:
-                try:
-                    said = shell_brief.read(got.text, self.mode)
-                except shell_brief.BriefError as exc:
-                    why = str(exc)
-                else:
-                    refused = gate(said)
-                    if refused is None:
-                        return
-                    why = refused
-            step.refuse(why)
-            user = shell_brief.repair_brief(brief, got.text, why)
+        refused): :func:`gregtec.build.shell_rounds.rounds`, the live designer's too."""
+
+        def on_round(n: int) -> None:
+            step.rounds = n
+
+        shell_rounds.rounds(
+            lambda user: self._ask(model, user, step),
+            brief,
+            self.mode,
+            gate,
+            step.refuse,
+            on_round,
+        )
 
     # -- the two steps ------------------------------------------------------------------------
 
@@ -1427,18 +1351,7 @@ class Runner:
         ds: str,
     ) -> tuple[_Step, dict[str, str]]:
         step = _Step()
-        first = versions.get(where, ds)["current"]
-        old = shell_store.load(where, first)
-        lay = (
-            json.loads(
-                (shell_store.folder(where, first) / "program.json").read_text("utf-8")
-            )
-            if shell_store.site_mode(old)
-            else versions._layout_of(where, first)
-        )
-        brief = shell_brief.revise_brief(
-            old, lay, shell_brief.names_of(self.conn, old), case["followup"]
-        )
+        brief, old = shell_brief.prepare_revise(self.conn, where, ds, case["followup"])
         checks = {"asked": "-", "kept": "-", "why": ""}
 
         def gate(said: shell_brief.Answer) -> str | None:

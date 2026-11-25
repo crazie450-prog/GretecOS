@@ -29,6 +29,23 @@ The shell workbench is the separate window you asked for: the dashboard's **Buil
 - Revising one keeps its area and plot. The area is a minimum, so a revision may add floor inside the plot. A different area is a new design.
 - To try one for free: `& $gos shell design --mode free --area 1500 --theme th-marble-works` (GOS's own building: walls round the whole plot, a flat roof and a west door). The architect takes the same request in Chat ("a plan-free building with 1,500 blocks of floor"); without a number it asks you for one.
 
+## The live shell designer (D423)
+
+- With `[shell] designer = "astra"` in gos.toml (a `[[bakeoff.models]]` label, with its price; [setup_guide.md](../setup_guide.md) step 84), that model draws **every new AI shell design and revision**: the workbench's AI buttons, a revision you ask for in Chat (it starts a shell job at once: "Asked astra to revise ds-... (job ...)"), and the architect, which hands the request on (`ask_designer`) instead of writing the operations itself. It gets the bake-off's brief, no tools, the same gate and at most 2 repair rounds; a version it made shows **by architect**, its real cost and the designer's label. Unset (the default), nothing changes: the architect writes the design.
+- **Spending.** One request may spend at most `[shell] designer_max_usd` (4.0 unless you change it, 0.5 to 20), every try and retry counted. Before each try GOS checks that the most it can cost still fits; if not it stops there: "stopped before try 3: $1.61 spent and the next try could cost up to $1.13, over this request's cap $2.50. Nothing was saved." Every answered try is in the Costs view under the lane `designer`; a try that broke off, or came without its token count, is counted at the most it can have cost (task `designer:...:bound`).
+- **When it doesn't run**, it says so in one sentence and spends nothing: none set; not ready (no `[[bakeoff.models]]` entry with that label, no price for it, no key stored for its vendor, a `[bakeoff]` table GOS can't read); the AI turned off by you or paused for credits; or today's spend at the day cap ("today's AI spend $10.12 has reached the day cap $10.00 ... the shell designer is off until tomorrow, or raise day_max_usd"). Unlike the other AI work, which only warns at the day cap, the designer refuses there, as the bake-off does. Problems of the Anthropic API (no Anthropic key, an outage) stop only a Claude designer.
+- **Its own errors** are plain sentences and never turn the rest of GOS's AI off: "astra refused the openai key: run `gos key set openai`", "openai says astra's quota or credits are used up", "astra didn't answer after 3 tries (rate limited)", "astra's 3 answers were all refused. Last: <the gate's reason>. $2.31 spent, nothing saved." GOS's own **Revise** (free) still works.
+- While its model answers (a minute or more), the planner is free: Designer and power jobs go ahead. One shell job at a time still holds. **Cancel** takes effect before the next try; a try already sent finishes and is billed.
+- From PowerShell (paid: it prints the cap and what one try can cost, and waits for `yes`):
+
+```powershell
+& $gos shell design <plan-id> --ai                    # a site design by the designer
+& $gos shell design --mode free --area 1500 --ai      # a plan-free building by the designer
+& $gos shell revise make the roof steeper --ai        # a new version of the current design
+```
+
+  Exit 0 saved, 1 refused or not run, 2 no designer ready or bad input.
+
 ## How to iterate
 
 1. **Design.** Pick the plan and a theme (or leave it blank: the theme used nearby, else one that fits the line type), set Max blocks or Headroom if you like, press **Design new**. Or say it: "design a foundry shell around my steel line".

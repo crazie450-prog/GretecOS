@@ -126,7 +126,9 @@ SUBAGENTS = (
         "is built legitimately. Work from the structures, themes and notes the tools return; "
         "a theme's palette holds only block_find states without a tile entity; a shell is "
         "designed only through build_request and changed only through build_revise, whose "
-        "code checks it; when Clayton asks to change a shell, revise it, never start over."
+        "code checks it; when Clayton asks to change a shell, revise it, never start over; "
+        "when their save false head says a shell designer is ready, call them with "
+        "ask_designer true and his words instead of writing the operations yourself."
         + _DATA,
         "architect",
         "high",

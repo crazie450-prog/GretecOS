@@ -145,7 +145,14 @@ def test_one_job_per_kind_and_the_other_kind_waits_for_the_planner(
 ) -> None:
     reg, _ = jobs
     first = Script()
-    job = reg.start("shell", "Shell: tower", first)
+
+    def shell_work() -> dict[str, Any]:
+        # a shell job takes the planner's lock itself (D423): GOS's generator for its whole work
+        with dj.planner(reg.planner_lock):
+            return first()
+
+    assert "shell" in dj.OWN_LOCK
+    job = reg.start("shell", "Shell: tower", shell_work)
     assert first.at["graph"].wait(10)
     with pytest.raises(dj.Busy, match="already running .*graph.*cancel it") as busy:
         reg.start("shell", "Shell: hall", Script())

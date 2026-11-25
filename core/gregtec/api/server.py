@@ -35,7 +35,7 @@ from gregtec.agents import ask
 from gregtec.agents.deep import DeepLaneService
 from gregtec.agents.no_ai import AiMode, CreditWatch, guard_summariser
 from gregtec.alerts.router import AlertRouter
-from gregtec.api import ai_routes, persona_routes
+from gregtec.api import ai_routes, persona_routes, shell_routes
 from gregtec.api.app import MAX_MESSAGE, Core, create_app
 from gregtec.api.security import Auth
 from gregtec.bridge import ops as bridge_ops
@@ -230,6 +230,10 @@ def run(
     ops.desk.on_change = ops.changed(core.action_changed)  # chat notices first (WO-7.4)
     ai_routes.wire(core, ai, CreditWatch(meter, ai))
     core.asker = agents.asker(ai=ai, actions=ops.desk)
+    if (holder := getattr(agents, "shell_jobs", None)) is not None:
+        # the live shell designer's jobs (D423), once the job registry and AiMode exist
+        holder.path = config_path
+        holder.start = lambda body: shell_routes.start_job(core, body)
     core.personas = agents.personas
     persona_routes.wire(core)
     if isinstance(agents.deep, DeepLaneService):
