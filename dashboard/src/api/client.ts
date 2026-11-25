@@ -32,7 +32,9 @@ import type {
   ShellCompare,
   ShellDesign,
   ShellDesignSummary,
+  ShellDesignerStatus,
   ShellJobBody,
+  ShellPlot,
   ShellScene,
   ShellThemes,
   Health,
@@ -144,6 +146,12 @@ export const api = {
   shellCompare: (a: string, b: string) =>
     get<ShellCompare>(`/api/shells/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`),
   shellScene: (build: string) => get<ShellScene>(`/api/shells/${encodeURIComponent(build)}/view`),
+  // The live shell designer (D423) and a plan-free building's plot as the core sizes it (D424).
+  shellDesigner: () => get<ShellDesignerStatus>("/api/shells/designer"),
+  shellPlot: (area: number, factor?: number, headroom?: number) =>
+    get<ShellPlot>(
+      `/api/shells/plot?area=${area}${factor !== undefined ? `&factor=${factor}` : ""}${headroom !== undefined ? `&headroom=${headroom}` : ""}`,
+    ),
   // The shell bake-off (WO-10.11, D374-D377): blind runs to look at and rate; started only from the CLI.
   bakeoffRuns: () => get<{ runs: BakeoffSummary[] }>("/api/shells/bakeoff"),
   bakeoffRun: (run: string) => get<{ run: BakeoffView; report: Card | null }>(`/api/shells/bakeoff/${encodeURIComponent(run)}`),

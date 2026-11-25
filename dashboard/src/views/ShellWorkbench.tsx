@@ -3,7 +3,11 @@
 // the gate supports (max_blocks, headroom); Design and Revise run as shell jobs (stage, time,
 // Cancel; one at a time, WO-3.9's machinery) with GOS's own generator or reviser (no model, free);
 // "Ask the architect" sends the same words to the architect with the design picked here named, so
-// that design is revised in the deep lane (D369, D370). The version list shows what was asked, by whom, the blocks and
+// that design is revised in the deep lane (D369, D370); with a live shell designer set in gos.toml
+// (D423) it and "Design with the architect" run as shell jobs drawn by that model instead, and the
+// status line says its cap and what today leaves. "Plan-free" (D424) designs a building with no
+// machines from the roofed floor he asks for; the core sizes its plot (the note is the core's).
+// The version list shows what was asked, by whom (the designer's label), the blocks and
 // the cost of each, makes any version current (undo) and picks two to compare side by side
 // (materials and block counts). The viewer is the build guide's 3D drawing (D319: free turn, zoom,
 // layer slider, per-layer materials) with the floor plan's machines and keep-outs as ghosts.
@@ -17,8 +21,11 @@ import type {
   ShellCompare,
   ShellDesign,
   ShellDesignSummary,
+  ShellDesignerStatus,
   ShellJobBody,
   ShellJobResult,
+  ShellPlot,
+  ShellPlotLimits,
   ShellScene,
   ShellThemes,
   ShellVersion,
@@ -40,8 +47,31 @@ export function costText(v: Pick<ShellVersion, "cost_usd" | "by">): string {
   return `$${v.cost_usd.toFixed(2)}`;
 }
 
-export function byText(v: Pick<ShellVersion, "by">): string {
+/** Who drew a version: the live shell designer by its label (D423), else the architect or GOS. */
+export function byText(v: Pick<ShellVersion, "by" | "designer">): string {
+  if (v.designer) return `AI (${v.designer})`;
   return v.by === "architect" ? "the architect" : "GOS's own";
+}
+
+const count = (n: number): string => n.toLocaleString("en-US");
+
+/** What a design houses, as its list says it: its plans, or a plan-free building's floor (D424). */
+export function housesText(d: { plans: string[]; area?: number | null }): string {
+  return d.area != null ? `plan-free · ≥${count(d.area)} floor` : `plans ${d.plans.join(", ")}`;
+}
+
+/** The live shell designer's status line (D423), or null when none is set. */
+export function designerText(s: ShellDesignerStatus): string | null {
+  if (!s.configured) return null;
+  if (!s.ready) return `Designer: ${s.label} · not ready: ${s.why ?? "the core didn't say why"}`;
+  const left = s.day_left_usd !== null ? ` · $${s.day_left_usd.toFixed(2)} left today` : "";
+  return `Designer: ${s.label} · up to $${s.cap_usd.toFixed(2)} a request${left}`;
+}
+
+/** A plan-free building's plot as the core sized it (the dashboard never computes it). */
+export function plotText(p: ShellPlot): string {
+  const factor = Number.isInteger(p.factor) ? p.factor.toFixed(1) : String(p.factor);
+  return `plot about ${p.size[0]} × ${p.size[2]} at factor ${factor}`;
 }
 
 /** The ghosts a scene draws: the floor plan's machines and keep-outs, in the shell's frame. */
@@ -58,11 +88,27 @@ export function ghostsOf(scene: ShellScene): GhostBox[] {
   ];
 }
 
-/** The body of a workbench job from the form (null: nothing to send, with why). */
+/** The workbench form as a job reads it. */
+export interface ShellForm {
+  words: string;
+  theme: string;
+  plans: string[];
+  lineType: string;
+  maxBlocks: string;
+  headroom: string;
+  free?: boolean; // a plan-free building (D424): its floor area instead of plans
+  area?: string;
+  siteFactor?: string; // the plot size factor (site or plan-free)
+}
+
+/** The body of a workbench job from the form (a string: nothing to send, and why). `ai`: the
+ * live shell designer draws it (D423); `plot`: the core's limits for the floor and the factor. */
 export function jobBody(
   kind: "design" | "revise",
-  form: { words: string; theme: string; plans: string[]; lineType: string; maxBlocks: string; headroom: string },
+  form: ShellForm,
   design: string | null,
+  ai = false,
+  plot?: ShellPlotLimits,
 ): ShellJobBody | string {
   const num = (s: string): number | undefined => (s.trim() === "" ? undefined : Number(s));
   const maxBlocks = num(form.maxBlocks);
@@ -78,18 +124,37 @@ export function jobBody(
   };
   const words = form.words.trim();
   if (kind === "design") {
-    if (!form.plans.length) return "Pick the plan the shell houses";
-    return {
-      design: {
-        plans: form.plans,
-        ...(form.theme ? { theme: form.theme } : {}),
-        line_type: form.lineType,
-        ...(words ? { prompt: words } : {}),
-        ...sizes,
-      },
+    const factor = num(form.siteFactor ?? "");
+    if (factor !== undefined) {
+      const [, lo, hi] = plot?.site_factor ?? [0, 0, Infinity];
+      if (!Number.isFinite(factor) || factor < lo || factor > hi)
+        return plot ? `The plot size factor is from ${lo} to ${hi}` : "The plot size factor is a number";
+    }
+    const common = {
+      ...(form.theme ? { theme: form.theme } : {}),
+      line_type: form.lineType,
+      ...(words ? { prompt: words } : {}),
+      ...sizes,
+      ...(ai ? { ai: true } : {}),
     };
+    if (form.free) {
+      const area = num(form.area ?? "");
+      const [lo, hi] = plot?.area ?? [1, Infinity];
+      if (area === undefined || !Number.isInteger(area) || area < lo || area > hi)
+        return plot ? `Give the floor area (${count(lo)} to ${count(hi)})` : "Give the floor area (whole blocks)";
+      return { design: { mode: "free", area, ...(factor !== undefined ? { site_factor: factor } : {}), ...common } };
+    }
+    if (!form.plans.length) return "Pick the plan the shell houses";
+    // a plot size factor sizes a site design's plot (D422): the design is one then
+    return { design: { plans: form.plans, ...(factor !== undefined ? { mode: "site", site_factor: factor } : {}), ...common } };
   }
   if (!design) return "Design a shell first";
+  if (ai) {
+    if (!words) return "Say what to change first";
+    if (maxBlocks !== undefined || headroom !== undefined || form.theme)
+      return "The architect revises from your words alone: clear the theme and sizes, or use Revise";
+    return { revise: { design, words, ai: true } };
+  }
   if (!words && maxBlocks === undefined && headroom === undefined && !form.theme)
     return "Say what to change, or set a size or another theme";
   return { revise: { design, words, ...(form.theme ? { theme: form.theme } : {}), ...sizes } };
@@ -181,10 +246,16 @@ function ShellScene3DInner(props: Scene3DProps) {
           data-testid={`${prefix}-layer`}
         />
       </label>
-      <label className="gos-src shell-ghost-toggle">
-        <input type="checkbox" checked={ghosts} onChange={(e) => setGhosts(e.target.checked)} data-testid={`${prefix}-ghosts`} />{" "}
-        Show the machines and keep-outs inside ({scene.ghosts.machines.length} machines, {scene.ghosts.keepouts.length} keep-outs)
-      </label>
+      {scene.area != null ? (
+        <p className="gos-src" data-testid={`${prefix}-plan-free`}>
+          plan-free: no machines · at least {count(scene.area)} blocks of roofed floor for you to fill
+        </p>
+      ) : (
+        <label className="gos-src shell-ghost-toggle">
+          <input type="checkbox" checked={ghosts} onChange={(e) => setGhosts(e.target.checked)} data-testid={`${prefix}-ghosts`} />{" "}
+          Show the machines and keep-outs inside ({scene.ghosts.machines.length} machines, {scene.ghosts.keepouts.length} keep-outs)
+        </label>
+      )}
       {!props.compact && (
         <div data-testid={`${prefix}-layer-materials`}>
           <span className="gos-label">Layer {at + 1}: materials</span>
@@ -364,6 +435,11 @@ export function ShellWorkbench() {
   const [lineType, setLineType] = useState("general");
   const [maxBlocks, setMaxBlocks] = useState("");
   const [headroom, setHeadroom] = useState("");
+  const [free, setFree] = useState(false);
+  const [area, setArea] = useState("");
+  const [siteFactor, setSiteFactor] = useState("");
+  const [plot, setPlot] = useState<{ text: string; ok: boolean } | null>(null);
+  const [designer, setDesigner] = useState<ShellDesignerStatus | null>(null);
   const [shown, setShown] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -378,6 +454,8 @@ export function ShellWorkbench() {
       },
       (e: unknown) => setNotice(message(e)),
     );
+    // the live shell designer (D423): an older core without the route has none
+    api.shellDesigner().then(setDesigner, () => setDesigner(null));
   }, []);
 
   useEffect(() => {
@@ -412,6 +490,28 @@ export function ShellWorkbench() {
     };
   }, [ds, designs]);
 
+  // A plan-free building's plot, as the core sizes it for the floor, factor and headroom (D424).
+  useEffect(() => {
+    const floor = Number(area);
+    if (!free || area.trim() === "" || !Number.isInteger(floor)) {
+      setPlot(null);
+      return;
+    }
+    const factor = siteFactor.trim() === "" ? undefined : Number(siteFactor);
+    const room = headroom.trim() === "" ? undefined : Number(headroom);
+    let live = true;
+    const timer = window.setTimeout(() => {
+      api.shellPlot(floor, factor, room).then(
+        (p) => live && setPlot({ text: plotText(p), ok: true }),
+        (e: unknown) => live && setPlot({ text: message(e), ok: false }),
+      );
+    }, 300);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [free, area, siteFactor, headroom]);
+
   const view = shown ?? design?.current ?? null;
   useEffect(() => {
     if (!view) return;
@@ -429,24 +529,36 @@ export function ShellWorkbench() {
     "shell",
     (result) => {
       const r = result as ShellJobResult;
-      if (r.refused?.length) setNotice(`Refused, nothing written; the current version stays: ${r.refused.join(" | ")}`);
-      else setNotice(r.changes?.length ? `New version: ${r.changes.join("; ")}` : "Designed: its first version is current.");
+      const cost = r.cost_usd !== undefined ? `, $${r.cost_usd.toFixed(2)}` : "";
+      if (r.refused?.length) {
+        const by = r.designer ? ` (asked ${r.designer}${cost})` : "";
+        setNotice(`Refused, nothing written; the current version stays${by}: ${r.refused.join(" | ")}`);
+      } else {
+        const done = r.changes?.length ? `New version: ${r.changes.join("; ")}` : "Designed: its first version is current.";
+        const repairs = r.rounds ? `, ${r.rounds} repair${r.rounds === 1 ? "" : "s"}` : "";
+        setNotice(r.designer ? `${done} Drawn by ${r.designer}${cost}${repairs}.` : done);
+      }
+      // what today leaves after the designer's spend (D423)
+      if (r.designer) api.shellDesigner().then(setDesigner, () => undefined);
       setPicked([]);
       load(r.design ?? null);
     },
     (text) => setNotice(text),
   );
   const working = busy !== null || runner.job !== null;
-  const form = { words, theme, plans: [plan, plan2].filter(Boolean), lineType, maxBlocks, headroom };
+  const form = { words, theme, plans: [plan, plan2].filter(Boolean), lineType, maxBlocks, headroom, free, area, siteFactor };
+  // The live shell designer (D423): set, and ready now (his AI switch, the credit pause and the day cap allow it).
+  const drawer = designer?.configured ? designer : null;
+  const ready = drawer?.ready === true;
 
-  const start = (kind: "design" | "revise"): void => {
-    const body = jobBody(kind, form, ds);
+  const start = (kind: "design" | "revise", ai = false): void => {
+    const body = jobBody(kind, form, ds, ai, themes?.plot);
     if (typeof body === "string") {
       setNotice(body);
       return;
     }
     setNotice(null);
-    setBusy(kind === "design" ? "Starting the design" : "Starting the revision");
+    setBusy(ai && drawer ? `Asking ${drawer.label}` : kind === "design" ? "Starting the design" : "Starting the revision");
     runner.start(() => api.shellJob(body)).then(
       () => setBusy(null),
       (e: unknown) => {
@@ -457,6 +569,10 @@ export function ShellWorkbench() {
   };
 
   const architect = (): void => {
+    if (drawer) {
+      start("revise", true); // the designer revises the design picked here, as a job
+      return;
+    }
     const text = words.trim();
     if (!text) {
       setNotice("Say what to change first");
@@ -514,7 +630,8 @@ export function ShellWorkbench() {
         <p className="gos-sub">
           Words shape revisions and the architect; Design new uses the theme, plans and sizes (GOS's free generator keeps the words as
           the design's request). GOS's own generator and reviser are free and need no AI; Ask the architect (AI) revises the design
-          picked below from the same words. Every version is kept.
+          picked below from the same words. Every version is kept. Plan-free is a building with no machines, sized by the roofed floor
+          you ask for; you place the machines yourself.
         </p>
         <textarea
           className="ask-input shell-words"
@@ -526,31 +643,64 @@ export function ShellWorkbench() {
           aria-label="What to design or change"
           data-testid="shell-words"
         />
+        <div className="shell-form-row shell-mode" role="group" aria-label="What a new shell houses">
+          <button type="button" className="gos-chip" aria-pressed={!free} onClick={() => setFree(false)} data-testid="shell-mode-plans">
+            On plans
+          </button>
+          <button type="button" className="gos-chip" aria-pressed={free} onClick={() => setFree(true)} data-testid="shell-mode-free">
+            Plan-free
+          </button>
+        </div>
         <div className="shell-form-row">
-          <label className="gos-src">
-            Plan{" "}
-            <select className="ask-input" value={plan} onChange={(e) => setPlan(e.target.value)} data-testid="shell-plan">
-              <option value="">Pick a plan</option>
-              {choices.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.id})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="gos-src">
-            And its power{" "}
-            <select className="ask-input" value={plan2} onChange={(e) => setPlan2(e.target.value)} data-testid="shell-plan-2">
-              <option value="">none</option>
-              {choices
-                .filter((p) => p.id !== plan)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.id})
-                  </option>
-                ))}
-            </select>
-          </label>
+          {free ? (
+            <label className="gos-src">
+              Interior floor (blocks){" "}
+              <input
+                className="ask-input num"
+                type="number"
+                inputMode="numeric"
+                min={themes?.plot?.area[0]}
+                max={themes?.plot?.area[1]}
+                placeholder="1500"
+                value={area}
+                onChange={(e) => setArea(e.target.value)}
+                data-testid="shell-area"
+              />
+              {plot && (
+                <span className="gos-src" data-testid="shell-plot" data-ok={plot.ok}>
+                  {plot.ok ? "" : `${GLYPH.warn} `}
+                  {plot.text}
+                </span>
+              )}
+            </label>
+          ) : (
+            <>
+              <label className="gos-src">
+                Plan{" "}
+                <select className="ask-input" value={plan} onChange={(e) => setPlan(e.target.value)} data-testid="shell-plan">
+                  <option value="">Pick a plan</option>
+                  {choices.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.id})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="gos-src">
+                And its power{" "}
+                <select className="ask-input" value={plan2} onChange={(e) => setPlan2(e.target.value)} data-testid="shell-plan-2">
+                  <option value="">none</option>
+                  {choices
+                    .filter((p) => p.id !== plan)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.id})
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </>
+          )}
           <label className="gos-src">
             Theme{" "}
             <select className="ask-input" value={theme} onChange={(e) => setTheme(e.target.value)} data-testid="shell-theme">
@@ -601,6 +751,27 @@ export function ShellWorkbench() {
             />
           </label>
         </div>
+        <details className="shell-advanced" data-testid="shell-advanced">
+          <summary className="gos-label">Advanced</summary>
+          <div className="shell-form-row">
+            <label className="gos-src">
+              Plot size factor{" "}
+              <input
+                className="ask-input num"
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min={themes?.plot?.site_factor[1]}
+                max={themes?.plot?.site_factor[2]}
+                placeholder={String(themes?.plot?.site_factor[0] ?? "")}
+                value={siteFactor}
+                onChange={(e) => setSiteFactor(e.target.value)}
+                data-testid="shell-site-factor"
+              />
+            </label>
+            <span className="gos-src">A bigger plot round the floor or the machines; on plans it makes the new design a site design.</span>
+          </div>
+        </details>
         <div className="shell-form-row">
           <Button variant="primary" testId="shell-design" disabled={working} onClick={() => start("design")} title="A new design (GOS's generator, free)">
             Design new
@@ -608,10 +779,36 @@ export function ShellWorkbench() {
           <Button testId="shell-revise" disabled={working || !ds} onClick={() => start("revise")} title="A new version of the current shell (GOS's reviser, free)">
             Revise
           </Button>
-          <Button testId="shell-ask" disabled={working || !ds} onClick={architect} title="The architect (AI) revises the design picked below from these words">
+          {drawer && (
+            <Button
+              testId="shell-ai-design"
+              disabled={working || !ready}
+              onClick={() => start("design", true)}
+              title={ready ? `${drawer.label} (AI) draws a new design from the words, theme and plans or floor` : (drawer.why ?? "")}
+            >
+              Design with the architect
+            </Button>
+          )}
+          <Button
+            testId="shell-ask"
+            disabled={working || !ds || (drawer !== null && !ready)}
+            onClick={architect}
+            title={
+              drawer
+                ? ready
+                  ? `${drawer.label} (AI) revises the design picked below from these words`
+                  : (drawer.why ?? "")
+                : "The architect (AI) revises the design picked below from these words"
+            }
+          >
             Ask the architect
           </Button>
         </div>
+        {drawer && (
+          <p className="gos-sub" data-testid="shell-designer" data-ready={ready}>
+            {ready ? GLYPH.ok : GLYPH.warn} {designerText(drawer)}
+          </p>
+        )}
       </Panel>
       {runner.job && <JobProgress job={runner.job} onCancel={runner.cancel} testId="shell-busy" prefix="shell" />}
       {busy && !runner.job && (
@@ -629,7 +826,14 @@ export function ShellWorkbench() {
       <Panel
         label="Versions"
         testId="shell-versions"
-        aside={design ? <span className="gos-src">{design.versions.length} kept · nothing is ever deleted</span> : undefined}
+        aside={
+          design ? (
+            <span className="gos-src">
+              {design.area != null ? `${housesText(design)} · ` : ""}
+              {design.versions.length} kept · nothing is ever deleted
+            </span>
+          ) : undefined
+        }
       >
         {designs && !designs.length && (
           <p className="gos-sub" data-testid="shells-empty">
@@ -649,7 +853,7 @@ export function ShellWorkbench() {
           >
             {designs.map((d) => (
               <option key={d.id} value={d.id}>
-                {d.id} · {d.asked} · v{d.current_n} of {d.versions} · plans {d.plans.join(", ")}
+                {d.id} · {d.asked} · v{d.current_n} of {d.versions} · {housesText(d)}
               </option>
             ))}
           </select>
@@ -699,8 +903,8 @@ export function ShellWorkbench() {
             <>
               <p className="gos-sub" data-testid="shell-status">
                 {card.status === "accepted" ? `${GLYPH.ok} accepted as designed` : `${GLYPH.warn} repaired`}
-                {card.theme ? ` · theme ${card.theme}` : ""} · {card.blocks} of {card.max_blocks} blocks · no tile entities, machines' space left
-                clear
+                {card.theme ? ` · theme ${card.theme}` : ""} · {card.blocks} of {card.max_blocks} blocks · no tile entities,{" "}
+                {design?.area != null ? "its floor left clear for your machines" : "machines' space left clear"}
               </p>
               <details className="shell-paste" data-testid="shell-paste">
                 <summary className="gos-label">Export and paste it (Lab only)</summary>

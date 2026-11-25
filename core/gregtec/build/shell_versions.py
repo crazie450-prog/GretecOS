@@ -109,6 +109,11 @@ def clip(text: str, limit: int = MAX_ASKED) -> str:
     return one if len(one) <= limit else one[: limit - 1] + "…"
 
 
+def _area(rec: Mapping[str, Any]) -> dict[str, int]:
+    """A plan-free building's floor area (D424) for its design file, or nothing (plans)."""
+    return {"area": int(rec["fit"]["area"])} if shell_store.free_mode(rec) else {}
+
+
 def _version(
     n: int,
     rec: Mapping[str, Any],
@@ -159,6 +164,7 @@ def _virtual(home: Path, build: str) -> dict[str, Any]:
         "v": VERSION,
         "id": design_id(build),
         "plans": list(rec.get("plans") or []),
+        **_area(rec),
         "created": v["at"],
         "current": build,
         "versions": [v],
@@ -249,6 +255,7 @@ def summary(d: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "id": d["id"],
         "plans": d["plans"],
+        "area": d.get("area"),  # a plan-free building's floor (D424); None on plans
         "current": d["current"],
         "current_n": cur["n"],
         "versions": len(d["versions"]),
@@ -338,6 +345,7 @@ def start(
                 "v": VERSION,
                 "id": ds,
                 "plans": list(rec.get("plans") or []),
+                **_area(rec),
                 "created": v["at"],
                 "current": build,
                 "versions": [v],
@@ -950,7 +958,8 @@ def viewer(conn: sqlite3.Connection | None, home: Path, build: str) -> dict[str,
     """One version for the build guide's 3D viewer (D319's drawing): its cells as ``[x, y, z,
     palette index, -1]`` from the shell's min corner, the palette (``registry@meta``, the
     catalog's name and face colours, role, count), per-layer materials, and the floor plan's
-    machines and keep-outs as ghosts in the same frame. The cells come from the build's own
+    machines and keep-outs as ghosts in the same frame (a plan-free building has none: its
+    ``area`` is set instead, D424). The cells come from the build's own
     files (:func:`gregtec.build.shell_store.cells_of`); the catalog (``conn``, none: no DB yet)
     gives only the names and colours."""
     from gregtec.build import guide_data
@@ -1026,5 +1035,7 @@ def viewer(conn: sqlite3.Connection | None, home: Path, build: str) -> dict[str,
             for y, m in sorted(layers.items())
         ],
         "ghosts": {"machines": machines, "keepouts": keepouts},
+        # a plan-free building's floor (D424): it has no machines, he places them himself
+        "area": int(rec["fit"]["area"]) if shell_store.free_mode(rec) else None,
         "caveats": caveats,
     }

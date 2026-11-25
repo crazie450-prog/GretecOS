@@ -620,6 +620,42 @@ def test_the_routes_take_a_plan_free_building(home: Path) -> None:
             assert j["job"]["status"] == "done", j
             build = j["job"]["result"]["build"]
             assert shell_store.free_mode(shell_store.load(home, build))
+            # the workbench reads its floor from the design and the viewer (stage 3)
+            ds = j["job"]["result"]["design"]
+            listed = c.get("/api/shells/designs", headers=admin).json()["designs"]
+            assert [(d["id"], d["plans"], d["area"]) for d in listed] == [(ds, [], 400)]
+            assert (
+                c.get(f"/api/shells/designs/{ds}", headers=admin).json()["design"][
+                    "area"
+                ]
+                == 400
+            )
+            view = c.get(f"/api/shells/{build}/view", headers=admin).json()
+            assert view["area"] == 400 and view["ghosts"]["machines"] == []
+            # the plot note: the server's own plot, never the dashboard's
+            got = c.get("/api/shells/plot?area=400", headers=admin).json()
+            assert got == {
+                "area": 400,
+                "factor": shell.SITE_FACTOR,
+                "size": list(shell.site_for_area(400).size),
+            }
+            got = c.get(
+                "/api/shells/plot?area=1500&factor=3&headroom=8", headers=admin
+            ).json()
+            assert got["size"] == list(shell.site_for_area(1500, None, 8, 3.0).size)
+            for q, why in (
+                ("area=10", "the area must be"),
+                ("area=6000&factor=6", "190-wide"),
+                ("area=400&factor=9", "the site factor must be"),
+                ("area=400&headroom=99", "headroom must be"),
+            ):
+                r = c.get(f"/api/shells/plot?{q}", headers=admin)
+                assert r.status_code == 400 and why in r.text, (q, r.text)
+            themes = c.get("/api/shells/themes", headers=admin).json()
+            assert themes["plot"] == {
+                "area": list(shell.AREA),
+                "site_factor": [shell.SITE_FACTOR, *shell.SITE_FACTORS],
+            }
             made = c.post(
                 "/api/shells",
                 headers=admin,

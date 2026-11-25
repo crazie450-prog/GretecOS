@@ -35,3 +35,10 @@ export function shellsDelay(seconds: string): void {
   mkdirSync(join(SHELLS_ROOT, "e2e"), { recursive: true });
   writeFileSync(join(SHELLS_ROOT, "e2e", "design_delay"), seconds, "utf-8");
 }
+
+/** The live shell designer's label the shells core reads per request (serve_core.py's
+ * shell_designer, as `[shell] designer` names it, D423): a fake's, a label with no model, or "" for none. */
+export function shellsDesigner(label: string): void {
+  mkdirSync(join(SHELLS_ROOT, "e2e"), { recursive: true });
+  writeFileSync(join(SHELLS_ROOT, "e2e", "shell_designer"), label, "utf-8");
+}

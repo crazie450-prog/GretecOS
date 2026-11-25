@@ -15,6 +15,7 @@ The workbench (WO-10.10, D367-D370):
 | POST /api/shells/designs/{ds}/current   | admin, device         | ``{"build"}``: make that version current (undo is an older one); nothing is deleted |
 | POST /api/shells/jobs                   | admin, device         | ``{"design": {plans, theme?, line_type?, prompt?, max_blocks?, headroom?, mode?, site_factor?, ai?}}`` (``mode`` layout by default, or site; ``{mode: "free", area, ...}`` with no plans is a plan-free building, D424) or ``{"revise": {design?, words, theme?, max_blocks?, headroom?, ai?}}``: a shell job (stages, Cancel; one at a time), GOS's own generator or reviser, no model; with ``ai: true`` the live shell designer draws it (D423: ``[shell] designer``; a design's mode is then site by default; a revise takes words only), a 409 with the why when none is set or it isn't ready |
 | GET  /api/shells/designer               | admin, client, device | the live shell designer (D423): ``{"configured": false}``, or its label, provider, ready and why not, this request's cap and what today leaves (never a model id) |
+| GET  /api/shells/plot?area=&factor=&headroom= | admin, client, device | a plan-free building's plot (D424): ``{"area", "factor", "size": [x, y, z]}`` from :func:`gregtec.build.shell.site_for_area`, or a 400 with the sentence (the workbench's note; it never computes the plot itself) |
 | GET  /api/shells/compare?a=&b=          | admin, client, device | two versions' materials and block counts side by side |
 | GET  /api/shells/{id}/view              | admin, client, device | the 3D viewer's data: cells, palette with the catalog's colours, layers, the floor plan's machines and keep-outs as ghosts |
 
@@ -175,6 +176,18 @@ def _int_or_none(body: dict[str, Any], key: str) -> int | None:
     if isinstance(v, bool) or not isinstance(v, int):
         raise HTTPException(400, f"{key} is a whole number")
     return v
+
+
+def plotted(area: int, factor: float | None, headroom: int | None) -> dict[str, Any]:
+    """A plan-free building's plot for ``area`` (D424), as the design job will size it."""
+    from gregtec.build import shell
+
+    try:
+        f = shell.SITE_FACTOR if factor is None else shell.check_factor(factor)
+        box = shell.site_for_area(shell.check_area(area), None, headroom, f)
+    except shell.ShellError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"area": area, "factor": f, "size": list(box.size)}
 
 
 def designer_ctx(core: "Core") -> "Callable[[], shell_designer.Ctx]":
@@ -559,6 +572,11 @@ def add_routes(
                 "themes": rows,
                 "line_types": list(theme_lib.LINE_TYPES),
                 "limits": {k: list(v) for k, v in shell.LIMITS.items()},
+                # a plan-free building's floor and the plot factor (D424): lowest, highest
+                "plot": {
+                    "area": list(shell.AREA),
+                    "site_factor": [shell.SITE_FACTOR, *shell.SITE_FACTORS],
+                },
                 "problems": [str(p) for p in problems][:20],
             }
 
@@ -603,6 +621,15 @@ def add_routes(
         return await asyncio.to_thread(
             shell_designer.status, core.cfg, core.store, core.ai, core.config_path
         )
+
+    @app.get("/api/shells/plot")
+    async def shell_plot(
+        area: int,
+        who: Anyone,
+        factor: float | None = None,
+        headroom: int | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(plotted, area, factor, headroom)
 
     @app.get("/api/shells/compare")
     async def shell_compare(a: str, b: str, who: Anyone) -> dict[str, Any]:
