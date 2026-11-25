@@ -132,6 +132,28 @@ STATES = [
     *(state("minecraft:planks", m) for m in (1, 5)),
     *(state("minecraft:quartz_block", m) for m in (0, 1)),
     state("minecraft:wool", 20),
+    # the creative bake-off cases' palettes (WO-10.18)
+    *(
+        state(b, m)
+        for b, m in (
+            ("minecraft:brick_block", 0),
+            ("minecraft:dirt", 0),
+            ("minecraft:fence", 0),
+            ("minecraft:glass_pane", 0),
+            ("minecraft:grass", 0),
+            ("minecraft:hardened_clay", 0),
+            ("minecraft:iron_bars", 0),
+            ("minecraft:iron_block", 0),
+            ("minecraft:lapis_block", 0),
+            ("minecraft:mossy_cobblestone", 0),
+            ("minecraft:obsidian", 0),
+            ("minecraft:stone_slab", 4),
+            ("minecraft:stonebrick", 2),
+            ("minecraft:wool", 0),
+        )
+    ),
+    *(state("minecraft:stained_glass", m) for m in (1, 4)),
+    *(state("minecraft:stained_hardened_clay", m) for m in (7, 9, 14)),
     state("minecraft:chest", 0, has_te=True),
     state("gregtech:gt.blockmachines", 0, has_te=True),
 ]

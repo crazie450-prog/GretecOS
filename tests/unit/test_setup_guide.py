@@ -47,7 +47,7 @@ FULL = re.compile(r"(?:&[ \t]+\$gos|uv run gos)[ \t]+([^;|\n]*)")
 # A looser look at the whole text, as test_quick_start.py does: a bare `gos x y` in prose or in
 # quoted program output names a command (and a subcommand) the CLI has.
 BARE = re.compile(r"(?<![\w$.\\-])gos((?:[ \t]+[a-z][a-z0-9_-]*){1,4})")
-# A flag named alone in prose, as in "add `--cap-usd 6`".
+# A flag named alone in prose, as in "add `--cap-usd 30`".
 FLAG = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
 SYNC = re.compile(r"\$sync\b([^;|\n]*)")
 # The names the "paste this first" blocks define; a part that uses one must define it first.
@@ -612,13 +612,13 @@ MUTATIONS = (
     ),
     (
         "an unknown flag named alone in prose",
-        "`--cap-usd 6`",
-        "`--cap-dollars 6`",
+        "`--cap-usd 30`",
+        "`--cap-dollars 30`",
         "the flag --cap-dollars",
     ),
     (
         "a flag of a command the part doesn't run",
-        "`--cap-usd 6`",
+        "`--cap-usd 30`",
         "`--dry-run`",
         "the flag --dry-run",
     ),
@@ -678,7 +678,7 @@ MUTATIONS = (
     ),
     (
         "the flag that skips the question, named in prose",
-        "`--cap-usd 6`",
+        "`--cap-usd 30`",
         "`--yes`",
         "`--yes` answers a paid run's question",
     ),

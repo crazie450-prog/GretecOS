@@ -470,7 +470,9 @@ def test_a_tight_case_allows_a_tenth_over_the_procedural_shell(
 
 def test_the_shipped_cases_load_and_span_what_the_work_order_asks() -> None:
     cases = bo.load_cases()
-    assert len(cases) == 11  # 7, then D425's four big cases
+    # WO-10.18's eight big creative cases: four on plans, then four plan-free (D431)
+    assert len(cases) == 8
+    assert [c.mode for c in cases] == ["site"] * 4 + ["free"] * 4
     assert {c.line for c in cases} == {"small", "large", "none"}
     # varied on purpose (D387): both starter themes, and cases with a palette of their own
     assert {"th-foundry", "th-marble-works", "none"} <= {c.theme for c in cases}
@@ -481,7 +483,9 @@ def test_the_shipped_cases_load_and_span_what_the_work_order_asks() -> None:
         and min(c.headroom or 4 for c in cases) >= 10
     )
     assert all(c.relief for c in cases)
-    assert any(not c.brief for c in cases)  # one from the theme alone
+    # each in words of its own, and none carries a number (D425)
+    assert all(c.brief and not any(ch.isdigit() for ch in c.brief) for c in cases)
+    assert not any(ch.isdigit() for c in cases for ch in c.followup)
     assert all(c.followup and c.expect and c.touches for c in cases)
 
 
@@ -1860,9 +1864,8 @@ def test_gos_shell_bakeoff_with_the_fake_models_start_to_end(
     assert code == 0, text
     assert "Contacts: nothing" in text and "Type yes" not in text  # free: no question
     rid = next(w for w in text.split() if bo.RUN_ID.fullmatch(w))
-    # marble-temple's "no lights": the fakes' site halls have none, so both follow-ups are
-    # refused as changing nothing (D422) and take their two repair rounds
-    assert f"Run {rid}: done. 12 calls, $0.00." in text
+    # clockwork-foundry and deep-anvil: a building and an accepted change each (D431)
+    assert f"Run {rid}: done. 8 calls, $0.00." in text
     assert (
         "fake-" not in text.split("Run " + rid + " (Ctrl+C")[1]
     )  # the progress is blind
@@ -1877,13 +1880,13 @@ def test_gos_shell_bakeoff_with_the_fake_models_start_to_end(
     )
     code, text = gos(toml, "report", rid)
     assert code == 2 and "not rated yet" in text
-    code, text = gos(toml, "rate", rid, "foundry-stacks", "A")
+    code, text = gos(toml, "rate", rid, "clockwork-foundry", "A")
     assert code == 0 and "1 case(s) left" in text
-    code, text = gos(toml, "rate", rid, "foundry-stacks")
+    code, text = gos(toml, "rate", rid, "clockwork-foundry")
     assert code == 2
     code, text = gos(toml, "rate", rid, typed="b\n")  # the rest, asked in turn
-    assert code == 0 and "All rated" in text and "marble-temple" in text
-    assert bo.load(home, rid)["ratings"]["marble-temple"]["pick"] == "B"
+    assert code == 0 and "All rated" in text and "deep-anvil" in text
+    assert bo.load(home, rid)["ratings"]["deep-anvil"]["pick"] == "B"
     code, text = gos(toml, "report", rid)
     assert code == 0 and "| fake-plain | fake |" in text and "free (fake)" in text
     assert (home / "data" / "reports" / f"shell-bakeoff-{rid}.md").is_file()
@@ -2071,14 +2074,13 @@ def test_a_paid_run_gets_no_more_than_the_day_cap_leaves(
         assert "Hard cap for this run: $3.60" in text
         second = bo.load(home, bo.runs(home)[0]["id"])
         assert second["caps"]["usd"] == 3.6 and second["status"] == bo.DONE
-        # marble-temple's "no lights" changes nothing on a site hall with none (D422): its
-        # follow-up is refused and takes its two repair rounds
-        assert code == 0 and "6 calls, $2.70." in text
+        # two buildings and their two accepted changes (D431)
+        assert code == 0 and "4 calls, $1.80." in text
         # a third run asks for more than is left: its cap is lowered to what is left, less
         # than one answer can cost, so it is not run and the day cap holds
         code, text = gos(toml, *argv, "--limit", "2", "--cap-usd", "9")
-        assert "is lowered from $9.00 to that" in text and "leaves $0.90" in text
-        assert "Not run: this run's cap $0.90 is less than one answer" in text
+        assert "is lowered from $9.00 to that" in text and "leaves $1.80" in text
+        assert "Not run: this run's cap $1.80 is less than one answer" in text
         assert bo.runs(home)[0]["id"] == second["id"]
         store = Store(access.db_path(home))
         try:
@@ -2801,11 +2803,12 @@ def test_a_cap_that_cannot_pay_for_one_answer_is_refused_before_a_run_is_made(
         assert code == 1 and "token cap 1,000 is less than one answer can take" in text
         assert bo.runs(home) == [] and api.requests == []
         # a lowered cap that does pay for an answer still runs, and says so in that order
-        toml = toml_for(home, tmp_path, GOOD_TOML + "\n[budget]\nday_max_usd = 2.0\n")
+        # (a big case's follow-up can cost about $1.81 at worst, D431)
+        toml = toml_for(home, tmp_path, GOOD_TOML + "\n[budget]\nday_max_usd = 2.5\n")
         code, text = gos(toml, *argv)
         assert code == 0, text
         assert text.index("this run's cap is lowered from $4.50 to that") < (
-            text.index("Hard cap for this run: $2.00")
+            text.index("Hard cap for this run: $2.50")
         )
         assert text.count("Today's limit") == 1
 
@@ -3257,9 +3260,8 @@ def test_case_tables_default_to_site_and_saved_runs_load_as_layout(
     # every new AI design (D422), and D425's plan-free cases
     assert {c.mode for c in shipped if c.line != "none"} == {"site"}
     # a site case's arrangement options stay at their defaults: the building arranges
-    gothic = next(c for c in shipped if c.id == "gothic-cathedral")
-    assert gothic.layout and gothic.layout_options().spacing == 0
-    assert bo.case_options(gothic.layout, "layout").spacing == 1
+    assert bo.case_options(("spacing=1",), "site").spacing == 0
+    assert bo.case_options(("spacing=1",), "layout").spacing == 1
     head = "\t".join([*bo.COLUMNS, *bo.OPTIONAL])
     row = "c1\tsmall\tth-foundry\tsmelting\tdefault\ta\tb\tchanged\troof\t\t\t\t\t"
     path = tmp_path / "cases.tsv"
@@ -3448,31 +3450,41 @@ def big_case(**changes: Any) -> bo.Case:  # noqa: ANN401
     return site_case(**{**base, **changes})
 
 
-BIG = ("big-foundry-hall", "big-deco-station", "free-warehouse", "free-great-hall")
+# WO-10.18's eight creative cases (D431): every one is big, on plans first, then plan-free
+BIG = (
+    "clockwork-foundry",
+    "deep-anvil",
+    "dynamo-basilica",
+    "anchorage-hall",
+    "leviathan-port",
+    "root-reliquary",
+    "artificer-aerodrome",
+    "gasholder-cathedral",
+)
 
 
 def test_the_big_cases_come_last_with_their_plots_and_targets() -> None:
     cases = bo.load_cases()
-    assert tuple(c.id for c in cases[-4:]) == BIG  # last: a bad request stops a model
-    old, big = cases[:-4], cases[-4:]
-    assert all(
-        (c.site_factor, c.area, c.target) == (None, None, None) and c.mode == "site"
-        for c in old
-    )
-    for c in big:
+    assert (
+        tuple(c.id for c in cases) == BIG
+    )  # plan-free last: a bad request stops a model
+    for c in cases:
         assert c.target is not None and 5_000 < c.target <= 20_000
         assert int(c.max_blocks) == c.target * 5 // 4  # max_blocks is 1.25 x the target
         assert c.expect == ("changed",) and c.touches == set(shell.OPS)
         assert str(c.target) not in c.brief  # code states the number, never the words
-    by = {c.id: c for c in big}
-    assert [(by[i].mode, by[i].site_factor) for i in BIG[:2]] == [
-        ("site", 4.0),
-        ("site", 6.0),
+    by = {c.id: c for c in cases}
+    assert [(by[i].line, by[i].mode, by[i].site_factor) for i in BIG[:4]] == [
+        ("small", "site", 6.0),
+        ("small", "site", 5.0),
+        ("large", "site", 6.0),
+        ("large", "site", 6.0),
     ]
-    assert all(by[i].line == "large" for i in BIG[:2])
-    assert [(by[i].line, by[i].area, by[i].target) for i in BIG[2:]] == [
-        ("none", 2_000, 12_000),
-        ("none", 3_000, 20_000),
+    assert [(by[i].line, by[i].mode, by[i].area, by[i].target) for i in BIG[4:]] == [
+        ("none", "free", 3_000, 13_000),
+        ("none", "free", 6_000, 17_000),
+        ("none", "free", 6_000, 16_000),
+        ("none", "free", 6_000, 20_000),
     ]
 
 
@@ -3865,19 +3877,19 @@ def test_gos_shell_bakeoff_run_only_names_its_cases(home: Path, tmp_path: Path) 
         "--models",
         "fake-plain",
         "--only",
-        "free-warehouse,nope",
+        "leviathan-port,nope",
     )
     assert code == 2 and "Not run: no case nope in the case table" in text
     assert "Nothing is spent" in text and bo.runs(home) == []
     code, text = gos(toml, "run", "pl-steel", "--models", "fake-plain", "--only", " , ")
     assert code == 2 and "--only names no case" in text
     code, text = gos(
-        toml, "run", "pl-steel", "--models", "fake-plain", "--only", "free-warehouse"
+        toml, "run", "pl-steel", "--models", "fake-plain", "--only", "leviathan-port"
     )
     assert code == 0, text
     assert "Bake-off: 1 cases x 1 models" in text
     assert (
-        "free-warehouse aims at about 12,000 blocks: at most 32000 output tokens"
+        "leviathan-port aims at about 13,000 blocks: at most 32000 output tokens"
         in text
     )
     rid = next(w for w in text.split() if bo.RUN_ID.fullmatch(w))
@@ -3885,11 +3897,45 @@ def test_gos_shell_bakeoff_run_only_names_its_cases(home: Path, tmp_path: Path) 
     assert (
         code == 0
         and (
-            "free-warehouse (th-marble-works, plan-free, at least 2,000 floor, aim about "
-            "12,000 blocks, max 15000 blocks)"
+            "leviathan-port (none, plan-free, at least 3,000 floor, aim about "
+            "13,000 blocks, max 16250 blocks)"
         )
         in text
     )
+
+
+def test_a_run_of_the_old_table_still_shows_rates_and_reports(
+    home: Path, tmp_path: Path
+) -> None:
+    # D431 replaced the table; a run keeps its own cases in run.json, so one made with a case
+    # the table no longer has (WO-10.14's foundry-stacks) reads as before
+    old = tmp_path / "old.tsv"
+    old.write_text(
+        "\t".join([*bo.COLUMNS, *bo.OPTIONAL[:5]]) + "\n"
+        "foundry-stacks\tsmall\tth-foundry\tsmelting\tdefault\ta brutal foundry crowned by "
+        "a row of tall round chimney stacks\tmake it taller\tchanged\t"
+        "script,walls,pillars,windows,roof,lights,fill,frame,clear\t12\t4\t\tmax_run=40\n",
+        encoding="utf-8",
+    )
+    assert "foundry-stacks" not in {c.id for c in bo.load_cases()}
+    toml = toml_for(home, tmp_path)
+    code, text = gos(
+        toml,
+        "run",
+        "pl-steel",
+        "--models",
+        "fake-plain,fake-ornate",
+        "--cases",
+        str(old),
+    )
+    assert code == 0, text
+    rid = next(w for w in text.split() if bo.RUN_ID.fullmatch(w))
+    code, text = gos(toml, "show", rid)
+    assert code == 0 and "foundry-stacks (th-foundry, small line, max " in text
+    code, text = gos(toml, "rate", rid, "foundry-stacks", "A")
+    assert code == 0 and "0 case(s) left" in text
+    code, text = gos(toml, "report", rid)
+    assert code == 0 and "foundry-stacks" in text
 
 
 def test_the_live_designer_s_large_rule_picks_exactly_the_big_cases(
@@ -3897,9 +3943,14 @@ def test_the_live_designer_s_large_rule_picks_exactly_the_big_cases(
 ) -> None:
     # D429: a live request is large when GOS's own procedural building for it (the preview the
     # bake-off reports as its baseline) passes BIG_PREVIEW blocks and max_blocks passes 5,000;
-    # on the cases that is exactly the cases whose target passes 5,000 (D425)
+    # on the cases that is exactly the cases whose target passes 5,000 (D425); every shipped
+    # case is big since D431, so standard site cases at the default plot stand in for the rest
     vault = VaultIO(home / "vault")
-    for p in bo.prepare(conn, home, vault, bo.load_cases(), PLANS):
+    standard = [
+        one_case(id=f"std-{line}", line=line, mode="site", headroom=16)
+        for line in ("small", "large")
+    ]
+    for p in bo.prepare(conn, home, vault, [*bo.load_cases(), *standard], PLANS):
         want = p.case.target is not None and p.case.target > shell_brief.BIG_TARGET
         assert shell_brief.big_request(p.baseline, p.max_blocks) == want, (
             p.case.id,

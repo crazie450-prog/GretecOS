@@ -150,8 +150,9 @@ def echo(target: int | None) -> int:
 
 # A live request has no target (D429): it is large when GOS's own procedural building for it
 # passes BIG_PREVIEW blocks (the plot, sized from the machines or the floor area, is what makes
-# a building big, D425). On the bake-off's cases the standard ones' previews are 1,131 to 1,483
-# blocks and the four big cases' 2,399 to 9,771 (test_shell_bakeoff checks the split).
+# a building big, D425). On the bake-off's old cases the standard ones' previews were 1,131 to
+# 1,483 blocks and the four big cases' 2,399 to 9,771; D431's eight are all big, 2,071 to 17,323
+# (test_shell_bakeoff checks the split, standard site cases standing in for the rest).
 BIG_PREVIEW = 2_000
 
 

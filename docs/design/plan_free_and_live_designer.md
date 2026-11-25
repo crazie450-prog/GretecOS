@@ -490,6 +490,8 @@ They never call `_program`, `_site_cells`, `_refit` or `_check_site`. Audit ever
 
 ### 4.3 The four cases
 
+> **Superseded (WO-10.18, D431, 2026-11-25):** Clayton replaced the whole case table with eight creative big cases (four on plans, four plan-free; steampunk, floating islands, fantasy-punk, industrial). The case lists, ids and `--only` commands in §4.3 and §4.6 are the WO-10.17 table, kept as written; the current table and its costs are in `docs/runbooks/shell_bakeoff.md` section K.
+
 They are appended last, so a big case can never stop a run before the 7 known cases are done (a `bad_request` stops that model for the rest of the run, D378). Their themes and palettes come from the shipped rows. `expect` is "changed" and `touches` is the full op list, as in the existing rows. Layout options are empty (site cases reset them anyway, `case_options` :434-439).
 
 | id | line | theme / line_type | mode | factor | area | headroom | target | max_blocks | plot on fixtures | rough hollow shell |
