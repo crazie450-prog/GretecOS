@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from gregtec.agents.route_review import Reviewer
 
 LATEST = Path("data", "plans", "designer.json")  # in GOS_HOME
-REVIEWS = Path("data", "plans", "reviews")  # the route reviewer's records (D389 (7))
+REVIEWS = Path("data", "plans", "reviews")  # the route reviewer's records (D427 (7))
 LINES = "base/lines"
 NAME_MAX = 80
 # One design, pin, accept or rename at a time per process; re-entrant so a power or shell
@@ -181,7 +181,7 @@ SPEC_KEYS = frozenset(
 
 
 def wants_review(spec: Mapping[str, Any]) -> bool:
-    """Whether the spec turns the route reviewer on (D389 (7): off unless ``review`` is
+    """Whether the spec turns the route reviewer on (D427 (7): off unless ``review`` is
     true). The toggle is the Designer's, not the request's, so plan ids don't change."""
     review = spec.get("review", False)
     if not isinstance(review, bool):
@@ -194,10 +194,10 @@ def request_from_spec(
 ) -> Request | prefetch.Clarify:
     """A request from the Designer's form or ``design_production``'s spec: ``target`` (words
     or a key), ``rate`` ("2/s", "30/min") or ``batch`` (a quantity, with ``within`` "2h"; with
-    neither, a batch of :data:`~gregtec.planner.request.DEFAULT_BATCH`, D389 (5)),
+    neither, a batch of :data:`~gregtec.planner.request.DEFAULT_BATCH`, D427 (5)),
     ``tier`` (LV..MAX, else My base's), ``routes`` (1-3), ``addons`` (bool), ``pins``
     ([{node, recipe}]), ``simplest`` (bool, default true here: the simplest route beside the
-    ranked ones, D389 (4)), ``review`` (bool, default false: :func:`wants_review`, never
+    ranked ones, D427 (4)), ``review`` (bool, default false: :func:`wants_review`, never
     in the request). An unclear target gives the clarifying question instead."""
     unknown = set(spec) - SPEC_KEYS
     if unknown:
@@ -230,7 +230,7 @@ def request_from_spec(
                 raise DesignerError("a batch is a quantity, without /s, /min or /h")
             within = parse_duration(str(spec["within"])) if spec.get("within") else None
             return Request(found.key, mode="batch", qty=qty, within_s=within, **common)
-        if spec.get("rate") in (None, ""):  # no amount: a batch of 64 (D389 (5))
+        if spec.get("rate") in (None, ""):  # no amount: a batch of 64 (D427 (5))
             within = parse_duration(str(spec["within"])) if spec.get("within") else None
             return Request(
                 found.key, mode="batch", qty=DEFAULT_BATCH, within_s=within, **common
@@ -296,7 +296,7 @@ def design(
     home: Path, request: Request, *, reviewer: Reviewer | None = None
 ) -> Designed:
     """Solve, rank and save every route of ``request`` (see the module docstring). With
-    ``reviewer`` (the toggle, D389 (7)) the route reviewer reads the ranked routes first; its
+    ``reviewer`` (the toggle, D427 (7)) the route reviewer reads the ranked routes first; its
     re-runs are solved in memory, so a cancel still saves nothing (D353). Its reviewed route,
     when it made one, is saved as an extra column beside the planner's own routes, and its
     record goes to ``data/plans/reviews/<the top route's id>.json``.
@@ -497,7 +497,7 @@ def _also_simplest(p: Mapping[str, Any]) -> bool:
 def _shown(plans: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """The routes the comparison card holds (at most 6, the catalog's limit, D411 (4)): the
     top 3 base routes in rank order, then the addon column (D12), the reviewed route
-    (D389 (7)) and the simplest route (D389 (4)), each when the design has it. A base route
+    (D427 (7)) and the simplest route (D427 (4)), each when the design has it. A base route
     that is also the simplest stays one base column (``route.simplest``)."""
     base = [p for p in plans if _column(p) == "base"][:3]
     extras: list[Mapping[str, Any]] = []
@@ -660,7 +660,7 @@ def view(home: Path, pid: str) -> dict[str, Any]:
                 "pins": p.get("pins") or [],
                 "nodes": [_node(n, b) for n in p.get("nodes") or ()],
                 "warnings": p.get("warnings") or [],
-                "review": p.get("review"),  # the reviewed route's changes (D389 (7))
+                "review": p.get("review"),  # the reviewed route's changes (D427 (7))
                 "affected": flags.get(p["id"]),
                 # every route's comparison metrics and differing choices, against all the
                 # design's routes (the card holds at most 6 of them)
@@ -673,7 +673,7 @@ def view(home: Path, pid: str) -> dict[str, Any]:
     return {
         "id": pid,
         "weights": rank.describe(prefs),
-        # the route reviewer's last record for these routes (D389 (7)), whatever it did
+        # the route reviewer's last record for these routes (D427 (7)), whatever it did
         "review": review_record(home, plans[0]["id"]) if plans else None,
         "routes": routes,
         "comparison": comparison_card(plans, books, statuses, rank.describe(prefs)),

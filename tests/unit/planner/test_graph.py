@@ -492,7 +492,7 @@ def test_default_base_inputs(tmp_path: Path) -> None:
         assert base.tier_cap() == 3
         assert base.owned_machines() == {} and base.stock() == {}
         assert base.line_outputs() == {}  # D63: nothing stocked by default
-        assert base.dimensions() == ALWAYS_DIMENSIONS  # no quests (D389 (2))
+        assert base.dimensions() == ALWAYS_DIMENSIONS  # no quests (D427 (2))
         assert isinstance(base, BaseInputs) and isinstance(Base(), BaseInputs)
     finally:
         c.close()

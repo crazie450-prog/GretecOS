@@ -407,7 +407,7 @@ def tracked_player(conn: sqlite3.Connection) -> str:
 def reachable_dimensions(
     conn: sqlite3.Connection, unlocks: Path = DIMENSION_UNLOCKS
 ) -> frozenset[str]:
-    """The dimensions the tracked player can reach (D389 (2)): the Overworld and the Nether,
+    """The dimensions the tracked player can reach (D427 (2)): the Overworld and the Nether,
     and each dimension of ``data/curated/dimension_unlocks.tsv`` one of whose quests he has
     completed. Read at plan time from ``quest_state``; with no quests loaded, the two."""
     rows = bq.read_dimension_unlocks(unlocks)

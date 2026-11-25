@@ -2,7 +2,7 @@
 # takes from the world (a pump, an intake), although GT also has recipes that make them as a
 # byproduct. Read by gregtec.planner.graph; keys are stable keys (registry@meta or fluid:<name>),
 # never numeric ids. Keep it short: anything listed here is never planned as a recipe output.
-# source (WO-3.10 F2, D389): world, pump, mob, crop, or dimension:<name> (a dimension name as
+# source (WO-3.10 F2, D427): world, pump, mob, crop, or dimension:<name> (a dimension name as
 # GT's ore mixes spell it; data/curated/dimension_unlocks.tsv says when it is reachable). A row
 # whose dimension isn't reachable rejects every recipe that consumes it.
 key	source	note

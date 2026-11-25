@@ -195,7 +195,7 @@ secret: recipe ids and item keys only.
 
 Neither change touches `gtmath/`, ranking, the solver or the machine model.
 
-## 5. Proposed fixes (approved in D389; F1 built, D390; F2 built, D391; F3 built, D393, reviewed D394; F4 built, D395, reviewed D396; F7 built, D401, reviewed D402)
+## 5. Proposed fixes (approved in D427; F1 built, D390; F2 built, D391; F3 built, D393, reviewed D394; F4 built, D395, reviewed D396; F7 built, D401, reviewed D402)
 
 Each item is deterministic, uses only data GOS has (or a curated table, like `raw_inputs.tsv`
 and `scarcity.tsv`), and comes with tests. The steel-at-MV acceptance test above is the shared
@@ -216,7 +216,7 @@ recipes as valid candidates. *Question 1 decides whether the planner offers it a
 ore mixes and the curated table's new `source` column; the Steeleaf nugget is
 `dimension:Twilight Forest`, so on the harness the Steeleaf alloy smelter recipe is rejected and
 the top steel plan imports the locked Steeleaf ingot until F4; unknown raws are warned. No
-`me/prefs.md` list: D389 (2) says the quest book decides.* At graph build, each `raw` item gets a *source*:
+`me/prefs.md` list: D427 (2) says the quest book decides.* At graph build, each `raw` item gets a *source*:
 
 - `vein:<dims>` when it is an ore block in `ore_mix` (layers' `item`/`meta`): kept only if one
   of its dimensions is reachable;
@@ -280,7 +280,7 @@ ETA reported, instead of 1/s. Or the default rate becomes a smaller one, Clayton
 (Question 5). Either way the plan's name already shows the rate ("· 1/s ·"); the Designer should
 put it in front of him before solving. Tests: request defaults, CLI default.
 
-**F7. The route reviewer (§6, D389 (7)).** *Built (D401): a per-request toggle, off by default
+**F7. The route reviewer (§6, D427 (7)).** *Built (D401): a per-request toggle, off by default
 (`review: true` in the Designer spec and form, `gos plan --review`; never in the request, never
 offered to `design_production`). A model reviews the ranked routes with five tools
 (`alternatives`, `propose_constraints`, `propose_pin`, `escalate`, `finish`), at most 8 calls, 4
@@ -320,7 +320,7 @@ recommend it.
 
 ## 7. Questions for Clayton
 
-**Answered 2026-11-23: D389.** In short: Bricked Blast Furnace alongside the EBF; dimensions from the
+**Answered 2026-11-23: D427.** In short: Bricked Blast Furnace alongside the EBF; dimensions from the
 quest book; sourcing before tier; simplest route as an extra option; a batch by default; unknown
 raws warned and ranked last; a model route reviewer as a per-request toggle (Sonnet, escalating to
 Opus) that may request re-runs and edit a route, and says when it did.

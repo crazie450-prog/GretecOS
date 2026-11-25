@@ -397,7 +397,7 @@ class MyBase:
                 owned_machines(conn),
                 {s.key: s.qty for s in stock(conn)},
                 ledger.line_outputs(conn),  # running lines (WO-4.4)
-                quest_db.reachable_dimensions(conn),  # D389 (2)
+                quest_db.reachable_dimensions(conn),  # D427 (2)
             )
 
     def tier_cap(self) -> int:
@@ -417,7 +417,7 @@ class MyBase:
         return dict(self.lines)
 
     def dimensions(self) -> frozenset[str]:
-        """The dimensions he can reach (D389 (2))."""
+        """The dimensions he can reach (D427 (2))."""
         return self.dims
 
 

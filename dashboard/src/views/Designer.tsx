@@ -95,7 +95,7 @@ function DesignForm(props: { busy: boolean; onDesign: (spec: DesignSpec) => void
   const submit = (e: FormEvent): void => {
     e.preventDefault();
     if (!target.trim()) return;
-    // A rate has a "/" (2/s); a plain number is a batch; nothing is the server's batch of 64 (D389 (5)).
+    // A rate has a "/" (2/s); a plain number is a batch; nothing is the server's batch of 64 (D427 (5)).
     const a = amount.trim();
     props.onDesign({
       target: target.trim(),

@@ -18,7 +18,7 @@ choices), never the plan id: that hashes the request, whose flags (``simplest``,
 reviewer's toggle ...) would then swap exactly tied routes (D404 (8)). The plan id is only
 the last resort, for routes with the same recipes and choices. Nothing depends on dict or set
 order. The base routes are ranked among themselves; the simplest route
-(D389 (4)) and the addon route (D12) each get a score against the base routes and themselves,
+(D427 (4)) and the addon route (D12) each get a score against the base routes and themselves,
 and keep their own columns after them (simplest, then addon), so the base order never changes.
 
 **Weights** live in the vault's ``me/prefs.md`` (§6.2 grammar, read only here; never written):
@@ -73,7 +73,7 @@ POWER_LABELS = {
 }
 POWER_MODES = ("best", "max_output", "output_per_effort", "self_sustaining")
 DIGITS = 9
-# Columns beside the ranked base routes, in the order they follow them (D389 (4), D12).
+# Columns beside the ranked base routes, in the order they follow them (D427 (4), D12).
 EXTRA_COLUMNS = ("simplest", "addon")
 PREFS = Path("me") / "prefs.md"
 _LINE = re.compile(r"([a-z_]+):\s*(.*?)\s*")
@@ -284,7 +284,7 @@ def against(
 ) -> dict[str, Any]:
     """``plan``'s rank as an extra ``column`` beside the ranked ``base`` routes (their
     ``metrics``): scored against them as the addon column is, never moving one (the route
-    reviewer's column, D389 (7))."""
+    reviewer's column, D427 (7))."""
     vals = [
         values(p["metrics"]) for p in base if p["rank"]["column"] not in EXTRA_COLUMNS
     ]

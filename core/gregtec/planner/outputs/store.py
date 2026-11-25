@@ -132,7 +132,7 @@ def note_body(plan: Mapping[str, Any], book: Book, status: str) -> str:
             )
         )
     rv = plan.get("review")
-    if rv:  # D389 (7): say what the route reviewer changed, and whether it edited
+    if rv:  # D427 (7): say what the route reviewer changed, and whether it edited
         what = "edited" if rv.get("edited") else "re-run"
         facts.append(
             (

@@ -1,4 +1,4 @@
-# Reachable dimensions (D389 (2)): the quests that show the player can reach a dimension beyond
+# Reachable dimensions (D427 (2)): the quests that show the player can reach a dimension beyond
 # the Overworld and the Nether (always reachable). Read by gregtec.ingest.quests.
 # read_dimension_unlocks; any completed quest of a dimension's rows unlocks it. A raw input only
 # that dimension's ore mixes (or a curated dimension source) give is rejected until then.

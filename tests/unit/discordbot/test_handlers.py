@@ -669,7 +669,7 @@ def test_a_deep_task_the_core_lost_says_so(core: FakeCore) -> None:
 
 
 def test_a_plan_reply_names_the_simplest_route() -> None:
-    """D389 (4): the simplest route's own column, or the ranked route that is also it."""
+    """D427 (4): the simplest route's own column, or the ranked route that is also it."""
     from .fakes import SETTINGS
 
     def row(column: str, position: int, simplest: bool = False) -> dict[str, Any]:

@@ -52,7 +52,7 @@ def test_design_production_ranks_and_saves(run: Runner, home: Path) -> None:
     assert any(n.startswith("explanation (template") for n in p.notes)
     assert all(r["differs"] != "-" for r in p.rows)
     assert designer.latest(home) == ids
-    # D389 (4): the simplest route (on by default) is a ranked route here, and says so
+    # D427 (4): the simplest route (on by default) is a ranked route here, and says so
     assert [c for c in p.col("column") if "simplest" in c] == ["base, simplest"]
     marked = ids[p.col("column").index("base, simplest")]
     summary = run("plan_get", id=f"plan:{marked}", view="summary")
@@ -79,7 +79,7 @@ def test_plan_get_views_and_pin(run: Runner) -> None:
     summary = run("plan_get", id=f"plan:{ids[0]}", view="summary")
     assert summary.head["plan"] == f"plan:{ids[0]}"
     assert summary.head["status"] == "proposed" and summary.head["pins"] == "none"
-    # no amount: a batch of 64, and the summary says its ETA (D389 (5))
+    # no amount: a batch of 64, and the summary says its ETA (D427 (5))
     assert summary.head["batch"] == "64" and float(summary.head["eta_s"]) > 0
     views = {i: run("plan_get", id=i, view="nodes") for i in ids}
     assert all(r["recipe"].startswith("r:") for v in views.values() for r in v.rows)

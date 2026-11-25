@@ -358,7 +358,7 @@ class Effort:
             positive(b.owned_machines()),
             positive(b.stock()),
             positive(b.line_outputs()),
-            tuple(sorted(b.dimensions())),  # D389 (2)
+            tuple(sorted(b.dimensions())),  # D427 (2)
         )
         tpl = chains.load() if self.templates is None else self.templates
         # The raw sources: the curated table and the ore mixes, which `gos ores load`

@@ -978,7 +978,7 @@ def test_the_curated_tier_quests() -> None:
     assert all(k.name for k in keys)
 
 
-# --- reachable dimensions (D389 (2)) ---------------------------------------------------------
+# --- reachable dimensions (D427 (2)) ---------------------------------------------------------
 
 UNLOCK_HEAD = "dimension\tquest\tname\tnote\n"
 Q1, Q2 = "AAAAAAAAAAAAAAAAAAAABA", "AAAAAAAAAAAAAAAAAAAACA"

@@ -1,4 +1,4 @@
-"""GT's primitive machines in the graph (WO-3.10 F1, D389 (1), D390), on the WO-3.3 fixture DB
+"""GT's primitive machines in the graph (WO-3.10 F1, D427 (1), D390), on the WO-3.3 fixture DB
 (tests/unit/planner/test_graph.py) plus one made-up Bricked Blast Furnace and its EU-less recipe
 for Widget. Every item, recipe and machine is made up; no pack data.
 

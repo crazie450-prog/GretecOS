@@ -3,7 +3,7 @@
 VERDICT: derived-interior wins. The final design below takes its core (the model only builds, GOS derives the floor and fits the machines) and grafts on three pieces: optional zones from rooms-placer, the `prior` pass and `extra_open` reach from rooms-placer, and the program/site split and compile-once gate from model-places. Model-placed pins are left out of this PR (Q6).
 
 Checked in the repo for this review:
-- docs/decisions.md ends at D421, and D389 is used twice (L299 and L301). The new entry is D422, and the PR should mention the clash.
+- docs/decisions.md ends at D421, and D389 is used twice (L299 and L301). The new entry is D422, and the PR should mention the clash. (Since renumbered: the WO-3.10 pair is D426 and D427, D428.)
 - D385 limits the sandbox script to shell geometry.
 - D386 records Clayton saying "don't worry about practicality", "the quicker we can [get to testing], the better", and that the procedural generator is being phased out.
 - shell_bakeoff.REPAIR_ROUNDS = 2 (L120). shell_brief.PROMPT_VERSION = 5.
@@ -141,7 +141,7 @@ Checked in the repo for this review:
     - `gos shell refit BUILD`;
     - `gos shell design --mode site|layout`;
     - help text.
-17. `docs/decisions.md`: D422, partly superseding D316 (interior/origin), D317 (repair does not apply to fit refusals), D368 and D389. Note the duplicate D389 id. Also the plan §8 WO line.
+17. `docs/decisions.md`: D422, partly superseding D316 (interior/origin), D317 (repair does not apply to fit refusals), D368 and D389. Note the duplicate D389 id (since renumbered, D428). Also the plan §8 WO line.
 
 No dashboard or TS changes: layout.json and the ghost shapes are unchanged. The Designer copy and a `/api/shells/{build}/layout` route are a follow-up.
 
@@ -413,7 +413,7 @@ It is large for one PR, so review it commit by commit (§2.1).
 7. When a revise or new footprint data would move machines already built: keep valid old positions (proposed `prior`), and should export refuse and offer `gos shell refit` (proposed) or refit automatically?
 8. Low-ceiling buildings: refuse when no ceiling over open floor is chase-high (proposed), or make the cable chase optional (a schema change)?
 9. Should the No-AI procedural shell stay layout-first (proposed; D386 phases it out), and should new AI designs default to site mode immediately?
-10. Approve D422 superseding parts of D316, D317, D368 and D389, and renumbering or noting the duplicate D389.
+10. Approve D422 superseding parts of D316, D317, D368 and D389, and renumbering or noting the duplicate D389 (renumbered by D428).
 
 Paths:
 - /home/user/GretecOS/core/gregtec/build/layout.py

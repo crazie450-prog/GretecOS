@@ -6,7 +6,7 @@ choice and the whole design re-runs, D61), WO-3.2's machine for each recipe (:mo
 the staged MILP (:mod:`.solve`) for up to ``request.routes`` routes differing in a primary
 choice, and with ``machines: base+addons`` the best route on addon machines for the
 side-by-side column (D12), which lists the ``machine_fact`` confidence of each addon machine.
-With ``simplest`` (D389 (4)) it adds the **simplest route**: every primary node on its first
+With ``simplest`` (D427 (4)) it adds the **simplest route**: every primary node on its first
 candidate in the graph's heuristic order (pins kept), solved by the same staged MILP, as a
 ``simplest`` column after the base routes; when a base route already uses exactly its recipes,
 that route gets ``route.simplest: true`` instead of a copy. The ranking is unchanged.
@@ -242,7 +242,7 @@ def _add_simplest(
     built: list[dict[str, Any]],
     hand_fed_s: float = effort.HAND_FED_S,
 ) -> None:
-    """The simplest route (D389 (4)): each primary node's first candidate, pins kept. Added
+    """The simplest route (D427 (4)): each primary node's first candidate, pins kept. Added
     as its own column, or flagged on the base route that already has exactly its recipes."""
     pins = dict(net.pinned)
     first = {k: opts[0] for k, opts in net.choices if k not in pins}
@@ -355,7 +355,7 @@ def _sizes(size: sizing.NodeSize) -> dict[str, Any]:
 def _import_warnings(g: Graph, flow: solve.Flow) -> list[str]:
     """One warning per import the plan takes without making or sourcing it: a locked or
     depth boundary (a gate to the solver, WO-3.10 F4), a raw input GOS knows no
-    source for (no ore mix, not curated: D389 (6)), or a gated intermediate (an item the
+    source for (no ore mix, not curated: D427 (6)), or a gated intermediate (an item the
     route makes, imported as well)."""
     kind = {i.id: i.boundary for i in g.items}
     src = {i.id: i.source for i in g.items}
@@ -368,7 +368,7 @@ def _import_warnings(g: Graph, flow: solve.Flow) -> list[str]:
             out.append(
                 f"imports {k} ({b}: {_NOT_SOURCED[b]}); the plan doesn't make it"
             )
-        elif b == "raw" and src.get(k) is None:  # D389 (6): allowed, but warned
+        elif b == "raw" and src.get(k) is None:  # D427 (6): allowed, but warned
             out.append(
                 f"imports {k} (raw: no recipe makes it and GOS has no source for it);"
                 " check where it comes from"

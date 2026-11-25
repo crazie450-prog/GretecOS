@@ -148,7 +148,7 @@ def test_addon_column_comes_last_scored_against_the_base_routes() -> None:
 
 
 def test_simplest_column_follows_the_base_routes_before_the_addon_column() -> None:
-    """D389 (4): the simplest route is scored like the addon column; the base order holds."""
+    """D427 (4): the simplest route is scored like the addon column; the base order holds."""
     base = [plan("pl-b", machines=20), plan("pl-a", machines=10)]
     alone = [p["rank"] for p in rank.order([dict(p) for p in base])]
     simplest = plan("pl-1", machines=4, column="simplest")
