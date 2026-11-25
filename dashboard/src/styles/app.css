@@ -3091,6 +3091,31 @@ select.ask-input option {
   stroke-opacity: 0.7;
 }
 
+/* The shell viewer's WebGL drawing (WO-10.19, D433): the canvas and the ghosts' SVG overlay fill
+   the same box, the overlay on top; the background is the scene's own --bg. */
+.guide-scene.gl {
+  position: relative;
+  overflow: hidden;
+}
+
+.guide-scene.gl > .guide-gl,
+.guide-scene.gl > .guide-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.guide-gl canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.guide-overlay {
+  pointer-events: none;
+}
+
 .shell-compare-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

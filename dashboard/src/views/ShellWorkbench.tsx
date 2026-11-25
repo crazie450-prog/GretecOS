@@ -34,7 +34,7 @@ import type { ShellCard } from "../cards/types.gen";
 import { JobProgress, useDesignJob } from "../components/JobProgress";
 import { Button, CitationChip, Panel } from "../components/core";
 import { GLYPH } from "../state/states";
-import { Scene } from "./BuildGuide";
+import { GLScene } from "./GLScene";
 import type { GhostBox, Vec } from "./guideMesh";
 
 const message = (e: unknown): string => (e instanceof ApiError ? e.message : String(e));
@@ -237,7 +237,7 @@ function ShellScene3DInner(props: Scene3DProps) {
   const name = (k: string) => scene.palette.find((p) => p.block === k)?.name ?? "—";
   return (
     <div className="shell-scene" data-testid={`${prefix}-view`} data-build={scene.build}>
-      <Scene {...sceneProps(scene, at, ghosts, prefix)} />
+      <GLScene {...sceneProps(scene, at, ghosts, prefix)} />
       <label className="guide-layer">
         <span className="gos-label">
           Layer {at + 1} of {top + 1}

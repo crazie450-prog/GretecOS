@@ -130,8 +130,13 @@ export function project(cells: GuideCell[], size: Vec, upTo: number, view: ViewA
     }
   }
   polys.sort((a, b) => a.depth - b.depth || a.cell - b.cell);
-  // The box holds every corner of the whole structure, so the drawing doesn't jump as the layer
-  // slider moves.
+  return { polys, box: structureBox(size, view) };
+}
+
+/** The viewBox that holds every corner of the whole structure, so the drawing doesn't jump as the
+ * layer slider moves (WO-10.19: the WebGL viewer fits the same box, without projecting a face). */
+export function structureBox(size: Vec, view: ViewAngle): Drawing["box"] {
+  const centre: Vec = [size[0] / 2, size[1] / 2, size[2] / 2];
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -146,7 +151,7 @@ export function project(cells: GuideCell[], size: Vec, upTo: number, view: ViewA
         maxY = Math.max(maxY, -py);
       }
   const pad = 0.5;
-  return { polys, box: [minX - pad, minY - pad, maxX - minX + 2 * pad, maxY - minY + 2 * pad] };
+  return [minX - pad, minY - pad, maxX - minX + 2 * pad, maxY - minY + 2 * pad];
 }
 
 /** Which of NORMALS ``v`` is (the controller's front, from the core), or -1. */
