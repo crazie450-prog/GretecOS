@@ -33,7 +33,7 @@
 | [budget] notice_pct      | [50]: a heads-up, no buttons (D334)      | cost watch (WO-11.2)        |
 | [shell] designer         | none: the architect writes the design    | live shell designer (D423)  |
 | [shell] designer_max_usd | 4.0 a request, every try (0.5 to 20)     | live shell designer (D423)  |
-| [shell] designer_big_max_usd | 6.0 a large request (0.5 to 20; never below designer_max_usd) | live shell designer (D429) |
+| [shell] designer_big_max_usd | 6.0 a large request (0.5 to 20; never below designer_max_usd; unset with designer_max_usd lowered below 4.0: that) | live shell designer (D429) |
 | [models] orchestrator, planner, architect, analyst, heavy | plan 4.4's models | deep lane (D155) |
 | [models] vision          | claude-sonnet-5-5 (plan 7.7)             | screen lane (WO-8.2, D289)  |
 | [models] use_heavy       | false (planner and architect on heavy)   | deep lane (D155)            |
@@ -224,10 +224,11 @@ class Config:
     notice_pct: tuple[int, ...] = (50,)  # [budget]: heads-up percentages (D334)
     # [shell] (D423): the [[bakeoff.models]] label that draws AI shell designs ("": the
     # architect writes them) and what one request may spend, every try counted; a large
-    # request (32,000-token answers, D429) may spend the larger of the two caps
+    # request (32,000-token answers, D429) may spend the larger of the two caps (None: unset,
+    # see shell_designer.cap_of)
     shell_designer: str = ""
     shell_designer_max_usd: float = 4.0
-    shell_designer_big_max_usd: float = 6.0
+    shell_designer_big_max_usd: float | None = None
     # [models] (plan 4.4, Appendix C): the deep lane's orchestrator and subagents (D155)
     model_orchestrator: str = "claude-sonnet-5-5"
     model_planner: str = "claude-opus-5-5"
@@ -659,8 +660,10 @@ def _service_keys(data: Mapping[str, Any], defaults: Config) -> dict[str, Any]:
             defaults.shell_designer_max_usd,
         ),
         "shell_designer_big_max_usd": soft(
-            lambda: _shell_cap(
-                shell_table, defaults.shell_designer_big_max_usd, "designer_big_max_usd"
+            lambda: (
+                _shell_cap(shell_table, 6.0, "designer_big_max_usd")
+                if "designer_big_max_usd" in shell_table
+                else None
             ),
             defaults.shell_designer_big_max_usd,
         ),

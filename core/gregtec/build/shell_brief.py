@@ -62,8 +62,8 @@ if TYPE_CHECKING:
 #    and site modes keep v5's and v6's texts, word for word.
 # 8: site mode: the door's way out is kept clear through the relief zone too, as v7 asks of a
 #    plan-free door (WO-10.18). One sentence on from v6; layout and free keep v5 and v7.
-PROMPT_VERSION = 7
-PROMPT_VERSIONS = {"layout": 5, "site": 8, "free": PROMPT_VERSION}
+# Each mode has its own version: the newest number is not every mode's.
+PROMPT_VERSIONS = {"layout": 5, "site": 8, "free": 7}
 MODES = tuple(PROMPT_VERSIONS)
 # What the vocabulary is, in the words build_request's own description uses (its tool adds how
 # to ask for GOS's procedural shell; gregtec.agents.tools.shells.VOCABULARY).

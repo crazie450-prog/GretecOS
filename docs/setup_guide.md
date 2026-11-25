@@ -1647,9 +1647,9 @@ If not:
 
 | It says | What to do |
 |---|---|
-| `case foundry-small can't be set up: [Errno 2] No such file or directory: ...` | the id in `$plan` is not a saved plan. Go back to step 58 |
-| `case foundry-small can't be set up: no block catalog in the DB: ...` | go back to step 56 |
-| `case foundry-small can't be set up:` and a reason about the layout (`the layout places no machine: nothing to house`) | go back to step 59 |
+| `case clockwork-foundry can't be set up: [Errno 2] No such file or directory: ...` | the id in `$plan` is not a saved plan. Go back to step 58 |
+| `case clockwork-foundry can't be set up: no block catalog in the DB: ...` | go back to step 56 |
+| `case clockwork-foundry can't be set up:` and a reason about the layout (`the layout places no machine: nothing to house`) | go back to step 59 |
 | `no bake-off model '...'` | a typing mistake in the names after `--models` |
 | `error: the following arguments are required: PLAN_ID` | `$plan` is empty in this window. Set it with the two lines at the top of this part |
 | `$run` prints nothing | no run was made. Look in this table for the line the run command printed |
@@ -1680,7 +1680,7 @@ Click **Name the models and show the report**. Or, from PowerShell:
 & $gos shell bakeoff report $run
 ```
 
-You should see: a table with one line per model. Its columns: your picks, how many answers passed GOS's check at the first try, how many passed in the end, the repair rounds, blocks and cost (free here). The sign that everything worked is the `fake-sloppy` line: `0 of 14` in the column "first try" and `13 of 14` in the column "passed" (the one left is the marble temple's "no lights" follow-up, which changes nothing on a hall without lights). The last columns say how the machines fitted: `7 of 7` under "fit ok" for every fake model. The command also prints `Written:` and the path of the report file, which ends in `.md` and sits in `%USERPROFILE%\GregtecOS\data\reports`. In that file's second table, the column "why refused" says for `fake-sloppy` why its first try was sent back (a chest, which a shell may not hold).
+You should see: a table with one line per model. Its columns: your picks, how many answers passed GOS's check at the first try, how many passed in the end, the repair rounds, blocks and cost (free here). The sign that everything worked is the `fake-sloppy` line: `0 of 16` in the column "first try" and `16 of 16` in the column "passed". The last columns say how the machines fitted: `8 of 8` under "fit ok" for every fake model. The command also prints `Written:` and the path of the report file, which ends in `.md` and sits in `%USERPROFILE%\GregtecOS\data\reports`. In that file's second table, the column "why refused" says for `fake-sloppy` why its first try was sent back (a chest, which a shell may not hold).
 
 After this the picks for this run cannot be changed.
 
@@ -1998,7 +1998,7 @@ Open the settings file:
 notepad "$gh\config\gos.toml"
 ```
 
-Add two lines at the very end, then save: `[shell]` on the first and `designer = "astra"` on the second. A third line `designer_max_usd = 4.0` is optional: it is the most one request may spend, every try counted (from 0.5 to 20; 4 when you leave it out). A fourth, `designer_big_max_usd = 6.0`, is optional too: the most a large request (a big plot, which may answer at twice the length) may spend (from 0.5 to 20; 6 when you leave it out; the third line's figure when that is higher). Your day limit only warns, as for the other AI work: past it the designer still runs, each request held to its own cap.
+Add two lines at the very end, then save: `[shell]` on the first and `designer = "astra"` on the second. A third line `designer_max_usd = 4.0` is optional: it is the most one request may spend, every try counted (from 0.5 to 20; 4 when you leave it out). A fourth, `designer_big_max_usd = 6.0`, is optional too: the most a large request (a big plot, which may answer at twice the length) may spend (from 0.5 to 20; when you leave it out, 6, or the third line's figure if you set that below 4; the third line's figure when that is higher). Your day limit only warns, as for the other AI work: past it the designer still runs, each request held to its own cap.
 
 GOS reads the file when it starts, so start it again:
 

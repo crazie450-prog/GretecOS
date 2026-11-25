@@ -175,11 +175,24 @@ def _ai_off(ai: AiMode | None, ready: Ready) -> str | None:
     return f"the AI is off ({LABELS.get(hard[0], hard[0])}): nothing is spent"
 
 
+BIG_CAP_USD = 6.0  # a large request's cap when ``designer_big_max_usd`` is unset (D429)
+
+
 def cap_of(cfg: Config, big: bool) -> float:
     """A request's cap (D429): ``[shell] designer_max_usd``; a large request's the larger of it
-    and ``designer_big_max_usd``, so it never gets less than a standard one."""
+    and ``designer_big_max_usd``, so it never gets less than a standard one. With
+    ``designer_big_max_usd`` unset it is $6, unless ``designer_max_usd`` was lowered below its
+    default: then that bounds large requests too (nobody gets more than the cap they lowered
+    without asking for it)."""
     small = cfg.shell_designer_max_usd
-    return max(small, cfg.shell_designer_big_max_usd) if big else small
+    if not big:
+        return small
+    chosen = cfg.shell_designer_big_max_usd
+    if chosen is None:
+        from gregtec.config import Config
+
+        chosen = BIG_CAP_USD if small >= Config.shell_designer_max_usd else small
+    return max(small, chosen)
 
 
 def held(

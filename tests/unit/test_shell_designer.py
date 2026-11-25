@@ -242,7 +242,9 @@ def test_the_shell_keys_are_soft_service_keys(tmp_path: Path) -> None:
     cfg = config.load(path)
     assert cfg.shell_designer == "astra" and cfg.shell_designer_max_usd == 6.0
     assert cfg.shell_designer_big_max_usd == 9.0
-    assert config.Config().shell_designer_big_max_usd == 6.0  # D429
+    assert (
+        config.Config().shell_designer_big_max_usd is None
+    )  # unset: cap_of picks (D429)
     assert cfg.service_errors == ()
     assert config.Config().shell_designer == ""  # unset: today's behaviour
     for text, why in (
@@ -259,7 +261,7 @@ def test_the_shell_keys_are_soft_service_keys(tmp_path: Path) -> None:
         cfg = config.load(path)  # never stops the load: the core says so at start
         assert any(why in e for e in cfg.service_errors), (text, cfg.service_errors)
         assert cfg.shell_designer == "" and cfg.shell_designer_max_usd == 4.0
-        assert cfg.shell_designer_big_max_usd == 6.0
+        assert cfg.shell_designer_big_max_usd is None
 
 
 def test_resolve_reads_the_label_per_request(
@@ -702,6 +704,16 @@ def test_a_large_request_gets_32000_tokens_the_longer_echo_and_its_own_cap(
     )
     high = replace(cfg, shell_designer_max_usd=8.0)
     assert shell_designer.cap_of(high, True) == 8.0  # never below a standard request's
+    # a lowered designer_max_usd bounds large requests too while designer_big_max_usd is unset
+    lowered = replace(cfg, shell_designer_max_usd=1.0)
+    assert (
+        shell_designer.cap_of(lowered, True)
+        == shell_designer.cap_of(lowered, False)
+        == 1.0
+    )
+    assert shell_designer.cap_of(replace(cfg, shell_designer_max_usd=5.0), True) == 6.0
+    chosen = replace(lowered, shell_designer_big_max_usd=3.0)  # set: honoured
+    assert shell_designer.cap_of(chosen, True) == 3.0
     low = ctx_of(
         home,
         toml,
@@ -1245,7 +1257,7 @@ def test_gos_shell_design_ai_shows_a_large_request_s_cap_and_only_warns_past_the
     home: Path, toml: Path, store: Store, astra: FakeResponsesAPI
 ) -> None:
     UsageMeter(store, 100.0, (80, 100)).record(
-        "fast", "claude-opus-5-5", Usage(), usd=10.5, task="x"
+        "fast", "fast-model", Usage(), usd=10.5, task="x"
     )
     path = _with(toml, "astra")
     argv = (

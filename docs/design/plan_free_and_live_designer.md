@@ -414,7 +414,7 @@ They never call `_program`, `_site_cells`, `_refit` or `_check_site`. Audit ever
 - **`viewer`** (:884-965): no ghosts (`lay.get(...)` on `{}`; a test pins it).
 
 ### 3.8 Brief and prompt (shell_brief.py, prompt v7)
-- `PROMPT_VERSIONS = {"layout": 5, "site": 6, "free": 7}`, and `PROMPT_VERSION` follows the newest. The layout and site texts do not change (§4.3 leaves the prompt's sandbox sentence true), so the 7 existing cases keep their prompt versions.
+- `PROMPT_VERSIONS = {"layout": 5, "site": 6, "free": 7}`, and `PROMPT_VERSION` follows the newest (as built in WO-10.17; WO-10.18, D430, made site v8 and dropped `PROMPT_VERSION`: each mode has its own version in `PROMPT_VERSIONS`). The layout and site texts do not change (§4.3 leaves the prompt's sandbox sentence true), so the 7 existing cases keep their prompt versions.
 - `schema("free")` = `SITE_SCHEMA`. `read(text, "free")` refuses non-empty zones.
 - `free_prompt()`: `site_prompt()` (:351-419) with the machines, PROGRAM, aisle, chase, keep-outs and `ROOM` taken out. The rules:
   - "an empty building Clayton furnishes himself";
